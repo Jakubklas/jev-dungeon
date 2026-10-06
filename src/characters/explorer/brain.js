@@ -14,14 +14,14 @@
 //              move question per tactic (`move_if_<tactic>`, judged with that tactic's move facts).
 //              The move taken is the answer for the tactic Jev chose, so this tick's move already
 //              follows the new tactic. With a single feasible tactic code takes it (no Choice).
-import { applyMove, knownFloorCount, legalMoves } from '../../dungeon.js';
+import { EXPLORER_LIVES, applyMove, availableMoves, knownFloorCount } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, describeMoves, isTactic, situation, speedPhrase, tacticFeasibility, treasureSeen,
 } from './perception.js';
 import {
   addFinding, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setDanger, setSentiment, switchApproach,
 } from './memory.js';
-import { visibleAdversaries } from '../adversary/adversary.js';
+import { GRACE_TICKS, visibleAdversaries } from '../adversary/adversary.js';
 import { askJev, shuffle } from '../../jev.js';
 
 const REVIEW_EVERY = 8; // steps between approach reviews
@@ -98,11 +98,13 @@ const TACTIC_MOVE_HINT = {
 };
 
 const RULES =
-  'A dungeon on a grid of walls and floor, explored one cell per step (up, down, left or right). ' +
+  'A dungeon on a grid of walls and floor, explored one cell per step (up, down, left or right), or it can stand still (stay) and let a step pass. ' +
   'Every cell the explorer visits lights up the area around it for the rest of the game; lit cells are known, everything else is unknown. ' +
   'The treasure chest is somewhere in the unknown; the game is won by stepping onto it. ' +
   `Adversaries roam the dungeon. They move slower than the explorer (${speedPhrase()}), ` +
-  'an adversary that sees the explorer chases it, and the game is lost if an adversary catches the explorer (reaches its cell). ' +
+  'an adversary that sees the explorer chases it. An adversary that reaches the explorer\'s cell (or that the explorer steps onto) costs it one life; ' +
+  `the explorer starts with ${EXPLORER_LIVES} lives (\`situation.lives\`) and the game is lost when the last one is gone. ` +
+  `After a hit the adversary is knocked back and for the next ${GRACE_TICKS} steps no adversary can hurt the explorer (\`situation.hit_protection_steps\`). ` +
   'The explorer only knows about adversaries it can currently see. Meeting one does not have to mean running: ' +
   'with the speed edge the explorer can slip past, dodge in open rooms, hide, or race to a seen chest.';
 
@@ -178,7 +180,7 @@ export async function takeTurn(game, memory) {
   const enc = encounterPolicy(game, memory, sit, prev, info);
   policy = enc.policy ?? policy;
 
-  const legal = legalMoves(game);
+  const legal = availableMoves(game);
   if (!legal.length) throw new Error('No legal moves');
   const forced = legal.length === 1;
   const inSight = sit.threats.length > 0;
@@ -335,6 +337,12 @@ export async function noteCaught(game, memory, adversaryId) {
   await saveMemory(memory, memoryDir);
 }
 
+// Records a hit that cost a life but did not end the game (called by turn.js) and saves.
+export async function noteHit(game, memory, adversaryId) {
+  addFinding(memory, `Hit by adversary ${adversaryId} at step ${game.steps}: ${game.health} of ${game.maxHealth} lives left.`, Math.max(game.steps, 1));
+  await saveMemory(memory, memoryDir);
+}
+
 // Request 1 of a decision step. Sets memory.sentiment and returns { choice, probabilities, ms }.
 async function askSentiment(game, memory, sit, trigger) {
   const ids = Object.keys(SENTIMENTS);
@@ -375,7 +383,7 @@ async function askSentiment(game, memory, sit, trigger) {
 function moveQuestion(game, approachId, sit, memory, profile, speculative) {
   const moves = describeMoves(game, approachId, { minGap: profile.min_gap, goal: speculative ? null : goalOf(memory) });
   // Option order is shuffled every tick because Jev leans toward the first option.
-  const options = Object.fromEntries(shuffle(legalMoves(game)).map((d) => [d, moves[d]]));
+  const options = Object.fromEntries(shuffle(availableMoves(game)).map((d) => [d, moves[d]]));
   const gap = profile.min_gap;
   const question = speculative
     ? `Suppose the explorer takes the "${approachId}" tactic: ${APPROACHES[approachId].text} Which way should it step next? It feels ${memory.sentiment.id} (\`memory.sentiment\`). Judge each move from its description and \`situation\`.`
@@ -399,6 +407,7 @@ function moveQuestion(game, approachId, sit, memory, profile, speculative) {
               ]
             : []),
           profile.priority,
+          'Standing still (stay) makes no progress and lets adversaries close in: pick it only when every step is worse, for example when each step would walk into danger.',
           'Follow the approach: prefer the move that brings the explorer closer to the approach target.',
           'Prefer moves that reveal many new cells and moves onto never-visited cells over moves onto cells already visited.',
           'Avoid backtracking: do not step into a known dead end with nothing left to explore, and avoid undoing the previous move unless every other way is explored. `memory.latest_action` is the previous move and `memory.progress.revisits_last_10` shows how much the explorer has been going in circles.',

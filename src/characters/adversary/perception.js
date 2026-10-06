@@ -152,7 +152,7 @@ export function describeMoves(game, a, hunt, approachIds) {
     const facts = [];
     if (hunt.inSight) {
       if (same(dest, game.pos)) {
-        out[dir] = 'Steps onto the explorer: catches it and wins.';
+        out[dir] = 'Steps onto the explorer: hits it (it loses a life, the last one ends the game).';
         continue;
       }
       facts.push(trend(toExplorer.get(key(here)), toExplorer.get(key(dest)), 'the explorer'));

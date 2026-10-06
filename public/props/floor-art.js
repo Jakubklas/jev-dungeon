@@ -99,9 +99,10 @@ class Layer {
     }
   }
   // Composite `layer` onto this one with a 1px outer outline (4-neighbour).
-  merge(layer, oc) {
+  merge(layer, oc, shadowOnly = false) {
     for (let y = -1; y <= layer.h; y++) for (let x = -1; x <= layer.w; x++) {
       if (layer.get(x, y) !== '.') continue;
+      if (shadowOnly) { if (layer.get(x, y - 1) !== '.') this.set(x, y, oc); continue; }
       if (layer.get(x - 1, y) !== '.' || layer.get(x + 1, y) !== '.' ||
           layer.get(x, y - 1) !== '.' || layer.get(x, y + 1) !== '.') this.set(x, y, oc);
     }
@@ -251,12 +252,12 @@ function crate(L, u0, w0, a, b, z0, h, dark) {
 
 function makeCrates() {
   const L = new Layer(CW, CH);
-  const a = new Layer(CW, CH); crate(a, 0, 0, 10, 10, 0, 10, false); L.merge(a, 'o');
-  const b = new Layer(CW, CH); crate(b, 1, 1, 8, 8, 10, 7, true); L.merge(b, 'o');
+  const a = new Layer(CW, CH); crate(a, 0, 0, 10, 10, 0, 9, false); L.merge(a, 'o');
+  const b = new Layer(CW, CH); crate(b, 1, 1, 8, 8, 9, 6, true); L.merge(b, 'o');
   const c = new Layer(CW, CH);
   // barrel to the right of the stack: footprint centre u=12.5, w=4.5
   const cx = X0 + 8, cyb = Y0 + 8 + 3;
-  barrel(c, cx, cyb, 4, 2, 10, [2, 7]);
+  barrel(c, cx, cyb, 4, 2, 9, [2, 6]);
   L.merge(c, 'o');
   return { palette: WOOD, ...finish(L, 8, 8) };
 }
@@ -296,13 +297,13 @@ function makeChest() {
 function makePots() {
   const L = new Layer(36, 28);
   const o1 = new Layer(36, 28);
-  vase(o1, 14, 15, [4, 2, 3, 5, 6, 6, 5, 3], 'c', 'C', 'd', 'C'); // tall clay, back
+  vase(o1, 14, 15, [4, 2, 2, 5, 6, 6, 5, 3], 'c', 'C', 'd', 'C'); // tall clay, back
   L.merge(o1, 'o');
   const o2 = new Layer(36, 28);
-  vase(o2, 9, 19, [3, 2, 3, 5, 7, 7, 5, 3], 'B', 'n', 'v', 'n'); // dark blue, front left
+  vase(o2, 8, 19, [4, 2, 2, 4, 6, 6, 5, 3], 'B', 'n', 'v', 'n'); // dark blue, front left
   L.merge(o2, 'o');
   const o3 = new Layer(36, 28);
-  vase(o3, 19, 19, [3, 3, 5, 6, 6, 4], 'c', 'C', 'd', null); // small clay, front right
+  vase(o3, 19, 19, [3, 2, 4, 5, 5, 3], 'c', 'C', 'd', null); // small clay, front right
   L.merge(o3, 'o');
   const { rows, x0, y0 } = L.crop();
   return { palette: POT_PAL, frames: [rows], anchorX: 14 - x0, anchorY: 17 - y0, emissive: [] };
@@ -313,10 +314,10 @@ function makeSkull() {
   const L = new Layer(32, 24);
   const b1 = new Layer(32, 24); // bone along "/"
   b1.line(2, 15, 10, 11, 'e'); b1.set(2, 14, 'e'); b1.set(1, 15, 'E'); b1.set(3, 16, 'E'); b1.set(11, 10, 'e'); b1.set(11, 11, 'E');
-  L.merge(b1, 'o');
+  L.merge(b1, 'o', true);
   const b2 = new Layer(32, 24); // bone along "\"
-  b2.line(12, 13, 20, 17, 'e'); b2.set(12, 12, 'e'); b2.set(11, 13, 'E'); b2.set(20, 18, 'E'); b2.set(21, 17, 'e');
-  L.merge(b2, 'o');
+  b2.line(12, 13, 19, 16, 'e'); b2.set(12, 12, 'e'); b2.set(11, 13, 'E'); b2.set(19, 17, 'E'); b2.set(20, 16, 'e');
+  L.merge(b2, 'o', true);
   const sk = new Layer(32, 24);
   const SKULL = [
     '.ehhee.',
@@ -338,18 +339,18 @@ function makeTools() {
   const L = new Layer(32, 24);
   // shovel along "/" (blade lower left, handle up right)
   const sh = new Layer(32, 24);
-  sh.line(5, 14, 17, 8, 'H'); sh.line(5, 15, 17, 9, 'w');
-  for (const [x, y] of [[17, 6], [18, 7], [19, 7]]) sh.set(x, y, 'l'); sh.set(18, 8, 'l'); sh.set(16, 7, 'l'); // grip
-  for (const [x, y, c] of [[1, 15, 'D'], [2, 14, 'M'], [2, 15, 'L'], [2, 16, 'D'], [3, 13, 'L'], [3, 14, 'L'], [3, 15, 'M'], [3, 16, 'D'], [4, 14, 'M'], [4, 15, 'M'], [4, 16, 'D'], [5, 16, 'D'], [1, 16, 'D']]) sh.set(x, y, c);
-  L.merge(sh, 'o');
+  sh.line(5, 13, 16, 8, 'H'); sh.line(5, 14, 16, 9, 'w');
+  for (const [x, y] of [[16, 6], [17, 7], [18, 7]]) sh.set(x, y, 'l'); sh.set(17, 8, 'l'); sh.set(15, 7, 'l'); // grip
+  for (const [x, y, c] of [[1, 14, 'D'], [2, 13, 'M'], [2, 14, 'L'], [2, 15, 'D'], [3, 12, 'L'], [3, 13, 'L'], [3, 14, 'M'], [3, 15, 'D'], [4, 13, 'M'], [4, 14, 'M'], [4, 15, 'D'], [1, 15, 'D']]) sh.set(x, y, c);
+  L.merge(sh, 'o', true);
   // pickaxe along "\" (head upper left, handle down right)
   const pk = new Layer(32, 24);
-  pk.line(6, 5, 20, 12, 'H'); pk.line(6, 6, 20, 13, 'w');
-  pk.set(21, 12, 'l'); pk.set(21, 13, 'l');
+  pk.line(6, 5, 19, 11, 'H'); pk.line(6, 6, 19, 12, 'w');
+  pk.set(20, 11, 'l'); pk.set(20, 12, 'l');
   pk.line(3, 8, 11, 4, 'M'); pk.line(4, 8, 10, 5, 'D');
   pk.set(2, 8, 'L'); pk.set(3, 7, 'L'); pk.set(12, 3, 'L'); pk.set(11, 3, 'W'); pk.set(2, 9, 'M'); pk.set(12, 4, 'M');
   pk.set(7, 5, 'L'); pk.set(8, 4, 'W');
-  L.merge(pk, 'o');
+  L.merge(pk, 'o', true);
   const { rows, x0, y0 } = L.crop();
   return { palette: STEEL_PAL, frames: [rows], anchorX: 10 - x0, anchorY: 9 - y0, emissive: [] };
 }
@@ -357,23 +358,25 @@ function makeTools() {
 // ------------------------------------------------------------------ sword
 function makeSword() {
   const L = new Layer(32, 24);
-  // arrow lying alongside, along "/"
+  // arrow along "\" in the upper left (fletching left, head right)
   const ar = new Layer(32, 24);
-  ar.line(5, 18, 15, 13, 'H');
-  ar.set(16, 12, 'L'); ar.set(17, 12, 'M'); ar.set(16, 13, 'M');
-  ar.set(4, 18, 'f'); ar.set(4, 17, 'R'); ar.set(5, 17, 'R'); ar.set(3, 18, 'r'); ar.set(6, 19, 'R'); ar.set(5, 19, 'r');
-  L.merge(ar, 'o');
+  ar.line(3, 3, 12, 7, 'H');
+  ar.set(13, 8, 'L'); ar.set(14, 8, 'M'); ar.set(13, 7, 'M');
+  ar.set(1, 2, 'r'); ar.set(2, 2, 'R'); ar.set(2, 3, 'f'); ar.set(3, 2, 'R'); ar.set(2, 4, 'R'); ar.set(3, 4, 'r'); ar.set(1, 3, 'r');
+  L.merge(ar, 'o', true);
   // sword along "/": pommel lower-left, tip upper-right
   const sw = new Layer(32, 24);
-  sw.set(2, 14, 'l'); sw.set(2, 15, 'l'); sw.set(3, 15, 'l');
-  sw.line(3, 14, 6, 12, 'H');
-  for (const [x, y] of [[5, 9], [6, 10], [7, 11], [8, 12], [9, 13]]) sw.set(x, y, 'M');
-  sw.set(4, 9, 'L'); sw.set(10, 13, 'L');
-  sw.line(8, 11, 21, 5, 'W'); sw.line(8, 12, 21, 6, 'L'); sw.line(10, 13, 20, 8, 'M');
-  sw.set(22, 4, 'W'); sw.set(22, 5, 'L');
-  L.merge(sw, 'o');
+  const dy = -1;
+  const S = (x, y, c) => sw.set(x, y + dy, c);
+  S(2, 14, 'l'); S(2, 15, 'l'); S(3, 15, 'l');
+  sw.line(3, 14 + dy, 6, 12 + dy, 'H');
+  for (const [x, y] of [[5, 9], [6, 10], [7, 11], [8, 12], [9, 13]]) S(x, y, 'M');
+  S(4, 9, 'L'); S(10, 13, 'L');
+  sw.line(8, 11 + dy, 19, 6 + dy, 'W'); sw.line(8, 12 + dy, 19, 7 + dy, 'L');
+  S(20, 5, 'W'); S(20, 6, 'L');
+  L.merge(sw, 'o', true);
   const { rows, x0, y0 } = L.crop();
-  return { palette: STEEL_PAL, frames: [rows], anchorX: 11 - x0, anchorY: 12 - y0, emissive: [] };
+  return { palette: STEEL_PAL, frames: [rows], anchorX: 11 - x0, anchorY: 10 - y0, emissive: [] };
 }
 
 export const FLOOR_ART = {

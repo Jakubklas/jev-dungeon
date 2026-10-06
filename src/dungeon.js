@@ -9,6 +9,7 @@ export const MIN_SIZE = 25;
 export const MAX_SIZE = 90;
 export const ROOM_MIN = 4; // room width and height are each ROOM_MIN..ROOM_MAX
 export const ROOM_MAX = 15;
+export const EXPLORER_LIVES = 2; // lives the explorer starts with
 const ROOM_AREA = 290; // map cells per room when choosing the room count
 const SPAWN_STEPS = 20; // mirrors MIN_SPAWN_STEPS in characters/adversary/adversary.js
 
@@ -18,6 +19,9 @@ export const DIRS = {
   left: [-1, 0],
   right: [1, 0],
 };
+
+// The explorer's non-move: not a direction, so it is not in DIRS (which perception walks to find neighbours).
+export const STAY = 'stay';
 
 const STEPS = Object.values(DIRS);
 const key = ([x, y]) => `${x},${y}`;
@@ -227,11 +231,27 @@ export function createGame(dungeon) {
     won: false,
     lost: false,
     caughtBy: null,
+    health: EXPLORER_LIVES,
+    maxHealth: EXPLORER_LIVES,
     trail: [[...dungeon.start]],
     adversaries: [],
   };
   lightAround(game, game.pos);
   return game;
+}
+
+// Takes lives off the explorer. The game is lost (caughtBy = sourceId) only when health hits 0.
+// No-op once won or lost. Returns the state after the hit.
+export function damageExplorer(game, amount = 1, sourceId = null) {
+  game.health ??= EXPLORER_LIVES;
+  game.maxHealth ??= EXPLORER_LIVES;
+  if (game.won || game.lost) return { health: game.health, lost: game.lost };
+  game.health = Math.max(0, game.health - amount);
+  if (game.health === 0) {
+    game.lost = true;
+    game.caughtBy = sourceId;
+  }
+  return { health: game.health, lost: game.lost };
 }
 
 // Real tiles: for adversary movement, never for explorer perception.
@@ -272,8 +292,19 @@ export function legalMoves(game) {
   return Object.keys(DIRS).filter((d) => isFloor(game.dungeon, [x + DIRS[d][0], y + DIRS[d][1]]));
 }
 
+// The explorer's per-tick options: every legal step plus STAY (stand still). Empty once the game is over.
+export function availableMoves(game) {
+  const steps = legalMoves(game);
+  return steps.length ? [...steps, STAY] : steps;
+}
+
 // One step. Illegal moves (into a wall) and moves once the game is won or lost do nothing.
+// STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
 export function applyMove(game, dir) {
+  if (dir === STAY && !game.won && !game.lost) {
+    game.steps++;
+    return { moved: false, stayed: true, revealed: 0, revisit: false, won: game.won };
+  }
   if (game.won || game.lost || !legalMoves(game).includes(dir)) {
     return { moved: false, revealed: 0, revisit: false, won: game.won };
   }
@@ -285,7 +316,7 @@ export function applyMove(game, dir) {
   game.steps++;
   game.trail.push([...next]);
   const revealed = lightAround(game, next);
-  game.won = same(next, game.dungeon.treasure);
+  game.won = !!game.dungeon.treasure && same(next, game.dungeon.treasure); // testbed arenas may have no chest
   return { moved: true, revealed, revisit, won: game.won };
 }
 
@@ -322,6 +353,8 @@ export function publicView(game) {
     steps: game.steps,
     won: game.won,
     lost: game.lost,
+    health: game.health,
+    max_health: game.maxHealth,
     light: game.light.map((row) => row.slice()),
     visits: game.visits,
     trail: game.trail,

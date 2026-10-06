@@ -4,8 +4,8 @@
 //              and times perception per tick on a 150x150 map.
 
 import {
-  generateDungeon, createGame, legalMoves, applyMove, isKnown, rng, hasLineOfSight, floorDistances,
-  publicView, DIRS, SIGHT_RANGE, MIN_SIZE, MAX_SIZE,
+  generateDungeon, createGame, legalMoves, availableMoves, STAY, applyMove, isKnown, rng, hasLineOfSight, floorDistances,
+  publicView, DIRS, damageExplorer, EXPLORER_LIVES, SIGHT_RANGE, MIN_SIZE, MAX_SIZE,
 } from '../src/dungeon.js';
 import {
   APPROACHES, TACTICS, isTactic, situation, describeMoves, approachTarget, availableApproaches, treasureSeen,
@@ -311,12 +311,23 @@ console.log(`fog of war: ${walks} random walks, ${unseenSteps} steps with the ch
 console.log(`  tactic options offered in twin walks (gaps ${GAPS}): ${[...tacticSeen].map(([id, n]) => `${id} ${n}`).join(', ')}`);
 for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fail(`twin walks never offered ${id}`);
 
+// 3b. STAY is a first-class option: offered, described, and leaves the position unchanged.
+{
+  const g = createGame(generateDungeon(7));
+  const pos = [...g.pos], steps = g.steps, trail = g.trail.length;
+  if (!availableMoves(g).includes(STAY) || legalMoves(g).includes(STAY)) fail('availableMoves must add stay to legalMoves');
+  if (!(STAY in describeMoves(g, Object.keys(APPROACHES)[0]))) fail('describeMoves lacks stay');
+  const r = applyMove(g, STAY);
+  if (!r.stayed || r.moved || r.revealed !== 0 || g.pos.join() !== pos.join() || g.steps !== steps + 1 || g.trail.length !== trail) fail('stay changed position or did not tick');
+}
+
 // 4. Won/lost games are frozen; publicView shape.
 {
   const g = createGame(generateDungeon(5));
   g.lost = true; g.caughtBy = 'a1';
   const before = JSON.stringify(g.pos);
   if (legalMoves(g).length) fail('legalMoves not empty once lost');
+  if (applyMove(g, 'stay').stayed || g.steps !== 0) fail('stay acted after loss');
   if (applyMove(g, 'up').moved || applyMove(g, 'down').moved || JSON.stringify(g.pos) !== before) fail('applyMove moved after loss');
   const v = publicView(g);
   if (v.lost !== true) fail('publicView.lost missing');
@@ -345,7 +356,14 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 
   g.adversaries = [adv([3, 5], 'chase')];
   const caught = describeMoves(g, 'run_away');
-  if (!caught.right?.startsWith('Steps into the adversary: caught.')) fail(`caught sentence missing: ${caught.right}`);
+  if (!caught.right?.startsWith(`Steps into the adversary: costs 1 life (${EXPLORER_LIVES - 1} of ${EXPLORER_LIVES} left)`)) fail(`touch sentence missing: ${caught.right}`);
+  g.health = 1;
+  if (!describeMoves(g, 'run_away').right?.startsWith('Steps into the adversary: costs your last life and the game is lost.')) fail('last-life touch sentence missing');
+  g.graceTicks = 2;
+  if (!describeMoves(g, 'run_away').right?.startsWith('Steps into the adversary: no life lost while your hit protection lasts')) fail('grace touch sentence missing');
+  const sit = situation(g);
+  if (sit.lives !== 1 || sit.hit_protection_steps !== 2) fail(`situation lives/protection: ${sit.lives}/${sit.hit_protection_steps}`);
+  g.health = g.maxHealth; g.graceTicks = 0;
 
   g.adversaries = [adv([6, 5], 'chase')];
   const cornered = describeMoves(g, 'run_away');
@@ -359,8 +377,8 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 
   g.adversaries = [adv([9, 7], 'patrol')]; // out of sight
   if (approachTarget(g, 'run_away') !== null || Object.keys(tacticOptions(g)).length) fail('run_away offered with nothing in sight');
-  console.log('threat sentences: caught, cornered, loop, run_away target ok');
-  console.log('  caught sample   right:', caught.right);
+  console.log('threat sentences: touch (life/last life/grace), cornered, loop, run_away target ok');
+  console.log('  touch sample    right:', caught.right);
   console.log('  cornered sample up:   ', cornered.up);
   console.log('  loop sample     left: ', cornered.left);
   console.log('  run_away target:      ', JSON.stringify(esc));
@@ -683,6 +701,24 @@ if (MEASURE) {
   for (const id of ['scared', 'calculated', 'aggressive']) {
     console.log(`tacticOptions (${id}, min gap ${SENTIMENTS[id].min_gap}):`, JSON.stringify(tacticOptions(g, SENTIMENTS[id].min_gap), null, 2));
   }
+}
+
+// Health: 2 lives, lost only when all are gone.
+{
+  const g = createGame(generateDungeon(3));
+  if (!(g.health === EXPLORER_LIVES && g.maxHealth === 2)) fail('health: starts at 2/2');
+  const pv = publicView(g);
+  if (!(pv.health === 2 && pv.max_health === 2)) fail('health: publicView includes health and max_health');
+  const r1 = damageExplorer(g, 1, 'a1');
+  if (!(r1.health === 1 && !r1.lost && !g.lost && g.caughtBy === null)) fail('health: first hit leaves 1 life');
+  if (!(publicView(g).health === 1)) fail('health: publicView follows damage');
+  const r2 = damageExplorer(g, 1, 'a2');
+  if (!(r2.health === 0 && r2.lost && g.lost && g.caughtBy === 'a2')) fail('health: second hit loses the game');
+  const r3 = damageExplorer(g, 1, 'a3');
+  if (!(r3.health === 0 && g.caughtBy === 'a2')) fail('health: no-op once lost');
+  const g2 = createGame(generateDungeon(3));
+  g2.won = true;
+  if (!(damageExplorer(g2, 1, 'a1').health === 2 && !g2.lost)) fail('health: no-op once won');
 }
 
 if (failures) {

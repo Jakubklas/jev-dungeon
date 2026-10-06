@@ -3,7 +3,7 @@
 import {
   KINDS, SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS,
   TORCH_MIN, TORCH_MAX, TORCH_GAP, BIG_MIN_RUN, BIG_CHANCE, CORRIDOR_TORCH_PER_ROOM, CORRIDOR_TORCH_GAP,
-  SOLID_PER_PERIMETER, SOLID_MAX, SOLID_TRIES, TREASURE_FRACTION, MIN_EXITS,
+  CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_PER_CELLS, CLUSTER_MAX, CLUSTER_GAP, CLUSTER_TRIES, TREASURE_FRACTION, MIN_EXITS,
   SMALL_PER_CELLS, SMALL_MAX, CORRIDOR_SMALL_PER_CELLS,
 } from './catalog.js';
 
@@ -139,50 +139,83 @@ export function placeProps(dungeon, rand) {
   };
   let floorLeft = 0;
   for (let i = 0; i < N; i++) floorLeft += open[i];
-  // flip:false backs on a wall at y-1 or y-2, flip:true at x-1 or x-2 (cell between must be floor).
-  // Each option is [flip, between cell or null]; kept[] stops later props closing a between cell.
-  const kept = new Uint8Array(N);
-  const backings = (x, y) => {
-    const out = [];
-    if (wall0(x, y - 1)) out.push([false, null]);
-    else if (isOpen(x, y - 1) && wall0(x, y - 2)) out.push([false, at(x, y - 1)]);
-    if (wall0(x - 1, y)) out.push([true, null]);
-    else if (isOpen(x - 1, y) && wall0(x - 2, y)) out.push([true, at(x - 1, y)]);
-    return out;
-  };
-  const props = [];
-  for (const r of rooms) {
-    const target = Math.min(SOLID_MAX, Math.floor(2 * (r.w + r.h) / SOLID_PER_PERIMETER + rand()));
-    if (!target) continue;
-    const cands = [];
+  // Every open cell of room r reachable from every other without leaving the rect (no split rooms).
+  const roomConnected = (r) => {
+    let first = -1, total = 0;
     for (let y = r.y; y < r.y + r.h; y++) {
-      for (let x = r.x; x < r.x + r.w; x++) {
-        const i = at(x, y);
-        if (open[i] && !front[i] && !doorNear[i] && !nearCell(x, y, start) && !nearCell(x, y, treasure)) cands.push([x, y]);
+      for (let x = r.x; x < r.x + r.w; x++) if (open[at(x, y)]) { total++; if (first < 0) first = at(x, y); }
+    }
+    if (first < 0) return true;
+    const seen = new Set([first]);
+    const q = [first];
+    for (let h = 0; h < q.length; h++) {
+      const x = q[h] % W, y = (q[h] - x) / W;
+      for (const [dx, dy] of NB) {
+        const nx = x + dx, ny = y + dy, j = at(nx, ny);
+        if (nx >= r.x && nx < r.x + r.w && ny >= r.y && ny < r.y + r.h && open[j] && !seen.has(j)) { seen.add(j); q.push(j); }
       }
     }
+    return seen.size === total;
+  };
+  // Clusters stand off the room's edge ring, so a walkable lane always runs behind them (cover,
+  // not flush corner fill), and keep CLUSTER_GAP from each other so they never merge.
+  const nearSolid = new Uint8Array(N); // cells within CLUSTER_GAP-1 (Chebyshev) of a placed solid
+  const nearStartOrTreasure = (x, y) => [start, treasure].some((c) => Math.abs(x - c[0]) <= 1 && Math.abs(y - c[1]) <= 1);
+  const props = [];
+  for (const r of rooms) {
+    const inner = (x, y) => x > r.x && x < r.x + r.w - 1 && y > r.y && y < r.y + r.h - 1;
+    const ok = (x, y) => {
+      const i = at(x, y);
+      return inner(x, y) && open[i] && !front[i] && !doorNear[i] && !nearSolid[i] && !nearStartOrTreasure(x, y);
+    };
+    const innerArea = Math.max(0, r.w - 2) * Math.max(0, r.h - 2);
+    const target = Math.min(CLUSTER_MAX, Math.floor(innerArea / CLUSTER_PER_CELLS + rand()));
+    if (!target) continue;
+    const cands = [];
+    for (let y = r.y + 1; y < r.y + r.h - 1; y++) for (let x = r.x + 1; x < r.x + r.w - 1; x++) if (ok(x, y)) cands.push([x, y]);
     shuffle(cands);
     let placed = 0, tries = 0;
-    for (const [x, y] of cands) {
-      if (placed >= target || tries >= SOLID_TRIES) break;
-      const i = at(x, y);
-      const flips = open[i] && !kept[i] ? backings(x, y) : [];
-      if (!flips.length) continue;
-      open[i] = 0;
+    for (const [sx, sy] of cands) {
+      if (placed >= target || tries >= CLUSTER_TRIES) break;
+      if (!ok(sx, sy)) continue;
+      // Grow a 4-connected cluster of a random size; it stays smaller if the room runs out of space.
+      const size = CLUSTER_SIZE_MIN + Math.floor(rand() * (CLUSTER_SIZE_MAX - CLUSTER_SIZE_MIN + 1));
+      const cells = [[sx, sy]];
+      const inCluster = (x, y) => cells.some(([cx, cy]) => cx === x && cy === y);
+      while (cells.length < size) {
+        const grow = [];
+        for (const [cx, cy] of cells) {
+          for (const [dx, dy] of NB) {
+            const nx = cx + dx, ny = cy + dy;
+            if (ok(nx, ny) && !inCluster(nx, ny) && !grow.some(([gx, gy]) => gx === nx && gy === ny)) grow.push([nx, ny]);
+          }
+        }
+        if (!grow.length) break;
+        cells.push(grow[Math.floor(rand() * grow.length)]);
+      }
+      for (const [x, y] of cells) open[at(x, y)] = 0;
       // No dead-end pockets: each floor neighbour keeps MIN_EXITS floor neighbours.
-      let good = NB.every(([dx, dy]) => !isOpen(x + dx, y + dy) ||
-        NB.reduce((n, [ex, ey]) => n + (isOpen(x + dx + ex, y + dy + ey) ? 1 : 0), 0) >= MIN_EXITS);
+      let good = cells.every(([x, y]) => NB.every(([dx, dy]) => !isOpen(x + dx, y + dy) ||
+        NB.reduce((n, [ex, ey]) => n + (isOpen(x + dx + ex, y + dy + ey) ? 1 : 0), 0) >= MIN_EXITS));
+      if (good) good = roomConnected(r);
       if (good) {
         tries++;
         const s = survey();
-        good = s.count === floorLeft - 1 && s.treasure >= TREASURE_FRACTION * s.far;
+        good = s.count === floorLeft - cells.length && s.treasure >= TREASURE_FRACTION * s.far;
       }
-      if (!good) { open[i] = 1; continue; }
-      floorLeft--;
+      if (!good) { for (const [x, y] of cells) open[at(x, y)] = 1; continue; }
+      floorLeft -= cells.length;
       placed++;
-      const [flip, between] = flips[Math.floor(rand() * flips.length)];
-      if (between !== null) kept[between] = 1;
-      props.push({ kind: pickKind(SOLID_KINDS), x, y, solid: true, flip });
+      for (const [x, y] of cells) {
+        for (let dy = 1 - CLUSTER_GAP; dy < CLUSTER_GAP; dy++) {
+          for (let dx = 1 - CLUSTER_GAP; dx < CLUSTER_GAP; dx++) if (inB(x + dx, y + dy)) nearSolid[at(x + dx, y + dy)] = 1;
+        }
+      }
+      // One facing per cluster: a row along x backs onto y-1 (flip:false), a column along y onto x-1.
+      const xs = cells.map((c) => c[0]), ys = cells.map((c) => c[1]);
+      const spanX = Math.max(...xs) - Math.min(...xs), spanY = Math.max(...ys) - Math.min(...ys);
+      const flip = spanX === spanY ? rand() < 0.5 : spanY > spanX;
+      for (const [x, y] of cells) props.push({ kind: pickKind(SOLID_KINDS), x, y, solid: true, flip });
     }
   }
 

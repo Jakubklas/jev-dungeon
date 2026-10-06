@@ -1,7 +1,7 @@
 // Prop catalog: kinds, classes, weights and placement constants. DOM-free, no imports.
 // Ids are fixed by CONTRACT.md (v4); place.js and the art/renderer files key on them.
 
-// cls: 'solid' (blocks the cell, drawn as floor, '#' in tiles), 'small' (walkable, cosmetic),
+// cls: 'solid' (blocks the cell, drawn as floor, '#' in tiles, placed in clusters), 'small' (walkable, cosmetic),
 // 'decor' (on a wall face). big: needs a straight wall run, at most one per room.
 export const KINDS = {
   shelf: { cls: 'solid', solid: true, weight: 3 },
@@ -31,10 +31,13 @@ export const BIG_CHANCE = 0.5; // chance a room that is long enough gets one
 export const CORRIDOR_TORCH_PER_ROOM = 0.4; // expected corridor torches per room
 export const CORRIDOR_TORCH_GAP = 5;
 
-// Solid props
-export const SOLID_PER_PERIMETER = 12; // about one per this many cells of room perimeter
-export const SOLID_MAX = 4; // per room
-export const SOLID_TRIES = 25; // full-BFS attempts per room
+// Solid props: free-standing clusters of 1-4 cells inside rooms, so the explorer can duck behind them.
+export const CLUSTER_SIZE_MIN = 1;
+export const CLUSTER_SIZE_MAX = 4;
+export const CLUSTER_PER_CELLS = 30; // about one cluster per this many inner room cells (room minus its edge ring)
+export const CLUSTER_MAX = 3; // clusters per room
+export const CLUSTER_GAP = 2; // min Chebyshev distance between cells of different clusters (one free cell between)
+export const CLUSTER_TRIES = 25; // full-BFS attempts per room
 export const TREASURE_FRACTION = 0.6; // treasure keeps this share of the farthest path distance
 export const MIN_EXITS = 2; // every floor neighbour of a solid prop keeps this many floor neighbours
 

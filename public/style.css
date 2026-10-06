@@ -89,6 +89,10 @@ button:disabled { opacity: .45; cursor: default; }
   flex: 1; min-width: 0; background: var(--panel); border: 2px solid var(--line);
   padding: 6px 10px; box-shadow: 3px 3px 0 var(--drop);
 }
+.hearts { display: inline-flex; gap: 3px; align-items: center; height: 22px; }
+.hearts svg { width: 18px; height: 16px; image-rendering: pixelated; shape-rendering: crispEdges; }
+.hearts .full { fill: var(--enemy); }
+.hearts .empty { fill: var(--line-hi); }
 .stat > span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .stat b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
 .chip {
@@ -99,6 +103,14 @@ button:disabled { opacity: .45; cursor: default; }
 .events li { font-variant-numeric: tabular-nums; }
 .events li span { color: var(--muted); }
 .events li.caught { color: var(--warn); font-weight: 700; }
+.events li.hit { color: var(--enemy); font-weight: 700; }
+/* Hit flash: a red inner glow over the board for a moment after Jev loses a life. */
+.board-wrap.hit::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 4px var(--enemy), inset 0 0 60px var(--enemy);
+  animation: hit-flash 450ms steps(4) forwards;
+}
+@keyframes hit-flash { from { opacity: .9; } to { opacity: 0; } }
 .events li.brain_on { color: var(--brain); }
 .events li.brain_off { color: var(--muted); }
 

@@ -9,6 +9,7 @@ const MINI_MAX = 180;     // longest minimap side in CSS pixels
 const LOG_MAX = 12;       // event log length
 const FADE_MS = 300;      // time for a cell to reach its new brightness
 const DIR_ORDER = ['up', 'down', 'left', 'right'];
+const EXPLORER_MOVES = [...DIR_ORDER, 'stay']; // the explorer can also stand still
 
 let game = null;          // publicView from the server
 let memory = null;
@@ -40,8 +41,14 @@ function setStatus(text, isError = false) {
   $('status').classList.toggle('error', isError);
 }
 
+// ?testbed&size=9x9&numAdversaries=2&props=few opens a small test arena instead of a dungeon
+// (src/testbed.js; keys and values are validated on the server). Reload keeps the same arena.
+const query = new URLSearchParams(location.search);
+const TESTBED = query.has('testbed') ? Object.fromEntries(query) : null;
+
 async function api(method, path) {
-  const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+  const body = method !== 'POST' ? undefined : JSON.stringify(path === '/api/new' && TESTBED ? { testbed: TESTBED } : {});
+  const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
 }
@@ -530,9 +537,9 @@ function drawScene(now) {
 
   // Entities, sorted by depth (x+y of the cell; the larger one while moving).
   const ents = [];
-  const [tx, ty] = game.treasure;
-  const chestLit = known(tx, ty);
-  if (chestLit || reveal) {
+  const [tx, ty] = game.treasure ?? [-1, -1]; // testbed arenas may have no chest
+  const chestLit = !!game.treasure && known(tx, ty);
+  if (game.treasure && (chestLit || reveal)) {
     ents.push({ depth: tx + ty, order: 0, gx: tx, gy: ty, kind: 'chest', face: 1,
       alpha: chestLit ? Math.min(1, Math.max(.15, shown[ty][tx] / .4)) : REVEAL_ALPHA });
   }
@@ -675,7 +682,9 @@ function drawEntity(en, now, cx, cy) {
     b.fillStyle = PALETTE.shadow;
     pixelEllipse(px, py, 6, 2);
     const spr = frameOf(sprites.knight, now);
-    blitSprite(spr, px, py, en.face);
+    // Hit protection (grace after a hit): the knight blinks.
+    const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
+    blitSprite(spr, px, py, en.face, blink ? .3 : 1);
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
@@ -856,8 +865,7 @@ function drawMinimap() {
     mctx.fillStyle = colour;
     mctx.fillRect((x + .5) * s - r, (y + .5) * s - r, r * 2, r * 2);
   };
-  const [tx, ty] = game.treasure;
-  if (game.light[ty][tx] > 0 || revealOn()) dot(game.treasure, PALETTE.chest, Math.max(2, s));
+  if (game.treasure && (game.light[game.treasure[1]][game.treasure[0]] > 0 || revealOn())) dot(game.treasure, PALETTE.chest, Math.max(2, s));
   for (const a of drawnAdversaries()) {
     mctx.globalAlpha = a.visible ? 1 : .5;
     dot(a.pos, PALETTE.enemy, Math.max(1.5, s * .8));
@@ -958,7 +966,31 @@ function renderMind() {
   else delete $('tactic-probs').dataset.sentiment;
 }
 
+// 8-bit hearts: one per life, filled while it lasts.
+const HEART_ROWS = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
+function renderHearts() {
+  const max = game?.max_health ?? 0, hp = game?.health ?? 0;
+  const NS = 'http://www.w3.org/2000/svg';
+  const svgs = [];
+  for (let i = 0; i < max; i++) {
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 7 6');
+    svg.setAttribute('class', i < hp ? 'full' : 'empty');
+    HEART_ROWS.forEach((row, y) => [...row].forEach((c, x) => {
+      if (c !== 'X') return;
+      const r = document.createElementNS(NS, 'rect');
+      r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', 1); r.setAttribute('height', 1);
+      svg.append(r);
+    }));
+    svgs.push(svg);
+  }
+  const box = $('hearts');
+  box.replaceChildren(...(svgs.length ? svgs : ['—']));
+  box.setAttribute('aria-label', `${hp} of ${max} lives`);
+}
+
 function renderMemory() {
+  renderHearts();
   $('steps').textContent = game ? game.steps : 0;
   $('explored').textContent = game ? `${Math.round(game.explored_pct)}%` : '0%';
   $('latency').textContent = lastLatency == null ? '—' : `${lastLatency} ms`;
@@ -1014,13 +1046,16 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, e.type === 'caught' ? 'caught' : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, e.type === 'caught' || e.type === 'hit' ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
 }
 
+const BLINK_MS = 120; // knight blink half-period while hit protection lasts
+const lives = (n) => `${n} ${n === 1 ? 'life' : 'lives'} left`;
 const EVENT_TEXT = {
+  hit: (id, e) => `${id} hit Jev — ${e.health > 0 ? lives(e.health) : 'no lives left'}`,
   spotted: (id) => `${id} spotted Jev and gives chase`,
   lost_sight: (id) => `${id} lost sight of Jev and is searching`,
   gave_up: (id) => `${id} gave up the search`,
@@ -1101,6 +1136,15 @@ function logEvents(turn) {
     eventLog.unshift({ step: turn.step ?? game.steps, text: e.at ? `${text} at (${e.at.join(',')})` : text, type: e.type });
   }
   eventLog.length = Math.min(eventLog.length, LOG_MAX);
+  if ((turn.events ?? []).some((e) => e.type === 'hit')) flashHit();
+}
+
+// Brief red flash over the board when Jev loses a life (restarts the CSS animation).
+function flashHit() {
+  const wrap = $('board-wrap');
+  wrap.classList.remove('hit');
+  void wrap.offsetWidth;
+  wrap.classList.add('hit');
 }
 
 // v4 reuses turn.decision for the approach decision ({ trigger, sentiment, tactic, apiMs }).
@@ -1128,7 +1172,7 @@ function renderTurn(turn) {
   logEvents(turn);
   const probs = move?.probabilities ?? { [turn.dir]: 1 };
   $('forced').hidden = !turn.forced;
-  $('probs').replaceChildren(...DIR_ORDER.flatMap((dir) => {
+  $('probs').replaceChildren(...EXPLORER_MOVES.flatMap((dir) => {
     const p = probs[dir];
     const chosen = dir === turn.dir;
     const off = p == null ? ' off' : '';
@@ -1279,9 +1323,9 @@ function endGame() {
   renderButtons();
   const lost = !!game.lost;
   setStatus(lost
-    ? `Jev was caught by an adversary after ${game.steps} steps.`
+    ? `Jev lost all lives after ${game.steps} steps.`
     : `Jev found the treasure in ${game.steps} steps.`);
-  $('over-title').textContent = lost ? 'Caught by an adversary' : 'Treasure found';
+  $('over-title').textContent = lost ? 'Jev lost all lives' : 'Treasure found';
   $('overlay').querySelector('.modal').classList.toggle('lost', lost);
   const stats = {
     Steps: game.steps,
@@ -1311,7 +1355,8 @@ async function reload() {
 
 async function init() {
   let res = await api('GET', '/api/state');
-  if (res.ok && !res.data.game) res = await api('POST', '/api/new'); // no auto-start: page load costs no Jev calls
+  // A ?testbed URL always builds its arena; otherwise keep the server's game. No auto-start: page load costs no Jev calls.
+  if (res.ok && (!res.data.game || TESTBED)) res = await api('POST', '/api/new');
   if (!res.ok) return setStatus(`Server error: ${res.data.error || `HTTP ${res.status}`}`, true);
   loadGame(res.data);
   if (game.over) {

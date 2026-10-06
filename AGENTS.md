@@ -5,17 +5,19 @@ Guide for AI coding agents (and humans) about to change this game. Full API sign
 ## Read this first
 
 1. **Fog of war is a hard rule.** Jev may only receive *known* (lit) cells and adversaries the explorer can *see right now*. Never use `dungeon.tiles`, `dungeon.rooms`, `dungeon.treasure`, `floorCount`, `isFloor` or `floorDistances` in explorer perception. The check scripts run "twin" tests that scramble hidden state and require byte-identical Jev input.
-2. **Jev calls cost money, and only `POST /api/step` makes them.** Each step makes one explorer call (two on a decision tick: sentiment, then tactic + move), unless the move is forced, plus one call per hunting adversary. Every call is hedged ×2 and retried. Page load, `GET /api/state`, `POST /api/new` and both check scripts are free. Don't press Start or hit `/api/step` to "test" something.
+2. **Jev calls cost money. In the game only `POST /api/step` makes them.** Each step makes one explorer call (two on a decision tick: sentiment, then tactic + move), unless the move is forced, plus one call per hunting adversary. Every call is hedged ×2 and retried. The other paid path is `node scripts/run-testbed.mjs --live`. Page load, `GET /api/state`, `POST /api/new`, every `scripts/check-*.mjs` and `run-testbed.mjs` without `--live` are free. Don't press Start, hit `/api/step` or pass `--live` to "test" something unless the user asked for a live run.
 3. **Code values beat CONTRACT.md numbers** (CONTRACT.md:138). Don't "fix" code back to a number written in the contract. See [Known drift](#known-drift-between-contractmd-and-code).
 4. **Never JSON-clone a `Game`.** `game.litOutside` is a `Set`, and cloning breaks `isKnown` near the map edge.
 5. **New files in `public/` must be registered in `server.js` `STATIC`** (server.js:13-18). Anything not listed there returns 404.
-6. **Don't hand-edit `memory.json`, `memory.md` or `adversaries.json`.** They are runtime output, rewritten every step.
-7. **Seeds are deterministic.** Adding, removing or reordering `rng()` calls in `generateDungeon` or `spawnAdversaries` changes every seed's dungeon. `SPAWN_STEPS` (dungeon.js) mirrors `MIN_SPAWN_STEPS` (adversary.js), so change them together.
-8. **Only edit files your role owns** (CONTRACT.md:26; [table below](#repo-map--ownership)). There is no git here, so back up a file before a risky edit.
+6. **A touch is damage, not an instant loss.** An adversary on the explorer's cell costs one life (`hit` event); the game is lost only at 0 lives (`hit` then `caught`). At most one hit per tick, then `GRACE_TICKS` of protection and a knockback. See [Damage](#damage-hits-grace-knockback). Don't reintroduce an instant loss in a new code path.
+7. **Don't hand-edit `memory.json`, `memory.md` or `adversaries.json`.** They are runtime output, rewritten every step.
+8. **Seeds are deterministic.** Adding, removing or reordering `rng()` calls in `generateDungeon` or `spawnAdversaries` changes every seed's dungeon. `SPAWN_STEPS` (dungeon.js) mirrors `MIN_SPAWN_STEPS` (adversary.js), so change them together.
+9. **Only edit files your role owns** (CONTRACT.md:26; [table below](#repo-map--ownership)). There is no git here, so back up a file before a risky edit.
+10. **Test explorer behaviour in the testbed, not in a full dungeon.** `src/testbed.js` builds a small configured arena (size, adversaries, props, chest, or an ASCII map). Use it for any test of how the explorer reacts, and **extend it when your test needs a new knob**: add the option to `DEFAULTS` + `normalizeConfig`, a check in `scripts/check-testbed.mjs`, and a row in [Testbed](#testbed-small-test-arenas). Don't hand-build one-off arenas elsewhere. `dungeon.treasure` **may be `null`** in a testbed arena, so guard any new code that reads it.
 
 ## Overview
 
-Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a knight through a procedurally generated grid dungeon one cell per tick, looking for a treasure chest. Every visited cell permanently lights everything within `LIGHT_RADIUS`, and lit cells are the explorer's known territory. Grey ghost adversaries patrol. When one sees the explorer it switches on its own Jev brain and hunts. The game is lost if a ghost reaches the explorer's cell and won when the explorer steps on the chest. The browser shows an isometric 8-bit view. The Node server holds a single game in memory and makes every Jev call. The API key never reaches the browser.
+Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a knight through a procedurally generated grid dungeon one cell per tick, looking for a treasure chest. Every visited cell permanently lights everything within `LIGHT_RADIUS`, and lit cells are the explorer's known territory. Grey ghost adversaries patrol. When one sees the explorer it switches on its own Jev brain and hunts. A ghost that reaches the explorer's cell costs it one of its 2 lives; the game is lost when the last life goes and won when the explorer steps on the chest. The browser shows an isometric 8-bit view. The Node server holds a single game in memory and makes every Jev call. The API key never reaches the browser.
 
 ## Run & verify
 
@@ -27,7 +29,10 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 | Secrets | `../.env` (`/Users/jakub/jev-playground/.env`, shared with sibling projects). The server throws at startup if `JEV_API_KEY` is missing. Never print the file. |
 | Syntax | `node --check <file>` |
 | World checks | `node scripts/check-dungeon.mjs`: generation, LOS, fog twins, threat sentences, scripted follower, tactic twins. Takes about 18 s, no Jev. `--measure` adds timings (see drift). |
-| Adversary checks | `node scripts/check-adversaries.mjs`: speed, spawning, chase/search/brain-off, parallel brains, fog twins. Uses a stub Jev via `setDecider`. Prints walker stats, which are informational only. |
+| Adversary checks | `node scripts/check-adversaries.mjs`: speed, spawning, chase and damage (hit, grace, knockback, one hit per tick), search/brain-off, parallel brains, fog twins. Uses a stub Jev via `setDecider`. Prints walker stats, which are informational only. |
+| Testbed checks | `node scripts/check-testbed.mjs`: config parsing and validation, arena shape, determinism, props, adversary placement, ASCII maps, then ~25 stubbed ticks per scenario (incl. a fully lit, chest-less arena). Under 1 s, no Jev. |
+| Testbed runner | `node scripts/run-testbed.mjs --size 9x9 --numAdversaries 2 --props few --ticks 30`: plays an arena in the terminal and prints each tick's move, decision trigger, sentiment, tactic, sightings and events, plus an ASCII map after decisions. Any testbed option works as `--<option> <value>`, `--map <file>` reads ASCII rows, `--quiet` drops the maps. **Dry run with stub answers by default (free). `--live` calls the real Jev and costs money.** Memory goes to a temp dir. |
+| Testbed in the browser | `http://localhost:3003/?testbed&size=9x9&numAdversaries=2&props=few&treasure=far&seed=3`. Same keys as the config; `map` rows are split by `/` (URL-encode `#` as `%23`). Page load stays free; Start still costs Jev calls. |
 | Visual check | Headless Chrome, e.g. `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=out.png --window-size=1400,900 http://localhost:3003`, or playwright-core installed in a scratch dir. For an explored state, use a scratch server that serves `public/` and a game simulated with `applyMove`, with no Jev. |
 
 - **Restarting the server loses the game.** It lives in module memory (`game`, `memory`, `busy`). After a restart, `GET /api/state` returns `game: null` until `POST /api/new`. The page does that on load, and it is free.
@@ -38,13 +43,14 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 
 | File(s) | Purpose | Owner |
 | --- | --- | --- |
-| `server.js`, `package.json` | HTTP server, static whitelist, single game | UI agent |
-| `public/index.html`, `public/app.js`, `public/style.css` | Step loop, iso renderer, pane, minimap | UI agent |
+| `server.js`, `package.json` | HTTP server, static whitelist, single game | UI agent (testbed change: `/api/new` parses `{ testbed }`) |
+| `public/index.html`, `public/app.js`, `public/style.css` | Step loop, iso renderer, pane, minimap | UI agent (testbed change: `?testbed` query in `api`/`init`, chest guards in renderer and minimap) |
 | `public/sprites.js` | Pixel-art knight, ghost, chest | sprites agent |
-| `src/dungeon.js`, `scripts/check-dungeon.mjs` | Map gen, lighting, movement, LOS, `publicView` | world agent |
-| `src/characters/explorer/perception.js` | Known state → plain-language facts for Jev | world agent |
-| `src/characters/explorer/brain.js`, `memory.js`, `src/jev.js` | Explorer decisions, memory, Jev client | brain agent (v3: "stay unchanged") |
-| `src/turn.js`, `src/characters/adversary/*` (`adversary.js`, `brain.js`, `memory.js`, `perception.js`), `scripts/check-adversaries.mjs` | World tick, adversary state machine and Jev brains | adversary(-brain) agent |
+| `src/dungeon.js`, `scripts/check-dungeon.mjs` | Map gen, lighting, movement, LOS, `publicView` | world agent (testbed change: `applyMove` treats a `null` treasure as no win) |
+| `src/characters/explorer/perception.js` | Known state → plain-language facts for Jev | world agent (testbed change: `seenTreasureCell` returns `null` for a `null` treasure) |
+| `src/characters/explorer/brain.js`, `memory.js`, `src/jev.js` | Explorer decisions, memory, Jev client | brain agent (v3: "stay unchanged"; the damage change touched only `RULES` and added `noteHit`, by user request) |
+| `src/turn.js`, `src/characters/adversary/*` (`adversary.js`, `brain.js`, `memory.js`, `perception.js`), `scripts/check-adversaries.mjs` | World tick, adversary state machine and Jev brains | adversary(-brain) agent (testbed change: `turn.js` gained `startGame` (shared by `newGame`/`newTestGame`), `newTestGame`, `playTurn`'s optional `dir`, and `view().testbed`) |
+| `src/testbed.js`, `scripts/check-testbed.mjs`, `scripts/run-testbed.mjs` | Small configurable test arenas for explorer behaviour | shared: any agent may add options it needs (keep the checks passing) |
 | `memory.json`, `memory.md`, `adversaries.json` | Runtime output | nobody (generated) |
 
 ## Conventions
@@ -77,6 +83,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
   - With R = 7 the range is **0.13 to 1.0**.
 - Off-map cells that get lit go into `game.litOutside` and count as known wall. That keeps the map edge indistinguishable from rock, which is intentional.
 - Line of sight: `hasLineOfSight` walks a supercover line between cell centres, with endpoints ordered so the result is symmetric. It uses the real tiles. Any `'#'` strictly between the endpoints blocks, and a line through a corner needs both side cells open. **Sight** = LOS and Euclidean distance ≤ `SIGHT_RANGE`.
+- `Game` also has `health` / `maxHealth` (`EXPLORER_LIVES = 2`). `damageExplorer(game, amount, sourceId)` takes lives off, is a no-op once won or lost, and sets `lost` and `caughtBy` only when health reaches 0; it returns `{ health, lost }`. `publicView` (and so `view`) sends `health` and `max_health`; the pane draws them as hearts. Defaults are applied with `??=` next to `lost`/`caughtBy`.
 - `Game` adds `knownFloor` and `litOutside` beyond the contract's shape. `applyMove` returns `{ moved, revealed, revisit, won }` and is a no-op once won or lost.
 - `publicView` sends the full `tiles` to the browser, for the debug Reveal toggle only. The renderer must still hide them; see [Server & UI](#server--ui).
 
@@ -84,7 +91,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 - `APPROACHES` (each with `text` and a first-person `thought` ≤ 60 chars for the UI bubble):
   - Exploration: `nearest_frontier` (default), `largest_unexplored`, `far_side`, `go_to_treasure` (only once the chest is known). `availableApproaches` lists only these.
   - Encounter **tactics** (`tactic: true`, `TACTICS`, `isTactic`): `slip_past`, `run_away` (the old `escape`), `face_off`, `hide`, `race_to_chest` (chest seen), `carry_on` (every visible adversary patrolling).
-- `situation(game)` returns `{ steps, known_floor_cells, here, treasure, unexplored_by_direction, frontier_cells, threats[], encounter }`.
+- `situation(game)` returns `{ steps, lives, hit_protection_steps, known_floor_cells, here, treasure, unexplored_by_direction, frontier_cells, threats[], encounter }`.
   - `known_floor_cells` is a **count**, not a percentage, because a percentage would leak the map size.
   - Unexplored amounts use a fixed 12-cell window and fixed bins, independent of map size.
   - `encounter` is `null` unless an adversary is visible. Otherwise it holds **sentiment-free** sentences: `space` (open room W×H with known ways out, corridor, junction or dead end), `adversaries`, `gap_now` (number), `speed` (from `ADVERSARY_SPEED`), `slip_past` (best route past and its closest approach), `hide`, `run_away`, `dead_ends`, and `chest` (only once seen).
@@ -115,7 +122,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 - Shape: `{ id: 'a1', pos, mode: 'patrol', budget: 0, lastSeen: null, goal: null }`.
 - Patrol routes and the per-game patrol RNG (`seed ^ 0x85ebca6b`) live in WeakMaps so the object keeps its contracted shape. **Don't add fields to it.**
 
-**Constants** (adversary.js:14-16): `ADVERSARY_SPEED = 0.5` (one step per 2 ticks), `CHASE_RANGE = 7`, `MAX_SEARCH_TICKS = 12`. `KEEP_HUNTING_MIN` lives in `adversary/brain.js`.
+**Constants** (adversary.js:14-20): `ADVERSARY_SPEED = 0.5` (one step per 2 ticks), `CHASE_RANGE = 7`, `MAX_SEARCH_TICKS = 12`, `HIT_DAMAGE = 1`, `GRACE_TICKS = 4`. `KEEP_HUNTING_MIN` lives in `adversary/brain.js`.
 
 **Sight vs chase:**
 - `seesExplorer` = Euclidean ≤ `SIGHT_RANGE` + LOS.
@@ -140,20 +147,31 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 - They know the explorer's position only while `seesExplorer` is true. Otherwise they know `last_seen` only.
 - They never know the treasure or what the explorer has explored.
 
-**`stepAdversaries(game)` order** (adversary.js:223-273). These invariants are easy to break:
-1. Return immediately if the game is won or lost.
-2. Run the catch check for every adversary **before anything moves**. This catches the explorer stepping into one.
-3. Advance the tick counter, sort adversaries by id, and run `senseStart` for each.
+### Damage (hits, grace, knockback)
+
+Decided for the damage model (agent 2). Code: `touchCheck`, `knockBack`, `graceLeft` in adversary.js; `damageExplorer` in dungeon.js.
+- **Touch = hit.** An adversary on the explorer's cell (it stepped in, or the explorer stepped onto it) calls `damageExplorer(game, HIT_DAMAGE, a.id)` and emits `{ id, type: 'hit', at, health }` (health after the hit). Only the life-ending hit also emits `{ id, type: 'caught', at }`, right after its `hit`, and `stepAdversaries` returns at once. Patrolling (brain-off) ghosts hit too.
+- **One hit per tick.** Grace is read once at the start of `stepAdversaries` (`protectedNow`) and a per-call `touch.hit` latch blocks any second hit in the same tick, whether two ghosts step in, or two already share the explorer's cell.
+- **Grace.** A hit sets `game.graceTicks = GRACE_TICKS` (4). Each `stepAdversaries` call starts by reading and then decrementing it, so the next 4 ticks cannot hurt; the 5th can. A ghost needs `1/ADVERSARY_SPEED = 2` ticks per step, so a standing explorer is hit again 6 ticks later (asserted in the check). `graceTicks` is a game field (defaulted with `??= 0` in turn.js and the check scripts); `graceLeft(game)` reads it. There is no per-adversary cooldown, so no WeakMap is needed for it.
+- **Knockback.** Any adversary on a living explorer's cell after a touch check is moved off it, so a ghost never ends a tick inside the explorer: the hitter, and during grace any ghost that touches it (it is only bounced, no event). An adversary that just stepped in goes back to the cell it came from; one found there before moving (the explorer stepped in) goes to the first floor neighbour in `DIRS` order that is not the explorer's cell, preferring one that is not the explorer's previous trail cell; boxed in, it stays. Knockback sets `budget = 0` (no step, and no Jev call, straight after) and clears the patrol route. No `rng()` is used.
+- **Known consequence.** A brain-on adversary next to the explorer still takes the forced move onto its cell during grace (`adversary/brain.js` code policy) and is bounced every time it steps; the first such step after grace is a hit. That is intended: standing next to a ghost is not safe.
+- **Explorer text.** `RULES` says a touch costs one life, gives `EXPLORER_LIVES` and `GRACE_TICKS`. `situation.lives` (= `game.health`) and `situation.hit_protection_steps` (= `graceLeft`) are the explorer's own state, so fog-safe (twins share them through `...game`). The step-into move fact starts `Steps into the adversary:` and says "costs 1 life (N of M left) and it is knocked back", "costs your last life and the game is lost", or "no life lost while your hit protection lasts" during grace. A non-lethal hit adds a memory finding via `brain.noteHit` (turn.js); the lethal one keeps `noteCaught`.
+- **Adversary text.** Adversary `rules` and the "Steps onto the explorer" move fact say it hits (a life), not that it wins. `danger` in explorer memory is not reset on a hit.
+
+**`stepAdversaries(game)` order** (adversary.js, `stepAdversaries`). These invariants are easy to break:
+1. Return immediately if the game is won or lost. Read grace (`protectedNow`), then decrement `game.graceTicks`.
+2. Sort adversaries by id and run the touch check for each **before anything moves**. This catches the explorer stepping into one. Only a lethal hit returns early; a non-lethal hit lets the tick go on.
+3. Advance the tick counter and run `senseStart` for each.
 4. Add `ADVERSARY_SPEED` to every budget. An adversary moves at most one step per tick.
 5. Adversaries with `budget >= 1` and the brain on call Jev **in parallel**, all from the same post-explorer snapshot.
-6. Apply steps **in id order**. A failed Jev call falls back to a code BFS move with `console.warn`. Brain-off adversaries take a patrol step. Run the catch check after each step. Two adversaries may share a cell.
+6. Apply steps **in id order**. A failed Jev call falls back to a code BFS move with `console.warn`. Brain-off adversaries take a patrol step. Run the touch check after each step (knockback to the previous cell). Two adversaries may share a cell, but never the living explorer's.
 7. Return `{ events, turns }`.
 
 **`src/turn.js`:**
 - `newGame(seed?)` generates, creates and spawns. It costs no Jev calls.
-- `playTurn` runs the explorer's `takeTurn`, then `stepAdversaries`, then `saveMemories(..., DIR)` (writes `adversaries.json`), then `brain.noteCaught` if the game was newly lost.
+- `playTurn` runs the explorer's `takeTurn`, then `stepAdversaries`, then `saveMemories(..., DIR)` (writes `adversaries.json`), then `brain.noteCaught` if the game was newly lost, else `brain.noteHit` if a `hit` event fired.
 - The `brain` import is a namespace import on purpose.
-- `view(game)` sends the **full** adversary list, each as `{ id, pos, mode, visible, brain }`. The UI hides adversaries that aren't visible unless Reveal is on.
+- `view(game)` sends the **full** adversary list, each as `{ id, pos, mode, visible, brain }`, plus `grace_ticks` and `invulnerable` (grace > 0). The UI hides adversaries that aren't visible unless Reveal is on.
 
 ## Explorer brain, memory & Jev client
 
@@ -219,9 +237,38 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 - `approach.thought` is ≤ 60 chars and set for every approach. On resume it is looked up by id.
 - `sentiment.since_step` moves only when the mood changes. `sentiment_history` keeps the last 5 picks.
 - `saveMemory` validates the shape (and throws if it's wrong), then writes `memory.json` (the source of truth, also sent verbatim to Jev as `state.memory`) and `memory.md` (rendering only, never read back).
-- It runs at the end of every `takeTurn` and in `noteCaught`.
+- It runs at the end of every `takeTurn` and in `noteCaught` / `noteHit`.
 - **Any new memory field reaches Jev, so it must be fog-safe** and fit the validation limits: findings 12, tried 5, fact 200 chars, thought 60, profile_note 200, sentiment_history 5.
 - The revisit window lives in a WeakMap, so it never reaches Jev or disk. The same goes for the brain's encounter bookkeeping and tactic goals.
+
+## Testbed (small test arenas)
+
+`src/testbed.js` builds a tiny arena instead of a generated dungeon, so explorer reactions (to adversaries, cover, corridors, open space) can be watched in isolation. `buildArena(config)` returns `{ dungeon, adversaries, config }`; `turn.js` `newTestGame(config)` turns it into `{ game, memory }` through the same `startGame` as `newGame`, so both start from identical state. It costs no Jev calls.
+
+**Config** (all optional; JSON values or URL-query strings, coerced and validated by `normalizeConfig`):
+
+| Key | Default | Meaning / validation |
+| --- | --- | --- |
+| `size` | `[11, 11]` | Interior floor `[w, h]`, `"WxH"` or one number; each side 3..60. The map is `(w+2)×(h+2)` with a wall ring, so floor is x 1..w, y 1..h. |
+| `seed` | `1` | Drives prop and adversary placement and the patrol RNG. Same config → same arena. |
+| `start` | `'center'` | `[x, y]` / `"x,y"` (wall ring included in coordinates) or `'center'`. Must be inside floor. |
+| `treasure` | `null` | `null`/`'none'` (no chest: the game only ends when caught), `'far'` (a floor cell farthest from the start by path), or `[x, y]`. Must be reachable. |
+| `numAdversaries` | `1` | 0..8, placed at random on floor at least `minAdversaryGap` steps (path) from the start, never on the chest. |
+| `adversaries` | `null` | Explicit cells `[[x, y], …]` (URL: `"x,y;x,y"`); overrides `numAdversaries`. |
+| `minAdversaryGap` | `4` | Minimum path distance for random adversaries (≥ 1). |
+| `adversariesInSight` | `null` | `true`/`false` restricts random adversaries to cells the start can / can't see (`SIGHT_RANGE` + LOS). `null` = either. |
+| `props` | `'none'` | `'none'`, `'few'`, `'many'` (random 1-3 cell solid clusters plus small props; never next to the start or chest, never cutting floor off), or an explicit list `[{ kind, x, y, flip? }]` of `SOLID_KINDS`/`SMALL_KINDS`. Presets are ignored when `map` is given. |
+| `map` | `null` | ASCII rows (array, or one string split by newlines or `/`) overriding `size`, `start` and the shape: `#` wall, `.` floor, `@` start (required), `T` chest, `A` adversary, `p` solid prop, `s` small prop. Border must be wall; rows equal length; 5..62 per side. `A` cells override `numAdversaries`; with no `T`, `treasure` still applies. |
+
+Unknown keys, bad values and impossible placements throw `TestbedError` with a readable message (the server answers **400**).
+
+**How a testbed arena differs from a dungeon** (expect these when reading results):
+- Arenas up to 9×9 with a centred start are **fully lit at step 0** (`LIGHT_RADIUS = 7`), and the default 11×11 leaves only its corners dark: little or no frontier, nothing to explore, and a placed chest is usually seen at once, so the explorer goes straight to `go_to_treasure`. To test reactions to adversaries, leave `treasure` out, or hide the chest out of light with a `map` (e.g. at the end of a corridor longer than 7).
+- `rooms` is one room over the whole inside, so patrols wander the whole arena. `decor` is always empty. `dungeon.testbed` is `true`, and `view` sends `testbed: true`.
+- Adversaries use the contracted shape and start in `patrol`; they do not go through `spawnAdversaries` (its 20-step / out-of-sight rule can't hold in a small room).
+- `generateDungeon` and its `rng()` order are untouched; the testbed uses its own stream (`seed ^ 0x51ed27a3`).
+
+**Adding an option:** add it to `DEFAULTS`, parse and validate it in `normalizeConfig` (accept URL strings too), apply it in `buildArena`, cover it in `check-testbed.mjs`, and add a row to the table above.
 
 ## Server & UI
 
@@ -229,12 +276,13 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 - Routes:
   - `GET /`, `/app.js`, `/style.css`, `/sprites.js` (the `STATIC` whitelist).
   - `GET /api/state` → `{ game: view|null, memory }`.
-  - `POST /api/new` → `{ game, memory }`. It waits for any in-flight step.
+  - `POST /api/new` → `{ game, memory }`. It waits for any in-flight step. An optional body `{ testbed: {...} }` builds a [testbed arena](#testbed-small-test-arenas) instead; a bad config returns **400** with the reason, a non-JSON body 400.
   - `POST /api/step` → `{ game, memory, turn }`. Returns **409** for no game, game over, or a step already running, and 502 if the turn throws.
 - `.env` is loaded *before* the dynamic `import('./src/turn.js')`. Keep that order.
 
 **Step loop** (`public/app.js`):
-- `init` never auto-starts, so a page load costs nothing.
+- `init` never auto-starts, so a page load costs nothing. With `?testbed…` in the URL, `init` and Reload always `POST /api/new` with the query as the testbed config (so the page shows that arena, not the server's current game).
+- The chest may be absent (`game.treasure === null`) in a testbed arena; the renderer and minimap skip it.
 - One `loop()` runs at a time. `epoch` is captured per request and bumped by Reload, and stale answers are dropped.
 - A 409 on a finished game ends the loop quietly. Any other failure pauses with a message.
 
@@ -272,6 +320,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
   - Facing is tracked per adversary id, plus `'@'` for the explorer, and resets only on Reload (`syncActors(true)`).
   - Mirroring is `scale(-1,1)` around `anchorX`.
 - Entities tween over 150 ms with smoothstep. A ghost that jumped more than one cell, or wasn't drawn last time, snaps instead of streaking.
+- Damage: a `hit` event logs "a1 hit Jev — 1 life left" (red, `li.hit`) and flashes the board red (`.board-wrap.hit::after`, 450 ms). While `game.invulnerable` the knight blinks (`BLINK_MS = 120`). The overlay text for the final loss is unchanged.
 - Ghosts bob 2 px over 1.6 s and cast a floor shadow. A chasing ghost has a red pulsing glow, and a ghost with its brain on shows a cyan marker.
 - The minimap stays top-down, is rebuilt only when `miniDirty` is set, and draws the rotated viewport outline.
 - Theme:
@@ -287,11 +336,13 @@ The code is the source of truth in every row.
 | Adversary speed | :138 "`ADVERSARY_SPEED` is now 0.65" | **0.5** (adversary.js:14). Contract :37/:66, the check script and `RULES` all say 0.5. The :138 note is stale. |
 | Light radius | 4 (:5, :43) | **7** (dungeon.js:4) |
 | Map size | 35..150 (:33, :43, :61, :152) | **25..90** (dungeon.js:6-7) |
-| Adversary events | `spotted \| lost_sight \| gave_up \| caught` (:78) | `spotted`, `lost_sight`, `caught`, `brain_on`, `brain_off`. `gave_up` is never emitted. |
+| Adversary events | `spotted \| lost_sight \| gave_up \| caught` (:78) | `spotted`, `lost_sight`, `hit`, `caught`, `brain_on`, `brain_off`. `gave_up` is never emitted. `caught` now follows only the life-ending `hit`. |
+| Catch = loss | Reaching the explorer's cell loses the game | It costs one life (`EXPLORER_LIVES = 2`); see [Damage](#damage-hits-grace-knockback). |
 | UI graphics | v2 text: ~18 px square cells, "red circles" (:113-116) | Isometric pixel art per the v3 Look section (:118) |
 | Wall height | ~0.6 tile | `WALL_H 11 / TH 16` ≈ 0.69 |
 | Old import paths | :26 says `check-dungeon.mjs`/`server.js` still import old paths | Already fixed |
 | `check-dungeon --measure` | n/a | Still uses `seedsOfSize(140,150)` and labels "~150x150" (check-dungeon.mjs:387). With `MAX_SIZE = 90` no seed qualifies, so the large-map timing is empty or may break. The minimum-size test uses 35×35, not 25×25. Not yet run. |
+| Treasure | Always a cell `[x, y]` | `null` in a testbed arena with no chest. `applyMove`, perception and the renderer guard it. |
 | Renderer light floor | Palette spec: navy at light 0.2 | With `LIGHT_RADIUS = 7`, light goes down to 0.13. `bandOf` clamps everything below 0.2 into the coldest band, so the outer ring of each light pool looks flat. |
 
 ## Open questions & known issues

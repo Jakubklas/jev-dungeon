@@ -26,7 +26,7 @@ function rules(speed, maxSearchTicks) {
     'A dungeon on a grid of walls and floor. You are one of several adversaries hunting an explorer who is looking for a hidden treasure chest. ' +
     `You move one cell per step (up, down, left or right) at ${Math.round(speed * 100)}% of the explorer's speed, so you cannot outrun it in a straight race. ` +
     'You know the whole map. You see the explorer only with a clear line of sight within 7 cells; out of sight you only know where and when you last saw it and which way it was heading. ' +
-    'You catch the explorer by stepping onto its cell. Adversaries may share a cell. ' +
+    'Stepping onto the explorer\'s cell hits it: it loses a life and you are knocked back; it is caught when its last life is gone, and right after a hit it cannot be hurt for a few ticks. Adversaries may share a cell. ' +
     `If you stop hunting, or go ${maxSearchTicks} ticks without seeing the explorer, you go back to patrolling.`
   );
 }

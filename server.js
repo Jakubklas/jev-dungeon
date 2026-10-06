@@ -7,7 +7,8 @@ import { readFile } from 'node:fs/promises';
 // importing the turn module (it pulls in the brain and jev.js, which may read the key at load).
 process.loadEnvFile(new URL('../.env', import.meta.url));
 if (!process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is missing from .env');
-const { newGame, playTurn, view } = await import('./src/turn.js');
+const { newGame, newTestGame, playTurn, view } = await import('./src/turn.js');
+const { TestbedError } = await import('./src/testbed.js');
 
 const PORT = Number(process.env.PORT) || 3003;
 const STATIC = {
@@ -43,11 +44,12 @@ function send(res, status, body, type = 'application/json') {
   res.end(type === 'application/json' ? JSON.stringify(body) : body);
 }
 
-async function startNewGame() {
+// `testbed`: a config for src/testbed.js (a small test arena), or null for a normal dungeon.
+async function startNewGame(testbed = null) {
   while (busy) await busy.catch(() => {});
-  ({ game, memory } = newGame());
+  ({ game, memory } = testbed ? newTestGame(testbed) : newGame());
   const d = game.dungeon;
-  console.log(`New dungeon, seed ${d.seed}, ${d.width}x${d.height}, ${game.adversaries?.length ?? 0} adversaries`);
+  console.log(`New ${testbed ? 'testbed arena' : 'dungeon'}, seed ${d.seed}, ${d.width}x${d.height}, ${game.adversaries?.length ?? 0} adversaries`);
   return snapshot();
 }
 
@@ -76,8 +78,19 @@ createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/api/new') {
-      await readBody(req); // no options yet; drain and ignore
-      return send(res, 200, await startNewGame());
+      // Optional body { testbed: {...} } (see AGENTS.md "Testbed"). Anything else starts a normal dungeon.
+      let opts = {};
+      try {
+        opts = JSON.parse((await readBody(req)) || '{}') ?? {};
+      } catch {
+        return send(res, 400, { error: 'Body must be JSON.' });
+      }
+      try {
+        return send(res, 200, await startNewGame(opts.testbed ?? null));
+      } catch (err) {
+        if (err instanceof TestbedError) return send(res, 400, { error: `Bad testbed config: ${err.message}` });
+        throw err;
+      }
     }
 
     if (req.method === 'POST' && path === '/api/step') {

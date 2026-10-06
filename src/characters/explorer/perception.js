@@ -10,8 +10,8 @@
 // and `tacticOptions(game, minGap)` turns them into the feasible tactics for one sentiment's
 // minimum gap. Line of sight here is judged over known tiles only: unknown cells block.
 
-import { DIRS, LIGHT_RADIUS, legalMoves, isKnown, knownTile, knownFloorCount } from '../../dungeon.js';
-import { ADVERSARY_SPEED, visibleAdversaries } from '../adversary/adversary.js';
+import { DIRS, LIGHT_RADIUS, STAY, legalMoves, isKnown, knownTile, knownFloorCount } from '../../dungeon.js';
+import { ADVERSARY_SPEED, graceLeft, visibleAdversaries } from '../adversary/adversary.js';
 
 // `thought` is the first-person line the UI shows in the explorer's thought bubble (≤ 60 chars).
 // Tactics (`tactic: true`) are encounter approaches: chosen in a decision step, never logged in `tried`.
@@ -70,7 +70,7 @@ export function speedPhrase() {
 // The one place that touches the treasure position, and only once it is lit.
 function seenTreasureCell(game) {
   const t = game.dungeon.treasure;
-  return isKnown(game, t) ? t : null;
+  return t && isKnown(game, t) ? t : null; // null treasure: a testbed arena with no chest
 }
 
 export function treasureSeen(game) {
@@ -566,6 +566,8 @@ export function situation(game) {
   const threats = threatsOf(game);
   return {
     steps: game.steps,
+    lives: game.health, // the explorer's own state: fog-safe
+    hit_protection_steps: graceLeft(game), // steps left in which no adversary can hurt it (0 = none)
     known_floor_cells: knownFloorCount(game), // a count, not a %: a % would leak the dungeon's size
     here: hereKind(game),
     treasure,
@@ -591,12 +593,20 @@ function visitSentence(n) {
   return `Visited ${n} times already.`;
 }
 
+// What stepping onto an adversary costs: a life (the last one ends the game), or nothing while
+// the hit protection after an earlier hit lasts (the adversary is only pushed off the cell).
+function touchSentence(game) {
+  if (graceLeft(game) > 0) return 'Steps into the adversary: no life lost while your hit protection lasts; it is pushed off your cell.';
+  if (game.health <= 1) return 'Steps into the adversary: costs your last life and the game is lost.';
+  return `Steps into the adversary: costs 1 life (${game.health - 1} of ${game.maxHealth} left) and it is knocked back.`;
+}
+
 // Threat sentences for one move, one per visible adversary.
 function threatSentences(game, threats, dest, minGap) {
   const facts = [];
   for (const th of threats) {
     if (sameCell(dest, th.pos)) {
-      facts.unshift('Steps into the adversary: caught.');
+      facts.unshift(touchSentence(game));
       continue;
     }
     const where = threats.length > 1 ? ` to the ${compass8(game.pos, th.pos)}` : '';
@@ -608,6 +618,19 @@ function threatSentences(game, threats, dest, minGap) {
     else facts.push(`Keeps the same distance from ${who} ${gap}.`);
   }
   return facts;
+}
+
+// Facts about standing still: nothing is revealed and the position (and every distance) stays put,
+// so with an adversary in sight it only lets the gap shrink as the adversary moves.
+function stayFacts(game, approachId, threats, minGap) {
+  const facts = ['Stands still: stays on this cell, reveals nothing new, and the step passes.'];
+  for (const th of threats) {
+    const d = threatDistance(th, game.pos);
+    const who = th.chasing ? 'the chasing adversary' : 'an adversary';
+    facts.push(`${who} is ${plural(d, 'step')} away${d < minGap ? `, below your minimum gap of ${minGap}` : ''} and keeps moving while you wait.`);
+  }
+  if (!threats.length) facts.push('With no adversary in sight, waiting makes no progress toward the approach target.');
+  return facts.join(' ');
 }
 
 // Plain-language facts about each legal move, for Jev to judge.
@@ -687,5 +710,6 @@ export function describeMoves(game, approachId, { minGap = DEFAULT_MIN_GAP, goal
     }
     out[dir] = facts.join(' ');
   }
+  if (legalMoves(game).length) out[STAY] = stayFacts(game, approachId, threats, minGap);
   return out;
 }

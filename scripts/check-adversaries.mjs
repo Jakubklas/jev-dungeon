@@ -2,9 +2,9 @@
 // the adversary brains get a stub decider (setDecider) that never touches the network.
 // Run from the dungeon-game directory: node scripts/check-adversaries.mjs
 
-import { DIRS, SIGHT_RANGE, applyMove, createGame, floorDistances, generateDungeon, hasLineOfSight, isFloor, legalMoves, rng } from '../src/dungeon.js';
+import { DIRS, EXPLORER_LIVES, SIGHT_RANGE, applyMove, createGame, floorDistances, generateDungeon, hasLineOfSight, isFloor, legalMoves, rng } from '../src/dungeon.js';
 import {
-  ADVERSARY_SPEED, CHASE_RANGE, MAX_SEARCH_TICKS, seesExplorer, setDecider, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
+  ADVERSARY_SPEED, CHASE_RANGE, GRACE_TICKS, MAX_SEARCH_TICKS, graceLeft, seesExplorer, setDecider, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
 } from '../src/characters/adversary/adversary.js';
 import { lastRequestBody, memoryOf } from '../src/characters/adversary/brain.js';
 import { validateMemory } from '../src/characters/adversary/memory.js';
@@ -31,6 +31,9 @@ function handMap(rows, rooms = [{ x: 1, y: 1, w: rows[0].length - 2, h: rows.len
   const game = createGame(dungeon);
   game.lost ??= false;
   game.caughtBy ??= null;
+  game.health ??= EXPLORER_LIVES;
+  game.maxHealth ??= EXPLORER_LIVES;
+  game.graceTicks ??= 0;
   game.adversaries = [];
   return game;
 }
@@ -150,7 +153,9 @@ const expectedSteps = (ticks, b = 0) => {
   console.log('line of sight: walls block, range holds');
 }
 
-// 4. Chase: a standing explorer gets closed in on and caught.
+// 4. Chase and damage: a standing explorer gets closed in on and hit (one life), the hitter is
+// knocked back, grace keeps the next touches harmless, and the last life goes on the first touch
+// after grace. EXPLORER_LIVES = 2 is assumed by the "first hit is not the loss" checks.
 {
   const game = handMap([
     '#################',
@@ -161,12 +166,13 @@ const expectedSteps = (ticks, b = 0) => {
   ]);
   const a = adversary('a1', [7, 3]);
   game.adversaries = [a];
+  check(EXPLORER_LIVES === 2, `damage checks assume 2 lives, EXPLORER_LIVES is ${EXPLORER_LIVES}`);
   check(startsChase(game, a), 'chase: trigger not met within CHASE_RANGE');
   resetStub(game);
   const events = [];
   const startD = pathSteps(game.dungeon, a.pos, game.pos);
-  let prev = startD, ticks = 0;
-  while (ticks < 40 && !game.lost) {
+  let prev = startD, ticks = 0, hitTick = 0;
+  while (ticks < 40 && !hitTick) {
     ticks++;
     const before = [...a.pos];
     const res = await stepAdversaries(game);
@@ -177,33 +183,94 @@ const expectedSteps = (ticks, b = 0) => {
       check(memoryOf(a).brain.on && memoryOf(a).approach.id === 'direct_pursuit', 'brain_on: memory not on/direct_pursuit');
       check(res.turns[0]?.brain === 'on', 'brain_on: turn not marked on');
     }
+    if (res.events.some((e) => e.type === 'hit')) hitTick = ticks;
     const d = pathSteps(game.dungeon, a.pos, game.pos) ?? 0;
     // Every chaser step is along a true shortest path: the path distance drops by exactly one.
-    check(same(before, a.pos) ? d === prev : d === prev - 1, `chase: tick ${ticks} path distance ${prev} -> ${d}`);
+    // On the hit tick the knockback puts it back on the cell it came from (distance unchanged).
+    if (hitTick === ticks) check(same(before, a.pos) && d === prev, `hit: knockback not to the previous cell (${a.pos})`);
+    else check(same(before, a.pos) ? d === prev : d === prev - 1, `chase: tick ${ticks} path distance ${prev} -> ${d}`);
     prev = d;
   }
   check(events[0]?.type === 'spotted', 'chase: no spotted event');
-  check(game.lost && game.caughtBy === 'a1', 'chase: not caught');
   let wantTicks = 1;
   while (expectedSteps(wantTicks) < startD) wantTicks++;
-  check(ticks === wantTicks, `chase: caught after ${ticks} ticks from ${startD} steps, want ${wantTicks}`);
-  check(events.some((e) => e.type === 'caught' && e.id === 'a1' && same(e.at, game.pos)), 'chase: no caught event');
-  // Every step but the catching one asked the brain (the catch is a code policy).
+  check(hitTick === wantTicks, `hit: first hit after ${hitTick} ticks from ${startD} steps, want ${wantTicks}`);
+  const hit = events.find((e) => e.type === 'hit');
+  check(hit?.id === 'a1' && same(hit.at, game.pos) && hit.health === 1, `hit: event ${JSON.stringify(hit)}`);
+  check(!game.lost && game.health === 1 && game.caughtBy === null, 'hit: first touch lost the game');
+  check(!events.some((e) => e.type === 'caught'), 'hit: caught emitted for a non-lethal hit');
+  check(graceLeft(game) === GRACE_TICKS, `hit: grace ${graceLeft(game)}, want ${GRACE_TICKS}`);
+  check(!same(a.pos, game.pos), 'hit: hitter still on the explorer');
+  // Every step but the hitting one asked the brain (the touch is a code policy).
   check(stub.calls.length === startD - 1, `chase: ${stub.calls.length} brain calls for ${startD} steps, want ${startD - 1}`);
   check(stub.calls.every((c) => c.state.situation.explorer.in_sight && c.questions.join() === 'next_move'), 'chase: chase requests should ask next_move only, explorer in sight');
+
+  // Grace: the adjacent ghost keeps stepping in (forced move) but is bounced and does no damage.
+  // It steps every 1/ADVERSARY_SPEED ticks, so the first step after grace is the lethal one.
+  const every = Math.round(1 / ADVERSARY_SPEED);
+  const wantSecond = hitTick + every * (Math.floor(GRACE_TICKS / every) + 1);
+  let secondTick = 0, lastEvents = [];
+  while (ticks < hitTick + 40 && !game.lost) {
+    ticks++;
+    lastEvents = (await stepAdversaries(game)).events;
+    if (!game.lost) check(!same(a.pos, game.pos), `grace: ghost left on the explorer at tick ${ticks}`);
+    if (lastEvents.some((e) => e.type === 'hit')) secondTick ||= ticks;
+  }
+  check(secondTick === wantSecond, `grace: second hit at tick ${secondTick}, want ${wantSecond} (grace ${GRACE_TICKS})`);
+  check(game.lost && game.caughtBy === 'a1' && game.health === 0, 'chase: not lost after the last life');
+  const types = lastEvents.map((e) => e.type).join();
+  check(types === 'hit,caught', `chase: lethal tick events ${types}, want hit,caught`);
+  check(lastEvents[0]?.health === 0 && same(lastEvents[1]?.at ?? [-1, -1], game.pos), 'chase: lethal hit/caught event shape');
   check((await stepAdversaries(game)).events.length === 0, 'chase: adversaries still act after the loss');
   check(applyMove(game, 'right').moved === false, 'chase: explorer can still move after the loss');
   check(legalMoves(game).length === 0, 'chase: legalMoves not empty after the loss');
-  console.log(`chase: standing explorer caught after ${ticks} ticks from ${startD} path steps`);
+  console.log(`damage: standing explorer hit after ${hitTick} ticks from ${startD} path steps, caught on the next touch after ${GRACE_TICKS} grace ticks (tick ${secondTick})`);
 
-  // Stepping into an adversary counts, before any adversary moves.
+  // Stepping into an adversary costs one life (not the game), before any adversary moves; the
+  // adversary is pushed off the cell, not back onto the explorer's previous cell.
   const g3 = handMap(['#######', '#E...T#', '#######']);
   const c = adversary('a2', [2, 1], { budget: 0 });
   g3.adversaries = [c];
   applyMove(g3, 'right');
   resetStub(g3);
   const ev3 = (await stepAdversaries(g3)).events;
-  check(g3.lost && g3.caughtBy === 'a2' && ev3[0]?.type === 'caught', 'chase: stepping into an adversary is not a loss');
+  check(!g3.lost && g3.health === 1 && ev3[0]?.type === 'hit' && ev3[0].id === 'a2', `step-in: ${JSON.stringify(ev3)} health ${g3.health}`);
+  check(same(c.pos, [3, 1]), `step-in: a2 knocked to ${c.pos}, want 3,1`);
+  check(stub.calls.length === 0, 'step-in: knocked-back adversary still asked its brain this tick');
+
+  // Two ghosts adjacent to a standing explorer, both stepping in this tick: one life, not two.
+  const twoGhosts = () => handMap(['#########', '#.......#', '#...E...#', '#......T#', '#########']);
+  const g4 = twoGhosts();
+  const l = adversary('a1', [3, 2], { budget: 0.5 }), r = adversary('a2', [5, 2], { budget: 0.5 });
+  g4.adversaries = [l, r];
+  resetStub(g4);
+  const ev4 = (await stepAdversaries(g4)).events;
+  check(ev4.filter((e) => e.type === 'hit').length === 1 && g4.health === 1 && !g4.lost, `two ghosts adjacent: ${ev4.map((e) => e.type)} health ${g4.health}`);
+  check(!same(l.pos, g4.pos) && !same(r.pos, g4.pos), 'two ghosts adjacent: a ghost left on the explorer');
+
+  // Two ghosts already on the explorer's cell before anything moves: one life, both pushed off.
+  const g5 = twoGhosts();
+  const p = adversary('a2', [4, 2]), q = adversary('a1', [4, 2]);
+  g5.adversaries = [p, q]; // array order != id order: the hit goes to a1 (id order)
+  resetStub(g5);
+  const ev5 = (await stepAdversaries(g5)).events;
+  const hits5 = ev5.filter((e) => e.type === 'hit');
+  check(hits5.length === 1 && hits5[0].id === 'a1' && g5.health === 1 && !g5.lost, `two ghosts on the cell: ${JSON.stringify(hits5)} health ${g5.health}`);
+  check(!same(p.pos, g5.pos) && !same(q.pos, g5.pos), 'two ghosts on the cell: a ghost left on the explorer');
+
+  // Grace stops an immediate re-hit: the explorer steps straight back into a ghost next tick.
+  const g6 = twoGhosts();
+  const s6 = adversary('a1', [4, 2]);
+  g6.adversaries = [s6];
+  resetStub(g6);
+  await stepAdversaries(g6); // hit, a1 knocked off
+  const from6 = [...g6.pos];
+  const dir6 = Object.keys(DIRS).find((d) => same([from6[0] + DIRS[d][0], from6[1] + DIRS[d][1]], s6.pos));
+  applyMove(g6, dir6);
+  const ev6 = (await stepAdversaries(g6)).events;
+  check(g6.health === 1 && !ev6.some((e) => e.type === 'hit') && !same(s6.pos, g6.pos), `grace: re-hit right after a hit (${ev6.map((e) => e.type)}, health ${g6.health})`);
+  check(graceLeft(g6) === GRACE_TICKS - 1, `grace: ${graceLeft(g6)} left after one tick, want ${GRACE_TICKS - 1}`);
+  console.log('damage: step-in costs a life, two ghosts cost one life per tick, grace blocks a re-hit');
 }
 
 // 5. Losing sight: chase -> search (brain still on) -> brain_off after MAX_SEARCH_TICKS -> patrol.
@@ -361,6 +428,9 @@ async function walk(seed, policy, maxTicks = 3000) {
   const game = createGame(dungeon);
   game.lost ??= false;
   game.caughtBy ??= null;
+  game.health ??= EXPLORER_LIVES;
+  game.maxHealth ??= EXPLORER_LIVES;
+  game.graceTicks ??= 0;
   game.adversaries = spawnAdversaries(dungeon);
   resetStub(game);
   const rand = rng(seed * 7919 + 13);

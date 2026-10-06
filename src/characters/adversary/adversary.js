@@ -3,7 +3,7 @@
 // Brain on (mode 'chase' while it sees the explorer, 'search' otherwise): every step is a Jev
 // decision (brain.js), made in parallel for all adversaries stepping this tick.
 // Adversaries know the real map; the explorer does not.
-import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
+import { DIRS, SIGHT_RANGE, damageExplorer, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
 import {
   KEEP_HUNTING_MIN, applyDecision, decide, huntOf, hunted, lostSight, searchTick, seen, sweepFrom, switchOff, switchOn,
 } from './brain.js';
@@ -14,6 +14,10 @@ export { setDecider, lastRequest, brainView, memoryOf } from './brain.js';
 export const ADVERSARY_SPEED = 0.5; // budget gained per tick; one step per whole point
 export const CHASE_RANGE = 7; // chase trigger distance, kept apart from SIGHT_RANGE on purpose
 export const MAX_SEARCH_TICKS = 12; // ticks without sight before code switches the brain off
+export const HIT_DAMAGE = 1; // lives an adversary's touch takes
+// Ticks after a hit during which no touch hurts (game.graceTicks counts them down). A knocked-back
+// adversary needs 1/ADVERSARY_SPEED = 2 ticks to step back in, so 4 gives the explorer a real head start.
+export const GRACE_TICKS = 4;
 const MIN_SPAWN_STEPS = 20; // path distance from the explorer's start
 const FLOOR_PER_ADVERSARY = 700;
 const MAX_ADVERSARIES = 8;
@@ -206,29 +210,69 @@ function codeHuntDir(game, a) {
   return Object.keys(DIRS).find((dir) => dist.get(key(stepCell(a.pos, dir))) === d - 1) ?? null;
 }
 
-function catchCheck(game, a, events) {
+// Deterministic knockback: the adversary leaves the explorer's cell. Back to `from` (the cell it
+// stepped in from) when given, else the first floor neighbour in DIRS order that is not the
+// explorer's cell, preferring one that is not the cell the explorer just came from. Stays put
+// only when boxed in. No rng, so seeds stay reproducible.
+function knockBack(game, a, from = null) {
+  routes.delete(a); // patrol routes assume contiguous cells
+  a.budget = 0; // no step straight back in this tick
+  if (from && isFloor(game.dungeon, from) && !same(from, game.pos)) {
+    a.pos = [...from];
+    return;
+  }
+  const prev = game.trail?.length > 1 ? game.trail.at(-2) : null;
+  const options = neighbours(game.dungeon, a.pos).filter((c) => !same(c, game.pos));
+  const pick = options.find((c) => !prev || !same(c, prev)) ?? options[0];
+  if (pick) a.pos = pick;
+}
+
+// Touch check: an adversary on the explorer's cell. Outside grace and with no hit yet this tick it
+// takes HIT_DAMAGE lives (event 'hit', plus 'caught' when that was the last life), starts the
+// grace period and is knocked back. During grace (or after this tick's hit) a touching adversary
+// is only knocked back, so no adversary ever ends a tick on a living explorer. Returns true when
+// the game is now lost.
+function touchCheck(game, a, events, touch, from = null) {
   if (game.lost || !same(a.pos, game.pos)) return false;
-  game.lost = true;
-  game.caughtBy = a.id;
-  events.push({ id: a.id, type: 'caught', at: [...a.pos] });
-  return true;
+  if (touch.canHit()) {
+    touch.hit = true;
+    const { health, lost } = damageExplorer(game, HIT_DAMAGE, a.id);
+    events.push({ id: a.id, type: 'hit', at: [...a.pos], health });
+    if (lost) {
+      events.push({ id: a.id, type: 'caught', at: [...a.pos] });
+      return true;
+    }
+    game.graceTicks = GRACE_TICKS;
+  }
+  knockBack(game, a, from);
+  return false;
+}
+
+// Grace ticks left after the latest hit (0 = the explorer can be hit). Fog-safe: it is the
+// explorer's own state.
+export function graceLeft(game) {
+  return game.graceTicks ?? 0;
 }
 
 const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 
-// One tick for every adversary. Also catches an explorer that stepped onto an adversary.
+// One tick for every adversary. Also hits an explorer that stepped onto an adversary.
 // Brain-on adversaries with a step this tick ask Jev in parallel, from the state after the
-// explorer's move; the steps are then applied in id order with a catch check after each.
+// explorer's move; the steps are then applied in id order with a touch check after each.
+// At most one hit per tick: grace is decided once at the start of the tick and `hit` latches.
 // -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, error? }] }
 export async function stepAdversaries(game) {
   const events = [];
   const turns = [];
   if (game.won || game.lost) return { events, turns };
-  for (const a of game.adversaries) if (catchCheck(game, a, events)) return { events, turns };
+  const protectedNow = graceLeft(game) > 0;
+  if (protectedNow) game.graceTicks--;
+  const touch = { hit: false, canHit() { return !protectedNow && !this.hit; } };
+  const order = [...game.adversaries].sort(byId);
+  for (const a of order) if (touchCheck(game, a, events, touch)) return { events, turns };
   const tick = (tickCount.get(game) ?? 0) + 1;
   tickCount.set(game, tick);
 
-  const order = [...game.adversaries].sort(byId);
   for (const a of order) senseStart(game, a, events, tick);
   for (const a of order) a.budget += ADVERSARY_SPEED;
 
@@ -243,6 +287,7 @@ export async function stepAdversaries(game) {
       // At most one step per tick (ADVERSARY_SPEED < 1); the remainder carries over.
       a.budget -= 1;
       const res = results.get(a);
+      const from = [...a.pos];
       if (res) {
         let dir = res.dir;
         if (res.error) {
@@ -254,11 +299,10 @@ export async function stepAdversaries(game) {
         if (dir) a.pos = stepCell(a.pos, dir);
         Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs });
       } else {
-        const from = a.pos;
         patrolStep(game, a);
         turn.dir = Object.keys(DIRS).find((d) => same(stepCell(from, d), a.pos)) ?? null;
       }
-      if (catchCheck(game, a, events)) {
+      if (touchCheck(game, a, events, touch, from)) {
         turn.brain = huntOf(a).on ? 'on' : 'off';
         return { events, turns };
       }
