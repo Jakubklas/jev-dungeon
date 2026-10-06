@@ -1,0 +1,8 @@
+{
+  "name": "jev-dungeon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

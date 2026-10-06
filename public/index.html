@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#080a12">
+<title>Jev Dungeon</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Jev Dungeon</h1>
+    <p class="sub">Jev explores a dark dungeon one step at a time, looking for the treasure chest, while adversaries roam the halls. Every visited cell lights up the area around it for good. Jev only hears about lit cells and adversaries it can see.</p>
+  </header>
+
+  <div class="layout">
+    <section class="board-col">
+      <div class="board-wrap" id="board-wrap">
+        <canvas id="board"></canvas>
+        <div id="bubbles" class="bubbles" aria-live="polite"></div>
+        <canvas id="minimap" class="minimap" aria-label="Minimap of known cells"></canvas>
+      </div>
+      <p id="status">Press Start to let Jev explore.</p>
+    </section>
+
+    <aside class="pane">
+      <div class="controls">
+        <button id="start" class="primary">Start</button>
+        <button id="reload">Reload</button>
+        <label class="speed">Delay
+          <input id="delay" type="range" min="100" max="1500" step="50" value="500">
+          <output id="delay-value" for="delay">500 ms</output>
+        </label>
+        <label class="check"><input id="reveal" type="checkbox"> Reveal map (debug)</label>
+      </div>
+
+      <div class="hud">
+        <div class="stat"><span>Steps</span><b id="steps">0</b></div>
+        <div class="stat"><span>Explored</span><b id="explored">0%</b></div>
+        <div class="stat"><span>Map</span><b id="mapsize">—</b></div>
+        <div class="stat" title="Explorer's last Jev call"><span>Explorer Jev</span><b id="latency">—</b></div>
+        <div class="stat" title="Slowest adversary Jev call this tick"><span>Adversary Jev</span><b id="adv-latency">—</b></div>
+        <div class="stat"><span>Status</span><b><span id="danger-chip" class="chip safe">Safe</span></b></div>
+      </div>
+
+      <div class="panel">
+        <h2>Mind</h2>
+        <p class="mind-now"><span id="sentiment-chip" class="chip senti">—</span> <span id="sentiment-since" class="muted"></span></p>
+        <p id="profile-note" class="muted small"></p>
+        <ul id="sentiment-history" class="senti-history"></ul>
+        <div id="decision" class="mind-decision" hidden>
+          <p id="decision-head" class="decision-head"></p>
+          <div class="probs wide" id="sentiment-probs"></div>
+          <div class="probs wide" id="tactic-probs"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Danger</h2>
+        <p id="danger" class="muted">—</p>
+        <ul id="events" class="events"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Adversaries <span id="adv-count" class="tag"></span></h2>
+        <div id="adversaries" class="adv-list"><p class="muted">—</p></div>
+      </div>
+
+      <div class="panel">
+        <h2>Objective</h2>
+        <p id="objective" class="muted">—</p>
+      </div>
+
+      <div class="panel">
+        <h2>Approach</h2>
+        <p><b id="approach">—</b> <span id="approach-since" class="muted"></span></p>
+        <ul id="tried" class="tried"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Findings</h2>
+        <ul id="findings" class="findings"><li class="muted">None yet.</li></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Last move <span id="forced" class="tag" hidden>forced</span></h2>
+        <div class="probs" id="probs"></div>
+        <p id="move-note" class="muted small"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Review</h2>
+        <p id="review" class="muted">No review yet.</p>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<div class="overlay" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="over-title">
+    <h2 id="over-title">Treasure found</h2>
+    <dl id="stats"></dl>
+    <div class="actions">
+      <button id="close">Close</button>
+      <button id="over-reload" class="primary">Reload</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
