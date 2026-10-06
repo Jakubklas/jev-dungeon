@@ -11,6 +11,12 @@ const { newGame, newTestGame, playTurn, view } = await import('./src/turn.js');
 const { TestbedError } = await import('./src/testbed.js');
 
 const PORT = Number(process.env.PORT) || 3003;
+// TESTBED=size=9x9&numAdversaries=2 (or a JSON object) makes this server a testbed: every new game
+// without its own { testbed } body is that arena. Empty means a normal dungeon server.
+const TESTBED = !process.env.TESTBED ? null
+  : process.env.TESTBED.trim().startsWith('{') ? JSON.parse(process.env.TESTBED)
+  : Object.fromEntries(new URLSearchParams(process.env.TESTBED));
+if (TESTBED) newTestGame(TESTBED); // fail at startup on a bad config, not on the first page load
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -86,7 +92,7 @@ createServer(async (req, res) => {
         return send(res, 400, { error: 'Body must be JSON.' });
       }
       try {
-        return send(res, 200, await startNewGame(opts.testbed ?? null));
+        return send(res, 200, await startNewGame(opts.testbed ?? TESTBED));
       } catch (err) {
         if (err instanceof TestbedError) return send(res, 400, { error: `Bad testbed config: ${err.message}` });
         throw err;
@@ -111,4 +117,4 @@ createServer(async (req, res) => {
     console.error(err);
     send(res, 500, { error: 'Server error' });
   }
-}).listen(PORT, () => console.log(`Jev Dungeon running at http://localhost:${PORT}`));
+}).listen(PORT, () => console.log(`Jev Dungeon${TESTBED ? ' testbed' : ''} running at http://localhost:${PORT}`));

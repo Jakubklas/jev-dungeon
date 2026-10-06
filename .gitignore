@@ -5,4 +5,4 @@ memory.json
 memory.md
 adversaries.json
 .DS_Store
-server.log
+server*.log
