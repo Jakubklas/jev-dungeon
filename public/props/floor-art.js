@@ -110,6 +110,12 @@ class Layer {
       if (layer.p[y][x] !== '.') this.p[y][x] = layer.p[y][x];
     }
   }
+  // The rows inside [x0, x1) x [y0, y1) (a crop shared by several frames).
+  cropTo(x0, y0, x1, y1) { return this.p.slice(y0, y1).map((r) => r.slice(x0, x1).join('')); }
+  bounds() {
+    const { rows, x0, y0 } = this.crop();
+    return { x0, y0, x1: x0 + (rows[0]?.length ?? 0), y1: y0 + rows.length };
+  }
   crop() {
     let x0 = this.w, y0 = this.h, x1 = -1, y1 = -1;
     for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) {
@@ -122,9 +128,9 @@ class Layer {
 const CW = 48, CH = 56, X0 = 24, Y0 = 36; // canvas + cell top vertex (u=0,w=0)
 
 // Iso box in cell coords. cols: { top, topEdge, left, right }.
-function box(L, u0, w0, a, b, z0, h, cols) {
-  const fx = X0 + u0 + a - w0 - b;
-  const fy = Y0 + ((u0 + a + w0 + b) >> 1) - z0;
+function box(L, u0, w0, a, b, z0, h, cols, [ox, oy] = [X0, Y0]) {
+  const fx = ox + u0 + a - w0 - b;
+  const fy = oy + ((u0 + a + w0 + b) >> 1) - z0;
   const yL = (t) => fy - (a >> 1) + (t >> 1); // bottom row of left face at column t
   const yR = (s) => fy - 1 - (s >> 1); // bottom row of right face at column s
   for (let t = 0; t < a; t++) for (let r = 0; r < h; r++) L.set(fx - a + t, yL(t) - r, cols.left);
@@ -471,47 +477,86 @@ function makeFountain() {
     emissive: ['n', 'w', 'B'], glow: { x: 14 - x0, y: 9 - y0, radius: 26, color: '#4aa3ff' } };
 }
 
-// ---- forge: brick furnace with a glowing mouth and a bellows
+// ---- forge: ONE big brick furnace over a block of cells. makeForge(ca, cb): the art's left face runs ca cells
+// (16 art px each) along the art's u axis, its right face cb cells; the fire mouth is on the left face, the
+// bellows on the plinth beside the furnace. Built for 2x2, 2x3 and 3x2; a world footprint wx x wy with flip:false
+// uses forge_<wx>x<wy>, with flip:true the mirror image forge_<wy>x<wx>. The renderer cuts the sprite into one 16 px
+// strip per footprint cell along its front (see drawForgeStrips in app.js), so `anchorX/anchorY` is the footprint's
+// top vertex (the back corner), and `glow` sits at the fire mouth.
 const FORGE_PAL = {
   o: '#1e1608', b: '#a3976a', m: '#7d7149', n: '#53492f', k: '#120a05',
   c: '#ff5a1a', R: '#e74a0e', O: '#ff9a2e', y: '#ffe27a', h: '#fff6c8',
   w: '#603312', W: '#93531f', L: '#c4782e', t: '#aec4dc',
 };
-function makeForge() {
+function makeForge(ca, cb) {
+  const PLA = 16 * ca, PLB = 16 * cb;
+  const W2 = 16 * (ca + cb) + 28, H2 = 8 * (ca + cb) + 110;
+  const org = [16 * cb + 14, 100];
+  const bodyU = ca >= 3 ? 16 * (ca - 1) - 4 : 22, bodyW = Math.min(16 * cb - 14, 32), HB = 18;
+  const mw = Math.min(bodyU - 6, 16); // fire mouth width
   const mk = (f) => {
-    const L = new Layer(CW, CH), o = new Layer(CW, CH);
-    const base = box(o, 1, 1, 11, 11, 0, 9, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
-    // brick courses on both faces
-    for (let v = 2; v < 9; v += 3) {
-      for (let u = 0; u < 11; u++) { const [x, y] = base.lf(u, v); o.set(x, y, 'n'); }
-      for (let s = 0; s < 11; s++) { const [x, y] = base.rf(s, v); o.set(x, y, 'k'); }
+    const o = new Layer(W2, H2);
+    const bx = (u0, w0, a, b, z0, h, cols) => box(o, u0, w0, a, b, z0, h, cols, org);
+    const px = (u, w, z) => [org[0] + u - w, org[1] + ((u + w) >> 1) - z];
+    const courses = (bb, len, wid, h, step) => {
+      for (let v = 2; v < h; v += step) {
+        for (let u = 0; u < len; u++) { const [x, y] = bb.lf(u, v); o.set(x, y, 'n'); }
+        for (let s2 = 0; s2 < wid; s2++) { const [x, y] = bb.rf(s2, v); o.set(x, y, 'k'); }
+      }
+    };
+    // plinth the whole footprint wide, then the furnace body on it
+    bx(1, 1, PLA - 2, PLB - 2, 0, 5, { top: 'm', topEdge: 'b', left: 'b', right: 'n' });
+    const body = bx(3, 4, bodyU, bodyW, 5, HB, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
+    courses(body, bodyU, bodyW, HB, 4);
+    for (let v = 0; v < HB; v += 4) for (let u = 1 + (v % 8 ? 2 : 0); u < bodyU; u += 5) { const [x, y] = body.lf(u, v + 1); o.set(x, y, 'n'); }
+    // two narrower tiers and a dark flue
+    const s1 = Math.min(bodyU, bodyW) - 4, s2 = s1 - 6;
+    const cu = 3 + bodyU / 2, cw = 4 + bodyW / 2;
+    const t1 = bx(Math.round(cu - s1 / 2), Math.round(cw - s1 / 2), s1, s1, 5 + HB, 11, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
+    courses(t1, s1, s1, 11, 4);
+    const t2 = bx(Math.round(cu - s2 / 2), Math.round(cw - s2 / 2), s2, s2, 5 + HB + 11, 9, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
+    courses(t2, s2, s2, 9, 4);
+    ell(o, t2.fx, t2.fy - 9 - (s2 >> 1), (s2 >> 1) - 1, Math.max(1, (s2 >> 2) - 1), 'n');
+    ell(o, t2.fx, t2.fy - 9 - (s2 >> 1), (s2 >> 1) - 3, Math.max(1, (s2 >> 2) - 2), 'k');
+    // fire mouth on the left face: dark opening, flames from the bottom, embers on the floor of it
+    const m0 = (bodyU - mw) >> 1;
+    for (let u = m0; u < m0 + mw; u++) for (let v = 1; v <= 14; v++) { const [x, y] = body.lf(u, v); o.set(x, y, 'k'); }
+    for (let i = 0; i < mw; i++) {
+      const mid = 1 - Math.abs(i - (mw - 1) / 2) / (mw / 2);
+      const hf = Math.min(13, 4 + Math.round(6 * mid) + ((i * 5 + f * 3 + (i >> 1)) % 4));
+      for (let r = 0; r < hf; r++) {
+        const d = hf - 1 - r;
+        const col = d === 0 ? 'R' : d === 1 ? 'O' : d === 2 || r > 2 ? 'y' : 'h';
+        const [x, y] = body.lf(m0 + i, 1 + r); o.set(x, y, r === 0 ? ((i + f) % 2 ? 'c' : 'R') : col);
+      }
     }
-    for (let v = 0; v < 9; v += 3) for (let u = 1 + (v % 2); u < 11; u += 4) { const [x, y] = base.lf(u, v + 1); o.set(x, y, 'n'); }
-    // dome: narrower stack, its top a dark flue
-    const dome = box(o, 3, 3, 7, 7, 9, 10, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
-    for (let v = 1; v < 10; v += 3) {
-      for (let u = 0; u < 7; u++) { const [x, y] = dome.lf(u, v); o.set(x, y, 'n'); }
-      for (let s = 0; s < 7; s++) { const [x, y] = dome.rf(s, v); o.set(x, y, 'k'); }
+    for (let u = m0 - 1; u <= m0 + mw; u++) { const [x, y] = body.lf(u, 15); o.set(x, y, 'b'); const [x2, y2] = body.lf(u, 0); o.set(x2, y2, 'o'); }
+    // 3-wide: beside the furnace; 2-wide: on the front of the plinth, to the right of the mouth's embers
+    const beside = ca >= 3;
+    const bu0 = beside ? 16 * (ca - 1) + 1 : PLA - 2 - 11, bA = PLA - 2 - bu0;
+    const bw0 = beside ? 6 : 4 + bodyW + 2, bB = beside ? Math.min(PLB - 16, 20) : PLB - 2 - bw0;
+    // embers on the hearth in front of the mouth
+    for (let u = m0; u < Math.min(m0 + mw, bu0 - 4); u += 2) {
+      const [x, y] = px(3 + u, 4 + bodyW + 1 + ((u + f) % 3 === 0 ? 1 : 0), 5);
+      o.set(x, y, (u + f) % 4 === 0 ? 'c' : 'R'); o.set(x, y + 1, 'k');
     }
-    ell(o, dome.fx, dome.fy - 10 - 3, 4, 2, 'n'); ell(o, dome.fx, dome.fy - 10 - 3, 3, 1, 'k');
-    // fire mouth on the front-left face
-    for (let u = 3; u <= 8; u++) for (let v = 1; v <= 6; v++) { const [x, y] = base.lf(u, v); o.set(x, y, 'k'); }
-    const flame = [['..R..R', '.ROyOR', 'ROyhyO'], ['.R..R.', 'ROyOR.', 'OyhyOR'], ['R..R..', '.ROyOR', 'ROyhyO']][f];
-    flame.forEach((row, i) => [...row].forEach((ch, j) => { if (ch !== '.') { const [x, y] = base.lf(3 + j, 6 - i - (i === 0 ? 0 : 0)); o.set(x, y + 0, ch); } }));
-    for (let u = 3; u <= 8; u++) { const [x, y] = base.lf(u, 1); o.set(x, y, (u + f) % 2 ? 'c' : 'R'); }
-    for (let u = 2; u <= 9; u++) { const [x, y] = base.lf(u, 0); o.set(x, y, 'o'); }
+    // bellows beside the furnace on the plinth: leather wedge, wooden handle and nozzle
+    const bel = bx(bu0, bw0, bA, bB, 5, 5, { top: 'L', topEdge: 'L', left: 'W', right: 'w' });
+    const cx = bel.fx + ((bB - bA) >> 1), cy = bel.fy - 5 - ((bA + bB) >> 2);
+    o.line(cx, cy, cx + 8, cy - 5, 'W'); o.line(cx, cy + 1, cx + 8, cy - 4, 'w');
+    o.line(bel.fx - bA + 1, bel.fy - (bA >> 1) - 3, bel.fx - bA - 3, bel.fy - (bA >> 1) - 1, 'w');
+    const L = new Layer(W2, H2);
     L.merge(o, 'o');
-    // bellows beside the forge: leather wedge with a wooden handle and nozzle
-    const bw = new Layer(CW, CH);
-    const bx = box(bw, 12, 3, 4, 9, 0, 4, { top: 'L', topEdge: 'L', left: 'W', right: 'w' });
-    bw.line(bx.fx + 6, bx.fy - 7, bx.fx + 12, bx.fy - 5, 'W'); bw.line(bx.fx + 6, bx.fy - 6, bx.fx + 12, bx.fy - 4, 'w');
-    L.merge(bw, 'o');
-    return { ...L.crop(), mouth: base.lf(5, 4) };
+    const mouth = body.lf(m0 + (mw >> 1), 6);
+    return { L, mouth };
   };
-  const fr = [0, 1, 2].map(mk);
-  const { x0, y0, mouth } = fr[0];
-  return { palette: FORGE_PAL, frames: fr.map((c) => c.rows), anchorX: X0 + 8 - 8 - x0, anchorY: Y0 + 8 - y0,
-    emissive: ['c', 'R', 'O', 'y', 'h'], glow: { x: mouth[0] - x0, y: mouth[1] - y0, radius: 24, color: '#ff8a2a' } };
+  const frames = [0, 1, 2].map(mk);
+  const bs = frames.map((fr) => fr.L.bounds());
+  const x0 = Math.min(...bs.map((q) => q.x0)), y0 = Math.min(...bs.map((q) => q.y0));
+  const x1 = Math.max(...bs.map((q) => q.x1)), y1 = Math.max(...bs.map((q) => q.y1));
+  const [mx, my] = frames[0].mouth;
+  return { palette: FORGE_PAL, frames: frames.map((fr) => fr.L.cropTo(x0, y0, x1, y1)), anchorX: org[0] - x0, anchorY: org[1] - y0,
+    emissive: ['c', 'R', 'O', 'y', 'h'], glow: { x: mx - x0, y: my - y0, radius: 14 + 5 * (ca + cb), color: '#ff8a2a' } };
 }
 
 export const FLOOR_ART = {
@@ -526,5 +571,8 @@ export const FLOOR_ART = {
   goblet: { palette: GOBLET_PAL, frames: GOBLET_FRAMES, anchorX: 6, anchorY: 13, emissive: ['R', 'O', 'y', 'h'],
     glow: { x: 6, y: 4, radius: 18, color: '#4aa3ff' } },
   fountain: makeFountain(),
-  forge: makeForge(),
+  // the forge is one big sprite per footprint shape (see makeForge); there is no one-cell forge art
+  forge_2x2: makeForge(2, 2),
+  forge_2x3: makeForge(2, 3),
+  forge_3x2: makeForge(3, 2),
 };

@@ -3,7 +3,7 @@
 // Builds the same dungeon shape generateDungeon returns, plus the adversary list; turn.js
 // `newTestGame(config)` turns it into a game. No Jev calls here. See AGENTS.md "Testbed".
 import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
-import { SOLID_KINDS, SMALL_KINDS } from './props/catalog.js';
+import { SOLID_KINDS, SMALL_KINDS, KINDS, FOOTPRINT_STANDIN, FORGE_SHAPES } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
 
@@ -107,7 +107,13 @@ export function normalizeConfig(raw = {}) {
       cfg.props = raw.props.map((p, i) => {
         if (!p || typeof p !== 'object') bad(`props[${i}] must be { kind, x, y }`);
         if (![...SOLID_KINDS, ...SMALL_KINDS].includes(p.kind)) bad(`props[${i}].kind must be one of ${[...SOLID_KINDS, ...SMALL_KINDS].join(', ')}`);
-        return { kind: p.kind, x: toInt(p.x, `props[${i}].x`), y: toInt(p.y, `props[${i}].y`), flip: !!p.flip };
+        const out = { kind: p.kind, x: toInt(p.x, `props[${i}].x`), y: toInt(p.y, `props[${i}].y`), flip: !!p.flip };
+        if (KINDS[p.kind].footprint) { // forge: x, y = its top-left cell (min x, min y), w by h cells (default 2 by 2)
+          out.w = p.w === undefined ? 2 : toInt(p.w, `props[${i}].w`);
+          out.h = p.h === undefined ? 2 : toInt(p.h, `props[${i}].h`);
+          if (!FORGE_SHAPES.some(([w, h]) => w === out.w && h === out.h)) bad(`props[${i}] ${p.kind} w x h must be one of ${FORGE_SHAPES.map(([w, h]) => `${w}x${h}`).join(', ')}, got ${out.w}x${out.h}`);
+        }
+        return out;
       });
     } else if (['none', 'few', 'many'].includes(raw.props)) cfg.props = raw.props;
     else bad(`props must be 'none', 'few', 'many' or a list of { kind, x, y }, got ${JSON.stringify(raw.props)}`);
@@ -177,6 +183,9 @@ function parseMap(rows) {
   return out;
 }
 
+// A footprint kind (forge) can't stand on one random cell: the pick stays (same rng draws), a crate stands in.
+const standIn = (kind) => (KINDS[kind].footprint ? FOOTPRINT_STANDIN : kind);
+
 // Random solid clusters (1-3 cells) and small props for the 'few' / 'many' presets. Solid cells keep
 // the start's 3x3, the chest's 3x3 and adversary cells clear, and never cut any floor off.
 function randomProps(rand, grid, width, height, start, keepClear, density) {
@@ -206,7 +215,7 @@ function randomProps(rand, grid, width, height, start, keepClear, density) {
     }
     const flip = rand() < 0.5;
     for (const c of cells) {
-      solid.push({ kind: SOLID_KINDS[Math.floor(rand() * SOLID_KINDS.length)], x: c[0], y: c[1], flip });
+      solid.push({ kind: standIn(SOLID_KINDS[Math.floor(rand() * SOLID_KINDS.length)]), x: c[0], y: c[1], flip });
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) blocked.add(key([c[0] + dx, c[1] + dy]));
     }
   }
@@ -231,7 +240,7 @@ export function buildArena(rawConfig = {}) {
     if (m.adversaries.length) fixedAdversaries = m.adversaries;
     const pick = (kinds) => kinds[Math.floor(rand() * kinds.length)];
     props = [
-      ...m.solid.map(([x, y]) => ({ kind: pick(SOLID_KINDS), x, y, solid: true, flip: rand() < 0.5 })),
+      ...m.solid.map(([x, y]) => ({ kind: standIn(pick(SOLID_KINDS)), x, y, solid: true, flip: rand() < 0.5 })),
       ...m.small.map(([x, y]) => ({ kind: pick(SMALL_KINDS), x, y, solid: false, flip: rand() < 0.5 })),
     ];
   } else {
@@ -254,6 +263,17 @@ export function buildArena(rawConfig = {}) {
       if (!floorAt([p.x, p.y])) bad(`prop ${p.kind} at ${p.x},${p.y} is not on an inside floor cell`);
       if (same([p.x, p.y], start)) bad(`prop ${p.kind} sits on the start`);
       const solid = SOLID_KINDS.includes(p.kind);
+      if (p.w) { // footprint kind: one entry per cell, the anchor (top-left) carries w and h
+        for (let dy = 0; dy < p.h; dy++) {
+          for (let dx = 0; dx < p.w; dx++) {
+            if (!floorAt([p.x + dx, p.y + dy])) bad(`prop ${p.kind} ${p.w}x${p.h} at ${p.x},${p.y}: cell ${p.x + dx},${p.y + dy} is not an inside floor cell`);
+            if (same([p.x + dx, p.y + dy], start)) bad(`prop ${p.kind} at ${p.x},${p.y} covers the start`);
+            props.push({ kind: p.kind, x: p.x + dx, y: p.y + dy, solid: true, flip: p.flip, ...(dx || dy ? { part: true } : { w: p.w, h: p.h }) });
+            grid[p.y + dy][p.x + dx] = '#';
+          }
+        }
+        continue;
+      }
       props.push({ kind: p.kind, x: p.x, y: p.y, solid, flip: p.flip });
       if (solid) grid[p.y][p.x] = '#';
     }
