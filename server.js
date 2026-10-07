@@ -18,6 +18,8 @@ const PORT = Number(process.env.PORT) || 3003;
 // adversaries.json) into its own folder, so many servers can run side by side. Unset = next to server.js.
 const DATA = process.env.DATA_DIR ? pathToFileURL(resolve(process.env.DATA_DIR) + '/') : null;
 const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
+// Options for the Run being built: the paths above plus the explorer's confidence toggle (a 'next' setting, so it is read after applyNextGame).
+const gameOpts = () => ({ ...GAME_OPTS, confidence: settings.appliedValue('confidenceModel') === true });
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
 await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
 // TESTBED=size=9x9&numAdversaries=2 (or a JSON object) makes this server a testbed: every new game
@@ -64,7 +66,7 @@ function send(res, status, body, type = 'application/json') {
 async function startNewGame(testbed = null, seed = undefined) {
   while (busy) await busy.catch(() => {});
   settings.applyNextGame(); // saved settings that wait for a new game take effect here
-  run = testbed ? newTestGame(testbed, GAME_OPTS) : newGame(seed, GAME_OPTS);
+  run = testbed ? newTestGame(testbed, gameOpts()) : newGame(seed, gameOpts());
   await run.persist(); // fresh memory.json/md and adversaries.json now, not at the first step
   const d = run.game.dungeon;
   console.log(`New ${testbed ? 'testbed arena' : 'dungeon'}, seed ${d.seed}, ${d.width}x${d.height}, ${run.game.adversaries?.length ?? 0} adversaries`);

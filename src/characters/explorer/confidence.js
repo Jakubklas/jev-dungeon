@@ -1,7 +1,7 @@
 // The explorer's confidence score C (PLAN-confidence.md, model v3): pure functions, no imports, no clock,
 // no randomness. C is 0..100, 50 at the start of every game. The explorer's own fights move it; code turns
-// it into a risk dial (gaps, engageOpen) and Jev gets only its band word. Nothing imports this module yet
-// (C2 wires it), so the explorer static guard and the acyclic chain are untouched.
+// it into a risk dial (gaps, engageOpen) and Jev gets only its band word. brain.js and memory.js import it
+// (C2); it imports nothing itself, so the acyclic chain and the explorer static guard stay intact.
 //
 // State (plain JSON): { value, counts: { strikes, blocked, evaded, pressed },
 //   enc: { chased, hurt, killed, pressed } } where `enc` is the current encounter's bookkeeping
@@ -78,6 +78,19 @@ export function apply(state, event, lives, maxLives) {
     case 'calm': if (v < CALM_TARGET) v = Math.min(CALM_TARGET, v + D_CALM); break;
   }
   return { value: clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100), counts, enc };
+}
+
+// The brain saw a chasing adversary: this encounter now counts for 'evaded'. Returns a new state.
+export function seeChase(state) {
+  return { ...state, enc: { ...(state.enc ?? freshEnc()), chased: true } };
+}
+
+// The encounter is over (the brain's chase_over): 'evaded' if it had a chasing sighting and neither a hit nor a
+// dispel, then a fresh encounter record either way. Returns a new state (same rule as applyTurn).
+export function closeEncounter(state, lives, maxLives) {
+  const e = state.enc ?? freshEnc();
+  if (e.chased && !e.hurt && !e.killed) return apply(state, 'evaded', lives, maxLives);
+  return { ...state, enc: freshEnc() };
 }
 
 // The idle step: a convenience for apply(state, 'calm', ...). Calm never lowers C, so the lives cap

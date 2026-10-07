@@ -29,6 +29,7 @@ import {
   LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
+import { PRESSED_RANGE, apply as applyConfidence, band as confidenceBand, closeEncounter, createConfidence, seeChase } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
 const REVIEW_EVERY = 8; // steps between approach reviews
@@ -217,8 +218,15 @@ export class ExplorerBrain {
   #hold = { cell: null, n: 0, adj: 0 };
   #holdOn = true;
   #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
+  // Confidence model (PLAN-confidence C2, off by default): #cs is confidence.js's state (value, counts, the
+  // encounter's flags); memory.progress.confidence mirrors { value, counts } only with the toggle on.
+  // #csLast / #csWhy feed the turn's `confidence` report (value change and events since the last report).
+  #csOn = false;
+  #cs = null;
+  #csLast = 50;
+  #csWhy = [];
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true } = {}) {
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
     this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
@@ -236,6 +244,41 @@ export class ExplorerBrain {
     this.#review = { step: 0, targetSteps: approachTarget(world, 'nearest_frontier')?.steps ?? null };
     memory.progress.known_floor_cells = world.knownFloorCount();
     this.#encounter.pending = 'start';
+    if (confidence) { // no request text uses it yet (C3): it only moves and is reported
+      this.#csOn = true;
+      this.#cs = createConfidence();
+      this.#syncConfidence();
+    }
+  }
+
+  // Applies one confidence event with the lives left now (own state: fog-safe) and mirrors the result into memory.
+  #confide(type) {
+    if (!this.#csOn) return;
+    this.#cs = applyConfidence(this.#cs, type, this.#world.health, this.#world.maxHealth);
+    this.#csWhy.push(type);
+    this.#syncConfidence();
+  }
+
+  #syncConfidence() {
+    this.#memory.progress.confidence = { value: this.#cs.value, counts: { ...this.#cs.counts } };
+  }
+
+  // The turn's `confidence` object for the UI: value, band word, change since the last report and why.
+  #confidenceReport() {
+    const value = this.#cs.value;
+    const why = [...new Set(this.#csWhy)];
+    const reason = (why.filter((w) => w !== 'calm').join(', ') || why[0]) ?? null;
+    const delta = Math.round((value - this.#csLast) * 100) / 100;
+    this.#csLast = value;
+    this.#csWhy = [];
+    return { value, band: confidenceBand(value), delta, reason };
+  }
+
+  // Own shield stopped a claw (called by turn.js from the 'blocked' event) and saves.
+  async noteBlocked() {
+    if (!this.#csOn) return;
+    this.#confide('blocked');
+    await this.#save();
   }
 
   get memory() {
@@ -446,6 +489,9 @@ export class ExplorerBrain {
     if (!legal.length) throw new Error('No legal moves');
     const forced = legal.length === 1;
     const inSight = sit.threats.visible.length > 0;
+    // Confidence context at the start of the tick (what the request shows): sword ready, ghosts the own strike stunned.
+    const csArmed = this.#csOn ? this.#armed() : false;
+    const csStunned = this.#csOn ? this.#stunnedIds() : null;
     const skillOptions = this.#skillOptions(); // computed before the move, like the facts Jev reads
 
     // A decision without an adversary in sight waits for the next tick with a real choice. When an
@@ -630,6 +676,7 @@ export class ExplorerBrain {
     }
     if (decision) decision.apiMs = apiMs; // the whole decision tick: sentiment + tick request
 
+    const csEngaging = memory.approach.id === 'engage'; // after this tick's decision, like the request's plan.approach
     // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
     if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
 
@@ -665,11 +712,17 @@ export class ExplorerBrain {
     }
     if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last adversary and won.');
     this.#skills.turnPassed();
+    if (this.#csOn) {
+      // Calm repairs toward the start; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
+      if (!sit.threats.visible.length) this.#confide('calm');
+      else if (!csArmed && !csEngaging && sit.threats.visible.some((v) => v.chasing && v.distance <= PRESSED_RANGE && !csStunned.has(v.id))) this.#confide('pressed');
+    }
     await this.#save();
 
     return {
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
+      ...(this.#csOn ? { confidence: this.#confidenceReport() } : {}),
     };
   }
 
@@ -686,10 +739,12 @@ export class ExplorerBrain {
     for (const e of events) {
       if (e.type === 'struck') {
         this.#struck.set(e.id, step);
+        this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {
         const coin = events.some((x) => x.type === 'coin_drop' && x.id === e.id);
         countEncounter(memory, 'dispelled', step);
+        this.#confide('dispelled');
         addEvent(memory, step, `Dispelled ${e.id}${coin ? '; it dropped a coin' : ''}.`);
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
         this.#everSeen.delete(e.id); // so a lone survivor in sight may still be "the only one it knows of"
@@ -723,6 +778,7 @@ export class ExplorerBrain {
     const memory = this.#memory;
     const at = Math.max(world.steps, 1);
     countEncounter(memory, 'hits', at);
+    this.#confide('hit');
     addEvent(memory, at, `Hit by ${adversaryId}: ${world.health} of ${world.maxHealth} lives left.`);
     // A tactic never fails on a lost life by itself (engage never fails by gap): ask again next tick.
     if (isTactic(memory.approach.id)) this.#encounter.pending = 'hit';
@@ -966,6 +1022,7 @@ export class ExplorerBrain {
 
     if (visible.length) info.unseen = 0;
     else info.unseen += 1;
+    if (this.#csOn && visible.some((v) => v.mode === 'chase')) this.#cs = seeChase(this.#cs);
 
     let trigger = null;
     let policy = null;
@@ -995,6 +1052,11 @@ export class ExplorerBrain {
       this.#review = { step: at, targetSteps: this.#target(a.id)?.steps ?? null };
       policy = { from, to: a.id, reason: `no adversary in sight for ${info.unseen} tick${info.unseen === 1 ? '' : 's'}` };
       trigger = 'chase_over';
+      if (this.#csOn) { // evaded: it had a chasing sighting and ended with no hit and no dispel
+        const evaded = this.#cs.counts.evaded;
+        this.#cs = closeEncounter(this.#cs, world.health, world.maxHealth);
+        if (this.#cs.counts.evaded > evaded) { this.#csWhy.push('evaded'); this.#syncConfidence(); }
+      }
       info.active = false;
       this.#exclude = null;
       info.encIds = new Set();
