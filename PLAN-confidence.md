@@ -9,7 +9,7 @@ the main source of hits today), and prove in free stubbed runs, with a new fight
 signal before any paid run. The first sketch had eight weaknesses (section 2). The most serious is that fights
 are rare, so a fight-driven score barely moves. The plan says plainly when to stop.
 
-Status: **proposed, nothing built.** Per AGENTS.md this plan is not code until the user approves a phase.
+Status: **C1 and C0 built (module, duel harness, measurement); the rest is proposed.** Per AGENTS.md this plan is not code until the user approves a phase.
 Code wins over this plan (rule 3).
 
 ## 1. The model (v3)
@@ -179,6 +179,37 @@ Each phase ends with the checks green. Stop at any gate marked **GATE**. Prerequ
 - **C6 (optional, later): ghost morale and a cross-game prior.** Ghost morale is the unbuilt `mood` layer of
   PLAN-adversary-memory. It must use the ghost's own state (`tally.hits`, stuns and hp lost), never the
   explorer's lives or `C` (ghosts do not see them). A prior across games goes through `memory.json`.
+
+## C0 results (measured 2026-10-07, free, stubbed)
+
+`node scripts/measure-confidence.mjs` (defaults: 40 `newGame(seed)` dungeons seeds 1..40 and 40 testbed arenas
+per p, 150 ticks max, default lives 2, mood `bold`, engage when offered else `run_away`, first non-`none` skill,
+clawing ghost stub from the duel harness, `Math.random` and the walk-in draws seeded per game, `fetch` a tripwire).
+`C` is computed passively by `applyTurn` from the turn shape plus the brain's own request (visible ghosts and
+their `chasing` flag, sword ready, approach); brain, memory and turn.js are untouched.
+
+| p | dungeon games leaving 40..79 | below 40 / above 80 | C range | ticks / game | s / game | per game: dispelled, hits, evaded |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 34 of 40 (85%) | 5 / 32 | 30..100 | 127.9 | 1.00 | 3.55, 0.25, 0.33 |
+| 0.2 | 36 of 40 (90%) | 5 / 33 | 30..100 | 125.0 | 1.19 | 3.58, 0.17, 0.23 |
+| 0.5 | 35 of 40 (87.5%) | 3 / 32 | 30..100 | 125.0 | 1.23 | 3.65, 0.20, 0.28 |
+
+Arenas (reference, built to fight): 62.5..65% leave the zone, 0.16..0.20 s and 17..24 ticks per game.
+
+**GATE: PASS** (90% at p = 0.2, needed 20%). Reading it honestly:
+- The exits are almost all **upward** (a kill streak: +18 per default 2 hp ghost reaches 80 after about 2 kills).
+  Only 3..5 of 40 dungeon games fall below 40, because only 7..9 of 40 games take any hit (0.17..0.25 hits per
+  game). The brake side of `C` is therefore rarely exercised; the freeing side is. C4 must check that `min_gap` -1
+  at 80+ does not make a stubbed explorer reckless, and should raise `p` or the claw rate to stress the brake.
+- Dungeon games are cheap: about 1.0..1.2 s per game of 125 ticks (about 9 ms per tick), so C4's 300+ fights need
+  a few hundred arena games at 0.2 s or about 100 dungeon games, a few minutes.
+- Events not derivable from the turn shape today: `stunned` ids (the brain's private `#struck`), so `pressed`
+  here is an upper bound and counted 0 anyway (the stub's explorer rarely has a chaser within 2 with the sword
+  down); `evaded` needs `chase_over`, which fires only while a tactic is on, and is counted from the turn's
+  `decision.trigger` with `enc.chased` taken from the request's visible ghosts (0.0..0.33 per game, so rare);
+  `blocked` comes from `turn.events` (the explorer has the default sword and shield in these runs).
+  C2's per-encounter flags would make `evaded` exact.
+- The stub explorer wins by clearing the dungeon in some games, which shortens them (mean 125 of 150 ticks).
 
 ## 6. Files and ownership
 
