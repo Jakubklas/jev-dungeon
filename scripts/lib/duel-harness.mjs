@@ -200,3 +200,4 @@ export async function playDuel(opts = {}) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+export { decide as clawDecide, mulberry32 };

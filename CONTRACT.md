@@ -314,6 +314,8 @@ All take a `world` (a `KnownWorld`). Layering, acyclic: `known-map.js` ← `enco
 
 Pure, imports nothing, no clock or randomness. State `{ value 0..100 (50 at start), counts { strikes, blocked, evaded, pressed }, enc { chased, hurt, killed, pressed } }`. Exports: `createConfidence()`, `apply(state, event, lives, maxLives)` (returns a new state; events `hit` -15, `struck` +6, `dispelled` +12, `blocked` +3 up to 65, `evaded` +4 up to 65, `pressed` -2 at most -8 per encounter, `calm` +0.3 only below 50; then clamp to 0..100 and to `cap`), `cap(lives, maxLives)` (100 at full lives or `maxLives` 1, 45 on the last life, else `round(100 * (0.3 + 0.7 * lives / maxLives))`), `calm(state)`, `band(C)` (`shaken` <30, `unsure` <40, `even` <65, `sure` <80, `dominant`), `gaps(C)` (min_gap delta +2 / +1 / 0 / -1), `engageOpen(C)` (C >= 40), and `applyTurn(state, turn, { lives, maxLives, armed, visible, engaging, stunned })`, which derives the events from a turn shape (`skill_events`, `events`, `decision.trigger`). Constants are named at the top of the file. Checked by `scripts/check-confidence.mjs`.
 
+`scripts/measure-confidence.mjs` (C0) drives the real brain through `newGame` / `newTestGame` and feeds each turn to `applyTurn` passively; results are in PLAN-confidence.md "C0 results". `scripts/lib/duel-harness.mjs` also exports `clawDecide` (the clawing ghost stub) and `mulberry32`.
+
 ### `memory.js` + `brain.js`: `ExplorerBrain` (brain agent)
 
 ```js
