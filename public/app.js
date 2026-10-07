@@ -25,6 +25,7 @@ let advLatency = null;    // slowest adversary Jev call this tick, null when non
 let approachesUsed = new Set();
 let eventLog = [];        // newest first: { step, text, type }
 let strikeFx = null;      // this tick's attacks to flash: { t0, strikes } (S5), null when none
+let lastConfidence = null; // turn.confidence ({ value, band, delta, reason }); null with the confidenceModel toggle off
 let lastSkillDecision = null; // turn.skill_decision with its step, null before the first one
 let elapsed = 0, resumedAt = 0;
 
@@ -1448,8 +1449,23 @@ function renderCoins() {
   shownCoins = n;
 }
 
+// Confidence meter (PLAN-confidence C3): a bar and the band word, only while the turn shape carries `confidence`.
+function renderConfidence() {
+  const stat = $('confidence-stat');
+  if (!stat) return;
+  const c = lastConfidence;
+  stat.hidden = !c;
+  if (!c) return;
+  const v = Math.max(0, Math.min(100, Number(c.value) || 0));
+  $('confidence-fill').style.width = `${v}%`;
+  $('confidence-fill').dataset.band = c.band;
+  $('confidence-band').textContent = `${Math.floor(v)} ${c.band}`;
+  stat.title = `Confidence ${v.toFixed(1)}/100 (${c.band})${c.delta ? `, ${c.delta > 0 ? '+' : ''}${c.delta}${c.reason ? ` from ${c.reason}` : ''}` : ''}`;
+}
+
 function renderMemory() {
   renderHearts();
+  renderConfidence();
   renderCoins();
   $('steps').textContent = game ? game.steps : 0;
   $('explored').textContent = game ? `${Math.round(game.explored_pct)}%` : '0%';
@@ -1737,6 +1753,7 @@ function renderTurn(turn) {
     $('probs').removeAttribute('title');
   }
 
+  lastConfidence = turn.confidence ?? null;
   const sd = turn.skill_decision;
   lastSkillDecision = sd && typeof sd === 'object' ? { ...sd, step: turn.step } : null; // this turn's only
   if (turn.review) lastReview = { ...turn.review, step: turn.step };
@@ -1763,6 +1780,7 @@ function renderReview() {
 }
 
 function resetPane() {
+  lastConfidence = null;
   lastReview = null;
   lastDecision = null;
   lastSkillDecision = null;

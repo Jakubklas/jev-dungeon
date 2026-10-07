@@ -14,6 +14,7 @@ import { clawDecide, mulberry32 } from './lib/duel-harness.mjs'; // installs the
 import { newTestGame } from '../src/turn.js';
 import { validateMemory, renderMarkdown } from '../src/characters/explorer/memory.js';
 import { configureSkills, skillConfig } from '../src/skills/config.js';
+import { CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -250,6 +251,51 @@ async function encounter({ hit = false } = {}) {
     ok(strikeAt !== null && closeInStun >= 1 && pressedInStun === 0, `no pressed while the own strike's stun lasts (strike tick ${strikeAt}, close ${closeInStun}, pressed ${pressedInStun})`);
     ok(pressedAfter >= 1, `pressed returns once the stun is over and the sword is still down (${pressedAfter})`);
   } finally { configureSkills(before); }
+}
+
+// 10. C3 gates and the word. A hit from 50 gives 35: gaps +1 everywhere (sentiment question, mood lines, tactic
+// feasibility), engage closed; at 50 the same scenario is the plain one. self.confidence on every request, the
+// sentence only in the sentiment question.
+{
+  const capture = async (hit) => {
+    const reqs = [];
+    const ask = async (req) => { reqs.push(JSON.parse(req.body)); return stub({ mood: 'steady', tactic: 'run_away' })(req); };
+    const run = build({ map: withGhost(ROOM, 9, 3), seed: 21, ghostSkills: 'none', ghostHp: 2 }, { ask });
+    run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+    if (hit) { run.game.maxHealth = 3; run.game.health = 2; await run.explorer.noteHit('a1'); }
+    const turns = await play(run, 4);
+    return { reqs, run, turns };
+  };
+  const plain = await capture(false), low = await capture(true);
+  ok(C(low.run).value < 40 && C(low.run).value > 30, `scenario: hit puts C in 30..39, got ${C(low.run).value}`);
+  const all = [...plain.reqs, ...low.reqs];
+  ok(all.every((r) => /^\d+ (shaken|unsure|even|sure|dominant)$/.test(r.state.self.confidence)), 'self.confidence is "<value> <band>" on every request');
+  ok(low.reqs[0].state.self.confidence.endsWith(' unsure') && plain.reqs[0].state.self.confidence === '50 even', `words: ${low.reqs[0].state.self.confidence} / ${plain.reqs[0].state.self.confidence}`);
+  const sent = (r) => r.questions.sentiment;
+  ok(all.filter(sent).every((r) => sent(r).instructions.includes(CONFIDENCE_SENTENCE.trim())), 'the sentence is in every sentiment question');
+  ok(all.filter((r) => !sent(r)).every((r) => !JSON.stringify(r).includes('sums up how your fights')), 'the sentence is in no other request (rules() stays clean)');
+  const sp = sent(plain.reqs.find(sent)).criteria, sl = sent(low.reqs.find(sent)).criteria;
+  ok(/min gap 3;/.test(sp.steady) && /min gap 4;/.test(sl.steady), 'sentiment effect: steady min gap 3 -> 4 after a hit');
+  ok(/min gap 2;/.test(sp.bold) && /min gap 3;/.test(sl.bold) && /min gap 4;/.test(sp.wary) && /min gap 5;/.test(sl.wary), 'bold 2 -> 3, wary 4 -> 5');
+  const opts = (turns) => turns.map((t) => t.decision?.tactic?.options).find(Boolean);
+  ok(opts(plain.turns) && Object.keys(opts(plain.turns)).includes('engage'), 'C 50: engage offered (sword ready)');
+  ok(opts(low.turns) && !Object.keys(opts(low.turns)).includes('engage'), `C 35: engage not offered (${Object.keys(opts(low.turns) ?? {})})`);
+  const tq = plain.reqs.find((r) => r.questions.tactic);
+  ok(tq && /keeps adversaries 3\+ steps away/.test(tq.questions.tactic.instructions.question), 'tactic question states the effective gap at C 50');
+  const lines = (rs) => JSON.stringify(rs.map((r) => Object.entries(r.questions).filter(([k]) => k === 'next_move' || k.startsWith('move_if_')).map(([, q]) => q.instructions)));
+  ok(/at least 4 steps/.test(lines(low.reqs)) && !/at least 3 steps/.test(lines(low.reqs)) && /under 4 steps/.test(lines(low.reqs)), 'steady priority and safety lines say 4 after a hit');
+  ok(/at least 3 steps/.test(lines(plain.reqs)), 'steady priority says 3 at C 50');
+}
+
+// 11. neutral-zone identity end to end: toggle on versus off, a strike duel that keeps C in 50..68: same moves, same turns.
+{
+  const mk = (confidence) => build({ map: withGhost(ROOM, 10, 3), seed: 22, explorerSkills: ['sword_strike'], ghostHp: 2 }, { confidence, ask: stub({ mood: 'bold', tactic: 'engage', skill: true }) });
+  const a = mk(false), b = mk(true);
+  for (const r of [a, b]) { r.game.adversaries.forEach((x) => { x.mode = 'chase'; }); r.game.health = r.game.maxHealth = 9; }
+  const ta = await play(a, 30), tb = await play(b, 30);
+  const sig = (ts) => ts.map((t) => `${t.dir}|${t.decision?.tactic?.choice ?? ''}|${t.events.map((e) => e.type).join()}`).join(';');
+  ok(sig(ta) === sig(tb) && ta.length === tb.length, 'neutral zone: toggle on plays the same moves, tactics and events as off');
+  ok(tb.some((t) => t.events.some((e) => e.type === 'dispelled')) && C(b).value >= 40 && C(b).value < 80, `... through a dispel (C ${C(b).value})`);
 }
 
 rmSync(dir, { recursive: true, force: true });
