@@ -560,7 +560,7 @@ const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 // A strike uses the grace read taken at the start of the tick and the `hit` latch: at most one life lost per tick,
 // none during grace (the strike still flashes, result 'protected'). Losing the last life emits 'hit' then 'caught'
 // and ends the tick at once.
-// -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, skill_decision?, stunned?, error? }] }
+// -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used: key|null }, stunned?, error? }] }
 export async function stepAdversaries(game, { decide: ask = null } = {}) {
   const events = [];
   const turns = [];
@@ -585,7 +585,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
 
   for (const a of order) {
-    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0 };
+    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null };
     turns.push(turn);
     if (stunned.has(a)) {
       turn.stunned = true;
