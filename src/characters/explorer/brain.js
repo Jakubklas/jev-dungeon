@@ -68,7 +68,7 @@ export const SENTIMENTS = {
   steady: {
     min_gap: 3, end_ticks: 4,
     move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when none of the others clearly fits: e.g. an adversary far off (6+ steps) or patrolling and not yet chasing, or no coins in sight and little left to explore nearby.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when no adversary is in sight and nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when exactly one is in sight and fighting it is clearly bad (sword not ready, or fewer than full lives and no hit protection). Never with 2+ adversaries known: that is wary.',
     priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
     note: 'Sticks to the plan: explores, coins on the way, keeps a safe distance.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
@@ -76,7 +76,7 @@ export const SENTIMENTS = {
   greedy: {
     min_gap: 3, end_ticks: 2,
     move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
-    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no chaser in sight and full lives or hit protection.',
+    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no adversary in sight and full lives or hit protection.',
     priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from adversaries.',
     note: 'Goes after coins and unexplored rooms; detours are fine.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on looting.',
@@ -84,7 +84,7 @@ export const SENTIMENTS = {
   bold: {
     min_gap: 2, end_ticks: 1,
     move_priority: 'Bold: take the fight; moving toward an adversary is fine.',
-    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when you have full lives or hit protection, the sword is ready and one adversary is in sight (or a weakened one, `hp` below max).',
+    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when a lone adversary is the only one known (in sight at any distance, or remembered), the sword is ready (`self.skills`) and you have full lives or hit protection.',
     priority: 'Bold: take the fight. Engage a lone or weakened adversary you can beat; moving toward one is fine; keep at least 2 steps unless striking.',
     note: 'Takes fights it can win: engages lone or weak adversaries.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
@@ -460,6 +460,10 @@ export class ExplorerBrain {
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
+    // A lone adversary, the sword ready and the stun holding (the engage fact's own gate): under steady or greedy
+    // engaging is the default, so the mood's caution does not talk the explorer out of the one fight it should take.
+    const loneEngage = tacticIds.includes('engage') && sit.threats.visible.length === 1 && Boolean(this.#fight()?.steady) &&
+      (memory.sentiment.id === 'steady' || memory.sentiment.id === 'greedy');
     if (tacticIds.length) {
       questions.tactic = {
         type: 'choice',
@@ -467,11 +471,17 @@ export class ExplorerBrain {
           question:
             `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps adversaries ` +
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
-          priorities: [
-            profile.priority,
-            'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
-            `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
-          ],
+          priorities: loneEngage
+            ? [
+              'Default: engage a lone adversary while the sword is ready (you act first). Run away when cramped or without the sword.',
+              profile.priority,
+              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+            ]
+            : [
+              profile.priority,
+              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+              `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
+            ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
       };
@@ -697,6 +707,18 @@ export class ExplorerBrain {
     }
   }
 
+  // The encounter's stakes in one sentence, only where the duels bear it out (check-skills section 12): one adversary
+  // in sight and none remembered, the sword ready, the stun outlasting the sword's cooldown and at most 2 strikes
+  // to dispel it (then it costs at most one claw). Otherwise ''.
+  #stakes(sit, trigger) {
+    if (!['encounter', 'tactic_failed', 'hit'].includes(trigger)) return '';
+    const fight = this.#fight();
+    const [v] = this.#world.visibleAdversaries();
+    if (!fight?.steady || !this.#armed() || sit.threats.visible.length !== 1 || sit.threats.remembered.length || !v) return '';
+    if (Math.ceil(v.hp / fight.damage) > 2) return '';
+    return ' A lone adversary you can strike first costs at most one claw and a dispel removes it for good; running may leave it hunting you.';
+  }
+
   // Request 1 of a decision step. Sets memory.sentiment and returns { choice, probabilities, ms }.
   async #askSentiment(sit, trigger) {
     const world = this.#world;
@@ -719,7 +741,7 @@ export class ExplorerBrain {
       sentiment: {
         type: 'choice',
         instructions:
-          `${TRIGGER_TEXT[trigger]} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
+          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.',
         criteria,
@@ -1017,11 +1039,12 @@ export class ExplorerBrain {
     const reason = `Jev decided to leave (${Math.round(p * 100)}%): ${memory.progress.coins} coins held.`;
     addEvent(memory, at, `Decided to leave through the portal (${Math.round(p * 100)}%).`);
     if (isTactic(a.id)) {
+      const from = a.interrupted?.id ?? a.id;
       replaceInterrupted(memory, { id: 'go_to_exit', text: APPROACHES.go_to_exit.text }, reason, at);
-      return null;
+      return { from, to: 'go_to_exit', reason };
     }
     const from = a.id;
-    switchApproach(memory, approachOf('go_to_exit'), reason, at);
+    changeApproach(memory, approachOf('go_to_exit'), at); // leaving is a decision, not a failure: no plan.tried row
     this.#review = { step: at, targetSteps: this.#target('go_to_exit')?.steps ?? null };
     return { from, to: 'go_to_exit', reason };
   }

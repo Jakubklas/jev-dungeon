@@ -157,11 +157,7 @@ export function resumeApproach(memory, step, thoughtOf) {
 // should head for the portal, not resume exploring. The dropped one goes into `tried` with `reason`.
 export function replaceInterrupted(memory, { id, text }, reason, step) {
   const a = memory.approach;
-  const old = a.interrupted;
-  if (old) {
-    a.tried.push({ id: old.id, approach: old.approach, steps: `${old.since_step}–${step}`, reason: String(reason).slice(0, LIMITS.approach) });
-    a.tried = a.tried.slice(-LIMITS.triedApproaches);
-  }
+  const old = a.interrupted; // replaced, not failed: no `tried` row
   a.interrupted = { id, approach: text.slice(0, LIMITS.approach), since_step: step + 1, reason: old?.reason ?? String(reason).slice(0, LIMITS.approach) };
 }
 
