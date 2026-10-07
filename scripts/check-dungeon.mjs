@@ -1647,7 +1647,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   for (const [id, m] of Object.entries(SENTIMENTS)) {
     for (const f of ['min_gap', 'end_ticks', 'priority', 'move_priority', 'when', 'note', 'skill_priority']) if (m[f] == null) fail(`mood ${id} lacks ${f}`);
     const text = [m.priority, m.move_priority, m.when, m.note, m.skill_priority].join(' ');
-    if (/chest|treasure/i.test(text) || /push(es)? for|the goal/i.test(text)) fail(`mood ${id} text mentions the chest or pushing for the goal: ${text}`);
+    if (/chest|treasure/i.test(text) || /push(es)? for|the goal/i.test(text) || /pays a coin|drops a coin/i.test(text)) fail(`mood ${id} text mentions the chest, pushing for the goal or a sure coin: ${text}`);
     if (!/Strike an adjacent adversary whenever the sword is ready/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
     if (!/Upside/.test(m.when) || !/Risk/.test(m.when)) fail(`mood ${id} when does not name upside and risk`);
   }

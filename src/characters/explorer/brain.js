@@ -68,7 +68,7 @@ export const SENTIMENTS = {
   steady: {
     min_gap: 3, end_ticks: 4,
     move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when none of the others clearly fits: nothing in sight, or an adversary far off (6+ steps) or patrolling and not yet chasing.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when none of the others clearly fits: e.g. an adversary far off (6+ steps) or patrolling and not yet chasing, or no coins in sight and little left to explore nearby.',
     priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
     note: 'Sticks to the plan: explores, coins on the way, keeps a safe distance.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
@@ -76,7 +76,7 @@ export const SENTIMENTS = {
   greedy: {
     min_gap: 3, end_ticks: 2,
     move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
-    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no chaser in sight and 2 lives or hit protection.',
+    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no chaser in sight and full lives or hit protection.',
     priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from adversaries.',
     note: 'Goes after coins and unexplored rooms; detours are fine.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on looting.',
@@ -84,7 +84,7 @@ export const SENTIMENTS = {
   bold: {
     min_gap: 2, end_ticks: 1,
     move_priority: 'Bold: take the fight; moving toward an adversary is fine.',
-    when: 'Upside: dispelling pays a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when you have full lives or hit protection, the sword is ready and one adversary is in sight (or a weakened one, `hp` below max).',
+    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when you have full lives or hit protection, the sword is ready and one adversary is in sight (or a weakened one, `hp` below max).',
     priority: 'Bold: take the fight. Engage a lone or weakened adversary you can beat; moving toward one is fine; keep at least 2 steps unless striking.',
     note: 'Takes fights it can win: engages lone or weak adversaries.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
@@ -200,7 +200,7 @@ export class ExplorerBrain {
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
   #seen = new Map();
-  #everSeen = new Set(); // every adversary id the explorer has had in sight this game (never pruned): is this the only one it knows of?
+  #everSeen = new Set(); // every adversary id the explorer has had in sight this game (minus the ones it dispelled): is this the only one it knows of?
   // Remembered sightings that are not visible now (what threats.remembered is built from), and the
   // known cells near recent ones (exploration approaches steer clear of them).
   #remembered = [];
@@ -720,7 +720,7 @@ export class ExplorerBrain {
         type: 'choice',
         instructions:
           `${TRIGGER_TEXT[trigger]} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
-          'The mood sets how close adversaries may come (min gap) and how long it stays wary after losing sight of them. Judge from `surroundings`, ' +
+          'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.',
         criteria,
       },
