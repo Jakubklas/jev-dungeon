@@ -34,6 +34,7 @@ export const APPROACHES = {
   nearest_frontier: { text: 'Explore the closest edge of the known map first, clearing nearby gaps before travelling.', thought: "Let's check the closest dark edge." },
   largest_unexplored: { text: 'Head for the largest dark region, judged by how much unknown space lies in each direction.', thought: 'That big dark patch looks promising.' },
   far_side: { text: 'Travel to the part of the dungeon farthest from where the explorer has already been.', thought: "Let's try the far side of this place." },
+  collect_coins: { text: 'Go for the best seen pile of coins: coins are the score, so a detour for them can pay.', thought: 'Coins! Worth the detour.', needsCoins: true },
   go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
   slip_past: {
     text: 'Slip past the adversary: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
@@ -64,6 +65,7 @@ const ZONE_NEAR_STEPS = 10;
 const ZONE_FRESH = 10;
 const ZONE_RECENT = 15;
 const SECTOR_SLACK = 2; // a cell is "behind" a sighting when the route to it via the sighting is at most this much longer
+const COIN_NEAR = 8; // a seen pile this many known-path steps away or less gets a toward / away fact per move
 const FACT_SIGHTINGS = 3; // at most this many (the most recent) get a BFS per describeMoves call
 
 // How far (in cells, each way) unexplored_by_direction looks. Fixed, so it never depends on the map size.
@@ -97,7 +99,41 @@ const amount = (n) => (n === 0 ? 'none' : n <= 30 ? 'little' : n <= 120 ? 'some'
 
 // Exploration approaches Jev may pick in a review (tactics are offered by tacticOptions).
 export function availableApproaches(world) {
-  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsExit || exitSeen(world)));
+  const coins = Object.values(APPROACHES).some((a) => a.needsCoins) ? coinTarget(world, knownDistances(world, world.pos)) : null;
+  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsExit || exitSeen(world)) && (!APPROACHES[id].needsCoins || coins));
+}
+
+// Seen coin piles (lit cells only) as { cell, count } per cell, other than the cell the explorer stands on.
+function seenPiles(world) {
+  const piles = new Map();
+  for (const c of world.seenCoins()) {
+    if (sameCell(c, world.pos)) continue;
+    const k = key(c);
+    piles.set(k, { cell: c, count: (piles.get(k)?.count ?? 0) + 1 });
+  }
+  return [...piles.values()];
+}
+
+// The pile collect_coins heads for: the best coins per known-path step (the portal is a wall), ties by fewer
+// steps, then (y, x). `avoid` (Set from avoidZone) is skipped while any other pile is reachable.
+// Returns { cell, steps, count, why } or null. `dist` is knownDistances from the explorer.
+function coinTarget(world, dist, avoid = null) {
+  const reach = seenPiles(world).filter((p) => dist.has(p.cell)).map((p) => ({ ...p, steps: dist.get(p.cell) }));
+  const open = avoid?.size ? reach.filter((p) => !avoid.has(key(p.cell))) : reach;
+  const cands = open.length ? open : reach;
+  let best = null;
+  for (const p of cands) {
+    if (!best || p.count * best.steps > best.count * p.steps ||
+      (p.count * best.steps === best.count * p.steps && (p.steps < best.steps || (p.steps === best.steps && (p.cell[1] < best.cell[1] || (p.cell[1] === best.cell[1] && p.cell[0] < best.cell[0])))))) best = p;
+  }
+  return best && { cell: [...best.cell], steps: best.steps, count: best.count, why: `${plural(best.count, 'seen coin')}, ${plural(best.steps, 'step')} to the ${compass(world.pos, best.cell)} by known path.` };
+}
+
+// Seen piles within known-path `reach` steps of the explorer, nearest first: [{ cell, count, steps }].
+export function nearbyPiles(world, reach) {
+  const dist = knownDistances(world, world.pos);
+  return seenPiles(world).filter((p) => dist.has(p.cell) && dist.get(p.cell) <= reach).map((p) => ({ ...p, steps: dist.get(p.cell) }))
+    .sort((a, b) => a.steps - b.steps || a.cell[1] - b.cell[1] || a.cell[0] - b.cell[0]);
 }
 
 // Tactic targets need a visible adversary; without one, the move-on tactics fall back to the
@@ -202,6 +238,8 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     const hidden = hiddenFromAll(world, threats, g.cell);
     return { ...g, why: `Edge of the known map ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}${hidden ? ', out of the adversary\'s sight' : ''}.` };
   }
+
+  if (approachId === 'collect_coins') return coinTarget(world, dist, avoid);
 
   const frontier = reachableFrontier(world, dist);
 
@@ -505,6 +543,9 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
   const otherExits = (dest) => neighbours(here).filter((n) => !sameCell(n, dest) && knownFloor(world, n));
   const out = {};
   const coinPiles = world.seenCoins();
+  // The nearest seen pile by known path, when it lies within COIN_NEAR steps: "toward / away" facts per move.
+  const pile = nearbyPiles(world, COIN_NEAR)[0] ?? null;
+  const toPile = pile ? knownDistances(world, pile.cell) : null;
 
   for (const dir of world.legalMoves()) {
     const dest = step(here, dir);
@@ -534,6 +575,9 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
 
     const coinsHere = coinPiles.filter((c) => sameCell(c, dest)).length;
     if (coinsHere) facts.push(coinsHere === 1 ? 'Picks up a coin.' : `Picks up ${coinsHere} coins.`);
+    else if (pile && toPile.has(dest) && toPile.has(here) && toPile.get(dest) !== toPile.get(here)) {
+      facts.push(`${toPile.get(dest) < toPile.get(here) ? 'Toward' : 'Away from'} ${plural(pile.count, 'seen coin')} (${plural(toPile.get(dest), 'step')} after this).`);
+    }
     const reveal = wouldReveal(world, dest);
     facts.push(reveal ? `Reveals about ${plural(reveal, 'new cell')}.` : 'Reveals nothing new.');
     facts.push(visitSentence(world.visits[key(dest)]));

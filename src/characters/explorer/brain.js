@@ -19,7 +19,7 @@
 //              follows the new tactic. With a single feasible tactic code takes it (no Choice).
 import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
-  APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, situation, tacticFeasibility,
+  APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
 import { knownLineOfSight, speedPhrase } from './encounter.js';
@@ -155,6 +155,9 @@ function combatRule({ name, damage, stun, coinChance }) {
 
 // Encounter sentences that repeat a tactic option's own fact (dropped when the tactic question is asked).
 const TACTIC_FACT_KEYS = ['slip_past', 'hide', 'run_away', 'exit'];
+const COIN_NEAR = 8; // a newly seen pile this many known-path steps away or less can start a coin decision
+const COIN_EVERY = 10; // min steps between coin decisions
+const COIN_SWITCH = 0.5; // the coin decision's next_approach pick must reach this probability to switch
 const LEAVE_NOW = 0.5; // leave_now.noul above this switches the approach to go_to_exit
 const withoutKeys = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
@@ -190,6 +193,11 @@ export class ExplorerBrain {
   // encounter), modes (last seen mode per id), pending (a decision trigger waiting for the next
   // tick), lastDecision }.
   #encounter = { unseen: 0, active: false, encIds: new Set(), modes: new Map(), pending: null, lastDecision: -Infinity };
+  // Coin decision: #coinKnown = keys of piles seen so far; #coinDue = a new pile lies within COIN_NEAR steps and a
+  // next_approach question is waiting for a free tick; #coinStep = the step of the last coin decision.
+  #coinKnown = new Set();
+  #coinDue = false;
+  #coinStep = -Infinity;
   #leaveDue = false; // the portal was just seen: ask leave_now on the next real choice
   // { id, cell }: the goal cell of the current tactic, kept so its target stays put.
   #tacticGoal = null;
@@ -377,6 +385,13 @@ export class ExplorerBrain {
     if (this.#tacticGoal && sameCell(this.#tacticGoal.cell, world.pos)) this.#tacticGoal = null;
     let policy = null;
     this.#spotExit(prev); // a portal lit at the start (small testbed arenas), or one we missed
+    this.#watchCoins();
+    // collect_coins is done when no seen pile is reachable any more (all taken): back to the closest edge.
+    if (memory.approach.id === 'collect_coins' && !this.#target('collect_coins')) {
+      switchApproach(memory, approachOf('nearest_frontier'), 'The seen coins are collected.', prev);
+      this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
+      policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
+    }
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
@@ -476,6 +491,18 @@ export class ExplorerBrain {
       this.#leaveDue = false;
       questions.leave_now = this.#leaveQuestion(sit);
     }
+    // Coin decision: a new pile came into view nearby. next_approach, in this tick's request: no sentiment call
+    // (mood triggers are P4's). Not beside a tactic, a review or leave_now (they are the big requests); it waits.
+    const askCoins = this.#coinDue && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
+      approachId !== 'collect_coins' && !this.#leaving();
+    if (askCoins) {
+      this.#coinDue = false;
+      this.#coinStep = step;
+      questions.next_approach = this.#nextApproachQuestion(
+        availableApproaches(world).filter((id) => id !== 'go_to_exit'),
+        'Coins have come into view (`surroundings.coins`). Which approach should the explorer follow now? Keep `plan.approach.current` unless going for the coins is worth the detour (adversaries, `threats.remembered`, what is left to explore).',
+      );
+    }
     // ONE skill question per request (never per tactic, never in the sentiment request). On a forced tick
     // it is the only question: a skill-only request (PLAN D4-a).
     const skillQ = hasSkillOptions ? skillQuestion(skillOptions, profile.skill_priority, { neutral: true }) : null;
@@ -486,6 +513,7 @@ export class ExplorerBrain {
     let review = null;
     let pendingSwitch = null;
     let pendingLeave = null;
+    let pendingCoins = null;
     let skillDecision = null;
     let skillKey = 'none';
     if (Object.keys(questions).length) {
@@ -515,6 +543,12 @@ export class ExplorerBrain {
 
       const leave = askLeave ? answers.leave_now?.noul : null;
       if (typeof leave === 'number' && leave > LEAVE_NOW) pendingLeave = leave;
+
+      const coinPick = askCoins ? answers.next_approach : null;
+      if (coinPick && coinPick.choice !== approachId && APPROACHES[coinPick.choice] && !isTactic(coinPick.choice)) {
+        const p = coinPick.probabilities?.[coinPick.choice] ?? coinPick.confidence ?? 1;
+        if (p >= COIN_SWITCH) pendingCoins = { id: coinPick.choice, p };
+      }
 
       if (reviewDue && answers.approach_working) {
         this.#review = { step, targetSteps: this.#target(approachId)?.steps ?? null };
@@ -550,6 +584,14 @@ export class ExplorerBrain {
     if (!result.won) this.#spotExit(world.steps);
     // Leaving is Jev's call (leave_now), and it outranks any review outcome.
     if (pendingLeave !== null && !result.won) policy = this.#leave(pendingLeave, world.steps);
+    else if (pendingCoins && !result.won && !isTactic(memory.approach.id)) {
+      const from = memory.approach.id;
+      const reason = `Coins came into view: Jev picked ${pendingCoins.id} (${Math.round(pendingCoins.p * 100)}%).`;
+      switchApproach(memory, approachOf(pendingCoins.id), reason, world.steps);
+      addEvent(memory, world.steps, `Switched from ${from} to ${pendingCoins.id} for the coins in view.`);
+      this.#review = { step: world.steps, targetSteps: this.#target(pendingCoins.id)?.steps ?? null };
+      policy = { from, to: pendingCoins.id, reason };
+    }
     else if (pendingSwitch && !result.won && !isTactic(memory.approach.id)) {
       const from = memory.approach.id;
       switchApproach(memory, approachOf(pendingSwitch.id), pendingSwitch.reason, world.steps);
@@ -731,6 +773,7 @@ export class ExplorerBrain {
           ...(portalSeen ? [portalLine] : []),
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(sit.surroundings.coins ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an adversary is near.'] : []),
           profile.priority,
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
           'Stay makes no progress and lets adversaries close in: only when every step is worse.',
@@ -763,13 +806,31 @@ export class ExplorerBrain {
     // go_to_exit is never a review alternative: leave_now is the only way into it.
     const alternatives = availableApproaches(world).filter((id) => id !== approachId && id !== 'go_to_exit');
     if (alternatives.length) {
-      questions.next_approach = {
-        type: 'choice',
-        instructions:
-          'If `plan.approach.current` were dropped, which approach should the explorer try next? Avoid approaches in `plan.tried` that already failed, use `surroundings.unexplored_by_direction`, and steer clear of where adversaries were just seen (`threats.remembered`).',
-        criteria: Object.fromEntries(shuffle(alternatives).map((id) => [id, this.#approachOption(id)])),
-      };
+      questions.next_approach = this.#nextApproachQuestion(
+        alternatives,
+        'If `plan.approach.current` were dropped, which approach should the explorer try next? Avoid approaches in `plan.tried` that already failed, use `surroundings.unexplored_by_direction`, and steer clear of where adversaries were just seen (`threats.remembered`).',
+      );
     }
+  }
+
+  // A next_approach Choice over `ids` (shuffled), each option saying what it means and where it leads from here.
+  #nextApproachQuestion(ids, instructions) {
+    return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids).map((id) => [id, this.#approachOption(id)])) };
+  }
+
+  // Remembers which piles were seen. A pile seen for the first time within COIN_NEAR known-path steps   // coin decision, unless the last one was under COIN_EVERY steps ago (one first sight, one chance: a pile first
+  // seen farther off, or during the cooldown, never queues it; only a busy tick delays it); the queue empties when no seen pile is that near any more. Lit piles only (KnownWorld.seenCoins).
+  #watchCoins() {
+    const world = this.#world;
+    const fresh = new Set();
+    for (const c of world.seenCoins()) {
+      const k = key(c);
+      if (!this.#coinKnown.has(k)) { this.#coinKnown.add(k); fresh.add(k); }
+    }
+    if (!this.#coinKnown.size) return;
+    const near = nearbyPiles(world, COIN_NEAR);
+    if (!near.length) this.#coinDue = false;
+    else if (near.some((p) => fresh.has(key(p.cell))) && world.steps + 1 - this.#coinStep >= COIN_EVERY) this.#coinDue = true;
   }
 
   // Starts tactic `id` (parking the exploration approach; a tactic-to-tactic switch keeps the parked
