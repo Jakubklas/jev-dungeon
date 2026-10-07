@@ -2,7 +2,7 @@
 // newTestGame with the `confidence` option, stub Jev, throwing fetch tripwire (the duel harness installs it).
 // Event table: each event moves C by the documented delta (strike +6, dispel +12, hit -15 then the lives cap,
 // blocked +3 up to 65, evaded +4 up to 65 only for an encounter with a chasing sighting and no hit and no
-// dispel, pressed -2 at most -8 per encounter, calm +0.3 only below 50), memory shape with the toggle on and
+// dispel, pressed -2 at most -8 per encounter (never for a ghost the own strike stunned), blocked events forwarded by Run, calm +0.3 only below 50), memory shape with the toggle on and
 // off, the turn's `confidence` object, and a fog twin (a hidden ghost in another room changes nothing).
 // Requests stay byte-identical with the toggle on (C2 changes no request text): scripts/check-request-hashes.mjs.
 // Free, no Jev.
@@ -13,6 +13,7 @@ import { pathToFileURL } from 'node:url';
 import { clawDecide, mulberry32 } from './lib/duel-harness.mjs'; // installs the fetch tripwire
 import { newTestGame } from '../src/turn.js';
 import { validateMemory, renderMarkdown } from '../src/characters/explorer/memory.js';
+import { configureSkills, skillConfig } from '../src/skills/config.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -206,6 +207,49 @@ async function encounter({ hit = false } = {}) {
   const a = await play2(10, 1), b = await play2(15, 3);
   ok(a.trace.join() === b.trace.join() && a.memory === b.memory, 'twin: a hidden ghost somewhere else leaves C identical');
   ok(a.bodies.length === b.bodies.length && a.bodies.every((x, i) => x === b.bodies[i]), 'twin: requests byte-identical');
+}
+
+// 8. blocked through Run.playTurn: every 'blocked' event of the explorer's own shield (shieldChance 1) is
+// forwarded once by turn.js (counts.blocked equals the events) and named in the next turn's report.
+{
+  const before = skillConfig();
+  configureSkills({ ...before, shieldChance: 1 });
+  try {
+    const run = build({ map: ['##########', '##########', '#@..A....#', '##########', '##########'], seed: 9, explorerSkills: ['shield_block'] }, { ask: stub({ mood: 'wary', tactic: 'run_away', skill: true }) });
+    run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+    run.game.health = run.game.maxHealth = 9;
+    let blocked = 0, hits = 0, bad = 0, owed = false;
+    await play(run, 30, (turn, r) => {
+      // A block forwarded after a turn shows in the NEXT turn's report.
+      if (owed && !/blocked/.test(turn.confidence.reason ?? '')) bad++;
+      const b = turn.events.filter((e) => e.type === 'blocked').length;
+      hits += turn.events.filter((e) => e.type === 'hit').length;
+      blocked += b; owed = b > 0;
+      if (C(r).counts.blocked !== blocked) bad++;
+    });
+    ok(blocked >= 1 && bad === 0, `every blocked event is forwarded once and reported next turn: ${blocked} blocked, ${hits} hits, ${bad} mismatches, counts ${JSON.stringify(C(run).counts)}`);
+  } finally { configureSkills(before); }
+}
+
+// 9. pressed is not counted for a ghost the explorer's own strike stunned: sword cooldown 6, stun 4, a dead end,
+// run_away (not engage). Ticks right after the strike (the ghost stunned within 2 steps, sword down) are not pressed.
+{
+  const before = skillConfig();
+  configureSkills({ ...before, swordCooldown: 6, stunTicks: 4 });
+  try {
+    const run = build({ map: ['##########', '##########', '#@..A....#', '##########', '##########'], seed: 10, explorerSkills: ['sword_strike'], ghostSkills: 'none', ghostHp: 5 }, { ask: stub({ mood: 'wary', tactic: 'run_away', skill: true }) });
+    run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+    let strikeAt = null, pressedInStun = 0, pressedAfter = 0, closeInStun = 0;
+    await play(run, 20, (turn, r, t) => {
+      if (strikeAt === null && turn.events.some((e) => e.type === 'struck')) { strikeAt = t; return; }
+      if (strikeAt === null) return;
+      const why = turn.confidence.reason ?? '';
+      const near = r.game.adversaries.some((a) => Math.abs(a.pos[0] - r.game.pos[0]) + Math.abs(a.pos[1] - r.game.pos[1]) <= 2);
+      if (t - strikeAt < 4) { if (near) closeInStun++; if (/pressed/.test(why)) pressedInStun++; } else if (t - strikeAt < 6 && /pressed/.test(why)) pressedAfter++;
+    });
+    ok(strikeAt !== null && closeInStun >= 1 && pressedInStun === 0, `no pressed while the own strike's stun lasts (strike tick ${strikeAt}, close ${closeInStun}, pressed ${pressedInStun})`);
+    ok(pressedAfter >= 1, `pressed returns once the stun is over and the sword is still down (${pressedAfter})`);
+  } finally { configureSkills(before); }
 }
 
 rmSync(dir, { recursive: true, force: true });
