@@ -14,7 +14,7 @@ import {
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
-import { LIMITS, MOOD_IDS, addEvent, addLandmark, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
+import { LIMITS, MOOD_IDS, addEvent, addLandmark, countEncounter, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -955,7 +955,8 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // The boldest mood (smallest min gap) by value, not by name, so a mood rename keeps every tactic open.
       const boldest = Object.entries(SENTIMENTS).sort((a, b) => a[1].min_gap - b[1].min_gap)[0][0];
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
-      // are written into memory by hand, because a real noteHit would take C out of the neutral zone and close tactics.
+      // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
+      // neutral zone and close tactics, so this is the worst case inside the zone.
       for (const conf of [false, true]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
@@ -973,8 +974,13 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
           big.pos = [...start]; big.adversaries = [];
           for (let i = 0; i < 4; i++) { await bb.takeTurn(); big.pos = [...start]; }
           if (conf) {
-            bb.memory.encounters.hits = 2;
-            for (const step of [3, 4]) bb.memory.events.push({ step, text: 'Hit by a2: 1 of 2 lives left.' });
+            // noteHit's memory writes, verbatim (same events and hit_here landmark), without its confidence update.
+            for (let h = 0; h < 2; h++) {
+              const at = Math.max(big.steps, 1);
+              countEncounter(bb.memory, 'hits', at);
+              addEvent(bb.memory, at, `Hit by a2: ${big.health} of ${big.maxHealth} lives left.`);
+              addLandmark(bb.memory, { kind: 'hit_here', cell: big.pos, step: at, note: 'Took a hit here.' });
+            }
           } else { await bb.noteHit('a2'); await bb.noteHit('a2'); }
           // A full plan.tried (5 review switches), as late in a long game; the tactic request leaves it out.
           bb.memory.approach.tried = Array.from({ length: LIMITS.triedApproaches }, (_, i) => ({ id: ['nearest_frontier', 'far_side', 'largest_unexplored'][i % 3], approach: 'x', steps: `${i * 9}–${i * 9 + 8}`, reason: 'Jev judged it not working (31%): 4 cells revealed in 8 steps, 2 revisits in the last 10.' }));
