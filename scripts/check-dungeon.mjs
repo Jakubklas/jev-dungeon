@@ -930,6 +930,59 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
         rmSync(bd, { recursive: true, force: true });
       }
     }
+    // The worst case after PLAN-motivation P1-P3: every tactic feasible (slip_past to a dark corridor past the
+    // ghost, hide, engage with the sword ready, race_to_exit to a lit portal, carry_on while patrolling), lit coin
+    // piles within 8 steps, a second ghost remembered, two hits and a full plan.tried in memory, the boldest mood (min gap 2).
+    {
+      const wide = [
+        '################################',
+        '#..........####.................#',
+        '#..........####.................#',
+        '#..........####.................#',
+        '#...............................#',
+        '#..........####.................#',
+        '#..........#####################',
+        '#..........#####################',
+        '#...............................#',
+        '#####.##########################',
+        '#####.##########################',
+        '#####...........################',
+        '################################',
+      ];
+      const start = [5, 4], ghost = [1, 7];
+      // The boldest mood (smallest min gap) by value, not by name, so a mood rename keeps every tactic open.
+      const boldest = Object.entries(SENTIMENTS).sort((a, b) => a[1].min_gap - b[1].min_gap)[0][0];
+      for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+        const big = handGame(wide, start, 13);
+        big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
+        big.dungeon.treasure = [1, 1];
+        big.coinPiles = [[3, 3], [3, 3], [7, 2], [2, 6], [2, 6], [2, 6]];
+        const bd = mkdtempSync(join(tmpdir(), 'jev-check-'));
+        const bb = new ExplorerBrain(new KnownWorld(big), {
+          ask: answerWith((k, ds) => (k === 'sentiment' ? boldest : k === 'skill' ? 'none' : ds.includes('stay') ? 'stay' : ds[0])),
+          memoryDir: pathToFileURL(bd + '/'),
+        });
+        await withSeed(1, async () => {
+          big.pos = [5, 8]; big.adversaries = [chaser([11, 8], 'chase', 'a2')]; // seen, then remembered (out of sight from the start)
+          await bb.takeTurn();
+          big.pos = [...start]; big.adversaries = [];
+          for (let i = 0; i < 4; i++) { await bb.takeTurn(); big.pos = [...start]; }
+          await bb.noteHit('a2'); await bb.noteHit('a2');
+          // A full plan.tried (5 review switches), as late in a long game; the tactic request leaves it out.
+          bb.memory.approach.tried = Array.from({ length: LIMITS.triedApproaches }, (_, i) => ({ id: ['nearest_frontier', 'far_side', 'largest_unexplored'][i % 3], approach: 'x', steps: `${i * 9}–${i * 9 + 8}`, reason: 'Jev judged it not working (31%): 4 cells revealed in 8 steps, 2 revisits in the last 10.' }));
+          big.adversaries = [chaser(ghost, mode)];
+          sizes.length = 0;
+          for (let i = 0; i < 3; i++) { await bb.takeTurn(); big.pos = [...start]; big.adversaries[0].pos = [...ghost]; }
+        });
+        const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
+        const last = bb.lastRequests().find((r) => r.questions?.tactic) ?? bb.lastRequest();
+        if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
+        if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
+        if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
+        console.log(`  worst-case decision tick (${mode}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        rmSync(bd, { recursive: true, force: true });
+      }
+    }
     console.log(`encounter counters ${JSON.stringify(m.encounters)}, events ${m.events.length}; ${sizes.length} requests, largest ${max} bytes (up to ${maxTactics} tactics offered)`);
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1087,7 +1140,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
       if (!brain.memory.events.some((e) => e.text === 'Dispelled a1; it dropped a coin.')) fail(`dispel: no dispel event with the coin in memory: ${JSON.stringify(brain.memory.events)}`);
       if (brain.memory.encounters.dispelled !== 1) fail(`dispel: encounters.dispelled ${brain.memory.encounters.dispelled}`);
       if (st.self.coins !== 0 || JSON.stringify(st.surroundings.coins) !== '[{"direction":"east","distance":1,"count":1}]') fail(`coins: self ${st.self.coins}, surroundings ${JSON.stringify(st.surroundings.coins)}`);
-      if (!/drops a coin every time/.test(st.game)) fail(`coins: rules sentence lacks the drop chance: ${st.game}`);
+      if (!/may drop a coin/.test(st.game) || /every time/.test(st.game)) fail(`coins: rules sentence lacks the drop clause: ${st.game}`);
       if (g.coins !== 1 || brain.memory.progress.coins !== 1 || !brain.memory.events.some((e) => e.text === 'Picked up a coin: 1 in all.')) fail(`coins: pickup not recorded (game ${g.coins}, memory ${brain.memory.progress.coins}, events ${JSON.stringify(brain.memory.events)})`);
       validateMemory(brain.memory);
       console.log('skill fog twin: requests byte-identical with a visible ghost\'s stun and cooldowns scrambled; its health bar read, an unseen one\'s not; dispel counted, its coin seen and picked up');
@@ -1436,7 +1489,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 
 // 4h. Coins pull (PLAN-motivation P2; stub Jev, no network, temp memory dir): collect_coins is offered only
 //     while a lit pile is reachable and targets the best coins per known-path step, never through the portal;
-//     unlit piles change no request byte; the per-move "Toward / Away from N seen coins" fact shows within 8
+//     unlit piles change no request byte; the per-move "Toward N seen coins" fact shows within 8
 //     steps only; the coin decision (a next_approach question, no sentiment call) fires once on a new nearby
 //     pile, not again within 10 steps, not beside a tactic; a stub picking collect_coins walks onto the pile.
 {
@@ -1485,14 +1538,14 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const facts = (pileX) => describeMoves(new KnownWorld(mk(strip(30), [3, 1], 14, [[pileX, 1], [pileX, 1]])), 'nearest_frontier');
     const near = facts(11); // 8 steps away
     if (!/Toward 2 seen coins \(7 steps after this\)\./.test(near.right)) fail(`no toward-coins fact at 8 steps: ${near.right}`);
-    if (!/Away from 2 seen coins \(9 steps after this\)\./.test(near.left)) fail(`no away-coins fact at 8 steps: ${near.left}`);
+    if (/seen coin/.test(near.left)) fail(`a coins fact on the move away from the pile: ${near.left}`);
     const far = facts(12); // 9 steps away
     if (/seen coin/.test(far.right + far.left)) fail(`coins fact beyond 8 steps: ${far.right} ${far.left}`);
     const on = describeMoves(new KnownWorld(mk(strip(30), [3, 1], 14, [[4, 1], [4, 1]])), 'nearest_frontier');
     if (!/Picks up 2 coins\./.test(on.right) || /Toward/.test(on.right)) fail(`step onto a pile: ${on.right}`);
     const parts = describeMoveParts(new KnownWorld(mk(strip(30), [3, 1], 14, [[11, 1]])), 'collect_coins');
     if (!/Toward 1 seen coin/.test(parts.right.shared) || /seen coin/.test(parts.right.target)) fail('the coins fact is not in the shared part');
-    console.log('coin move fact: Toward / Away within 8 known-path steps, absent at 9, Picks up on the pile, in the shared part');
+    console.log('coin move fact: Toward (only on the closing move) within 8 known-path steps, absent at 9, Picks up on the pile, in the shared part');
   }
 
   // (c) Fog twin: coins on unlit cells change no request byte; a lit pile does.

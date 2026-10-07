@@ -65,7 +65,7 @@ const ZONE_NEAR_STEPS = 10;
 const ZONE_FRESH = 10;
 const ZONE_RECENT = 15;
 const SECTOR_SLACK = 2; // a cell is "behind" a sighting when the route to it via the sighting is at most this much longer
-const COIN_NEAR = 8; // a seen pile this many known-path steps away or less gets a toward / away fact per move
+const COIN_NEAR = 8; // a seen pile this many known-path steps away or less gets a toward fact on each move that closes in
 const FACT_SIGHTINGS = 3; // at most this many (the most recent) get a BFS per describeMoves call
 
 // How far (in cells, each way) unexplored_by_direction looks. Fixed, so it never depends on the map size.
@@ -544,7 +544,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
   const otherExits = (dest) => neighbours(here).filter((n) => !sameCell(n, dest) && knownFloor(world, n));
   const out = {};
   const coinPiles = world.seenCoins();
-  // The nearest seen pile by known path, when it lies within COIN_NEAR steps: "toward / away" facts per move.
+  // The nearest seen pile by known path, when it lies within COIN_NEAR steps: a "toward" fact per move that closes in.
   const pile = nearbyPiles(world, COIN_NEAR)[0] ?? null;
   const toPile = pile ? knownDistances(world, pile.cell) : null;
 
@@ -576,8 +576,10 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
 
     const coinsHere = coinPiles.filter((c) => sameCell(c, dest)).length;
     if (coinsHere) facts.push(coinsHere === 1 ? 'Picks up a coin.' : `Picks up ${coinsHere} coins.`);
-    else if (pile && toPile.has(dest) && toPile.has(here) && toPile.get(dest) !== toPile.get(here)) {
-      facts.push(`${toPile.get(dest) < toPile.get(here) ? 'Toward' : 'Away from'} ${plural(pile.count, 'seen coin')} (${plural(toPile.get(dest), 'step')} after this).`);
+    // Only the moves that close in say so (as in the plan); an "Away from" twin cost ~40 B per move on the
+    // busiest decision tick, and a move without the fact does not get closer.
+    else if (pile && toPile.has(dest) && toPile.has(here) && toPile.get(dest) < toPile.get(here)) {
+      facts.push(`Toward ${plural(pile.count, 'seen coin')} (${plural(toPile.get(dest), 'step')} after this).`);
     }
     const reveal = wouldReveal(world, dest);
     facts.push(reveal ? `Reveals about ${plural(reveal, 'new cell')}.` : 'Reveals nothing new.');

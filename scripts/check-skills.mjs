@@ -227,7 +227,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
 // 10. Coins: drop on dispel (one roll each), pickup, determinism, twin safety, publicView, fog.
 {
   const setChance = (p) => configureSkills({ ...skillConfig(), coinDropChance: p });
-  check(skillConfig().coinDropChance === 1, 'coinDropChance defaults to 1');
+  check(skillConfig().coinDropChance === 0.6, 'coinDropChance defaults to 0.6');
   const MAP = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#....A#', '#######']; // a2 keeps the game going after a1 is dispelled
   const dispel = (g) => { g.adversaries[0].takeHit(skillConfig().ghostHp - 1, [0, 0]); g.adversaries[0].pos = [4, 3]; return resolveAttack(g, EXPLORER, [[4, 3]], 1); };
   try {
@@ -312,9 +312,9 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     const lit2 = mk([[4, 3], [4, 3]]);
     check(/Picks up 2 coins\./.test(describeMoves(new KnownWorld(lit2), 'nearest_frontier', {}).right ?? ''), 'a two-coin pile says "Picks up 2 coins."');
   } finally {
-    setChance(1);
+    setChance(0.6);
   }
-  check(skillConfig().coinDropChance === 1, 'coinDropChance restored');
+  check(skillConfig().coinDropChance === 0.6, 'coinDropChance restored');
 }
 
 // 11. Victory by clearing: dispelling the last adversary wins; one of two does not; an arena with none is not won.
@@ -378,13 +378,18 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const before = skillConfig();
   const base = await rulesOf();
   check(/loses 1 hp and is knocked back and stunned 2 steps, so your next strike lands before it can claw/.test(base), `combat rule: stun clause (${base})`);
-  check(/drops a coin every time/.test(base) && /claw needs 2 steps to recharge, and your shield stops it 60% of the time/.test(base), 'combat rule: coin, recharge and shield at the defaults');
+  check(/gone for good and may drop a coin\./.test(base) && !/every time|half the time/.test(base) && /claw needs 2 steps to recharge, and your shield stops it 60% of the time/.test(base), 'combat rule: coin, recharge and shield at the defaults');
   try {
     configureSkills({ ...before, stunTicks: 3, clawCooldown: 4, shieldChance: 0.4, coinDropChance: 0.5, swordDamage: 2 });
     const live = await rulesOf();
-    check(/loses 2 hp and is knocked back and stunned 3 steps/.test(live) && /half the time/.test(live) && /needs 4 steps to recharge/.test(live) && /stops it 40% of the time/.test(live), `combat rule follows the settings (${live})`);
+    check(/loses 2 hp and is knocked back and stunned 3 steps/.test(live) && /may drop a coin/.test(live) && !/half the time/.test(live) && /needs 4 steps to recharge/.test(live) && /stops it 40% of the time/.test(live), `combat rule follows the settings (${live})`);
     configureSkills({ ...before, stunTicks: 1 });
     check(!/before it can claw/.test(await rulesOf()), 'combat rule: no "next strike before it claws" claim with a 1-step stun');
+    // A sword cooldown of 3 against a 2-step stun: the duels below give a claw between the strikes (review of P3).
+    configureSkills({ ...before, swordCooldown: 3 });
+    check(!/before it can claw/.test(await rulesOf()), 'combat rule: no "next strike before it claws" claim when the sword recharges slower than the stun');
+    configureSkills({ ...before, clawDamage: 2 });
+    check(/claw costs 2 lives/.test(await rulesOf()), 'rules: the claw damage follows the clawDamage setting');
   } finally { configureSkills(before); }
 
   // b. Engage's fact: strikes needed from the visible hp; the clear sentence only for the one ghost ever seen.
@@ -399,6 +404,44 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   // Two in sight: no sentence. Two seen, one gone from sight: still none (remembered, and never "the only one").
   const two = await withBrain(hunting(arena(TWO)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
   check(two?.engage && /strikes? dispel/.test(two.engage) && !/clear the dungeon/.test(two.engage), `two ghosts in sight: strikes but no clear sentence (${two?.engage})`);
+  check(!/at most one claw/.test(two?.engage ?? ''), `two ghosts in sight: no "at most one claw" claim (${two?.engage})`);
+  // The claw clause and the coin in the tactic priority follow the settings.
+  try {
+    configureSkills({ ...before, swordCooldown: 3 });
+    const slow = await withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
+    check(slow?.engage && !/at most one claw/.test(slow.engage), `sword cooldown 3 > stun 2: no claw claim (${slow?.engage})`);
+    configureSkills({ ...before, coinDropChance: 0 });
+    const prio = await withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return JSON.stringify(calls.find((c) => c.questions.tactic)?.questions.tactic.instructions); });
+    check(!/may drop a coin|pays a coin/.test(prio ?? 'pays a coin'), `coinDropChance 0: the tactic priorities promise no coin (${prio})`);
+  } finally { configureSkills(before); }
+  {
+    // A ghost the explorer dispelled no longer counts: the lone survivor in sight may still clear the dungeon.
+    const g = hunting(arena(TWO));
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const calls = [];
+    const base = stubAsk(calls);
+    const ask = async (req) => {
+      const out = await base(req);
+      const strike = Object.keys(req.questions.skill?.criteria ?? {}).find((k) => k.startsWith('sword_strike'));
+      if (strike) out.skill = { choice: strike, probabilities: { [strike]: 1 }, confidence: 1 };
+      return out;
+    };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const rnd = Math.random; Math.random = () => 0.5;
+    try {
+      await brain.takeTurn(); // both seen
+      const a1 = g.adversaries.find((a) => a.id === 'a1');
+      a1.takeHit(a1.hp - 1, [0, 0]); // 1 hp left
+      a1.pos = [g.pos[0], g.pos[1] - 1];
+      await brain.takeTurn(); // strikes a1: dispelled
+      check(!g.adversaries.some((a) => a.id === 'a1'), 'setup: the explorer dispelled a1');
+      await brain.noteHit('a2'); // a re-decision on the next tick
+      const n = calls.length;
+      await brain.takeTurn();
+      const t = tacticOf(calls.slice(n));
+      check(/clear the dungeon/.test(t?.engage ?? ''), `after dispelling a1, the lone a2 in sight may clear the dungeon (${t?.engage})`);
+    } finally { Math.random = rnd; rmSync(dir, { recursive: true, force: true }); }
+  }
   {
     const g = hunting(arena(TWO));
     await withBrain(g, async (b, calls) => {

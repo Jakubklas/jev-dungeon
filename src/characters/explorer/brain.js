@@ -26,7 +26,7 @@ import { knownLineOfSight, speedPhrase } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
-  LIMITS, addEvent, addLandmark, backAndForth, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
+  LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
 import { askJev, shuffle } from '../../jev.js';
@@ -126,7 +126,7 @@ const TRIGGER_TEXT = {
 const TACTIC_MOVE_HINT = {
   run_away: 'Keep the distance growing; avoid known dead ends.',
   slip_past: 'Moving toward or alongside it is fine while the gap holds: follow the route past it.',
-  engage: 'Go to the target: 2 steps off a hunting adversary, so it steps next to you and you strike first; next to one you stunned. Never step onto it.',
+  engage: 'Go to the target: 2 steps off a hunting adversary, so it steps next to you and you strike first; next to one you stunned.',
   hide: 'Reach the target out of its sight fast; do not step back into its line of sight.',
   race_to_exit: 'Head straight for the portal; getting there first matters most.',
   carry_on: 'It has not seen you: keep exploring, out of its line of sight.',
@@ -134,25 +134,29 @@ const TACTIC_MOVE_HINT = {
 
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
-// combat: null (no attack skill) or { name, damage, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
+// combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null) =>
   'Goal: loot this dark dungeon and get out alive. Your score is the coins you hold when you win. ' +
   'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every adversary. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Adversaries chase an explorer they see, at ${speedPhrase()}. ` +
-  `A touch only bumps. An adjacent adversary's claw costs 1 life (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
+  `A touch only bumps. An adjacent adversary's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
   '`threats.visible`: in sight now, with each health bar (`hp`); `threats.remembered`: seen earlier, frozen where last seen.' +
   (combat ? ` ${combatRule(combat)}` : '') +
   (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '');
 
+// What a dispel pays, for the tactic priority line: "may drop a coin" (the chance is never stated), nothing at 0.
+const engagePays = (p) => `dispelling it brings the cleared win closer${p > 0 ? ' and may drop a coin' : ''}`;
 const chancePhrase = (p) => (p >= 1 ? 'every time' : p === 0.5 ? 'half the time' : `${Math.round(p * 100)}% of the time`);
 // What the sword does, with the live numbers: the facts that make a fight worth weighing.
-// The stun clause is claimed only from 2 steps up: strike, close in, strike again is two ticks, and the
-// stubbed duels (check-skills section 11) show no claw in between at the default stun.
-function combatRule({ name, damage, stun, coinChance, clawCooldown, shield }) {
-  const loot = coinChance > 0 ? ` and drops a coin ${chancePhrase(coinChance)}` : '';
+// The "next strike lands first" clause is claimed only while the stun outlasts the sword's cooldown and lasts 2+
+// steps (strike, close in, strike again is two ticks): the stubbed duels (check-skills section 12) show a claw in
+// between with a 1-step stun at full speed or a sword cooldown of 3 against a 2-step stun.
+const stunHolds = (stun, cooldown) => stun >= 2 && cooldown < stun;
+function combatRule({ name, damage, cooldown, stun, coinChance, clawCooldown, shield }) {
+  const loot = coinChance > 0 ? ' and may drop a coin' : ''; // the chance is never stated (user decision)
   return `Your ${name.toLowerCase()} always hits an adjacent adversary: it loses ${damage} hp${stun ? ` and is knocked back and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}` +
-    `${stun >= 2 ? ', so your next strike lands before it can claw' : ''}; at 0 hp it is gone for good${loot}. ` +
+    `${stunHolds(stun, cooldown) ? ', so your next strike lands before it can claw' : ''}; at 0 hp it is gone for good${loot}. ` +
     `An adversary's claw needs ${clawCooldown} step${clawCooldown === 1 ? '' : 's'} to recharge` +
     `${shield > 0 ? `, and your shield stops it ${chancePhrase(shield)}` : ''}.`;
 }
@@ -283,7 +287,9 @@ export class ExplorerBrain {
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
         approach: { id: a.id, current: a.current, since_step: a.since_step, interrupted: i ? { id: i.id, since_step: i.since_step, reason: i.reason } : null },
-        tried: a.tried.map((t) => ({ id: t.id, steps: t.steps, reason: t.reason })),
+        // Not on the tactic request (the largest one; no review rides on it, and a tactic never reads `tried`):
+        // a full list is about 600 B.
+        ...(tactics ? {} : { tried: a.tried.map((t) => ({ id: t.id, steps: t.steps, reason: t.reason })) }),
       },
       recent: {
         path: m.recent.moves.map(dirWord),
@@ -360,13 +366,18 @@ export class ExplorerBrain {
     return new Set([...this.#struck].filter(([, at]) => now - at < skillConfig().stunTicks).map(([id]) => id));
   }
 
-  // What engage's option fact needs to say the fight in numbers: the sword's damage, and whether the adversary in
-  // sight is the only one this explorer has ever seen (nothing remembered, no other id seen this game). Own sight
+  // What engage's option fact needs to say the fight in numbers: the sword's damage, whether the stun outlasts the
+  // sword's cooldown (`steady`: the claw clause holds only then), and whether the adversary in sight is the only one
+  // this explorer knows of (nothing remembered, no other id seen this game except the ones it dispelled). Own sight
   // only: it never claims it is the last one, only that it may clear the dungeon.
   #fight() {
     const k = this.#skills.skills.find((x) => x.kind === 'attack');
     if (!k) return null;
-    return { damage: k.damage, only: this.#everSeen.size === 1 && this.#remembered.length === 0 && this.#world.visibleAdversaries().length === 1 };
+    return {
+      damage: k.damage,
+      steady: stunHolds(skillConfig().stunTicks, k.cooldown),
+      only: this.#everSeen.size === 1 && this.#remembered.length === 0 && this.#world.visibleAdversaries().length === 1,
+    };
   }
 
   // A ready attack skill is in hand (engage is offered only then).
@@ -380,7 +391,7 @@ export class ExplorerBrain {
     if (!k) return null;
     const c = skillConfig();
     const block = this.#skills.skills.find((x) => x.kind === 'block');
-    return { name: k.name, damage: k.damage, stun: c.stunTicks, coinChance: c.coinDropChance, clawCooldown: c.clawCooldown, shield: block ? block.effectiveness : null };
+    return { name: k.name, damage: k.damage, cooldown: k.cooldown, stun: c.stunTicks, coinChance: c.coinDropChance, clawCooldown: c.clawCooldown, shield: block ? block.effectiveness : null };
   }
 
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
@@ -404,7 +415,7 @@ export class ExplorerBrain {
     this.#watchCoins();
     // collect_coins is done when no seen pile is reachable any more (all taken): back to the closest edge.
     if (memory.approach.id === 'collect_coins' && !this.#target('collect_coins')) {
-      switchApproach(memory, approachOf('nearest_frontier'), 'The seen coins are collected.', prev);
+      changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
     }
@@ -470,8 +481,8 @@ export class ExplorerBrain {
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
           priorities: [
             profile.priority,
-            'Prefer a tactic that keeps making progress (slip past, carry on) or wins a fight worth its risk (engage); racing to the portal ends the game.',
-            'Engage a lone adversary when the sword is ready: it pays a coin and brings the cleared win closer. Run away when outnumbered, cramped or without the sword.',
+            'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+            `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
           ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
@@ -603,8 +614,8 @@ export class ExplorerBrain {
     else if (pendingCoins && !result.won && !isTactic(memory.approach.id)) {
       const from = memory.approach.id;
       const reason = `Coins came into view: Jev picked ${pendingCoins.id} (${Math.round(pendingCoins.p * 100)}%).`;
-      switchApproach(memory, approachOf(pendingCoins.id), reason, world.steps);
-      addEvent(memory, world.steps, `Switched from ${from} to ${pendingCoins.id} for the coins in view.`);
+      changeApproach(memory, approachOf(pendingCoins.id), world.steps); // a coin detour is not a failure: no plan.tried row
+      addEvent(memory, world.steps, `Switched from ${from} to ${pendingCoins.id} ${pendingCoins.id === 'collect_coins' ? 'for' : 'with'} the coins in view.`);
       this.#review = { step: world.steps, targetSteps: this.#target(pendingCoins.id)?.steps ?? null };
       policy = { from, to: pendingCoins.id, reason };
     }
@@ -644,6 +655,7 @@ export class ExplorerBrain {
         countEncounter(memory, 'dispelled', step);
         addEvent(memory, step, `Dispelled ${e.id}${coin ? '; it dropped a coin' : ''}.`);
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
+        this.#everSeen.delete(e.id); // so a lone survivor in sight may still be "the only one it knows of"
         this.#struck.delete(e.id);
       }
     }
@@ -789,7 +801,7 @@ export class ExplorerBrain {
           ...(portalSeen ? [portalLine] : []),
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
-          ...(sit.surroundings.coins ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an adversary is near.'] : []),
+          ...(nearbyPiles(this.#world, COIN_NEAR).length ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an adversary is near.'] : []),
           profile.priority,
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
           'Stay makes no progress and lets adversaries close in: only when every step is worse.',
@@ -834,8 +846,10 @@ export class ExplorerBrain {
     return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids).map((id) => [id, this.#approachOption(id)])) };
   }
 
-  // Remembers which piles were seen. A pile seen for the first time within COIN_NEAR known-path steps   // coin decision, unless the last one was under COIN_EVERY steps ago (one first sight, one chance: a pile first
-  // seen farther off, or during the cooldown, never queues it; only a busy tick delays it); the queue empties when no seen pile is that near any more. Lit piles only (KnownWorld.seenCoins).
+  // Remembers which piles were seen. A pile seen for the first time within COIN_NEAR known-path steps queues a
+  // coin decision, unless the last one was under COIN_EVERY steps ago (one first sight, one chance: a pile first
+  // seen farther off, or during the cooldown, never queues it; only a busy tick delays it); the queue empties when
+  // no seen pile is that near any more. Lit piles only (KnownWorld.seenCoins).
   #watchCoins() {
     const world = this.#world;
     const fresh = new Set();

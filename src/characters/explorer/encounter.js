@@ -237,11 +237,13 @@ export const hpText = (th) => `${th.hp} of ${th.maxHp} hp`;
 // cheapest target wins (the weaker adversary on a tie). No minimum gap: closing in is the point.
 const HOLD_GAP = 2;
 // The fight in numbers, from the health bar in sight and the sword's damage only. "At most one claw" is claimed
-// for up to 2 strikes: in stubbed duels (check-skills section 11) holding the 2-step gap took no claw and walking in
-// at most one, always before the first strike. `fight.only`: the one adversary the explorer has ever seen.
-function fightFacts(th, { damage, only }) {
+// for up to 2 strikes, one adversary in sight and `fight.steady` (the stun outlasts the sword's cooldown): in stubbed
+// duels (check-skills section 12) holding the 2-step gap took no claw and walking in at most one, always before the
+// first strike; two ghosts, a sword cooldown above the stun or no stun gave two. `fight.only`: the one adversary
+// the explorer knows of.
+function fightFacts(th, { damage, only, steady = false }, alone) {
   const n = Math.max(1, Math.ceil(th.hp / damage));
-  return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it${n <= 2 ? '; expect at most one claw at you' : ''}.` +
+  return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it${n <= 2 && steady && alone ? '; expect at most one claw at you' : ''}.` +
     `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}`;
 }
 export function engageTarget(world, threats, { stunned = null, fight = null } = {}) {
@@ -268,11 +270,11 @@ export function engageTarget(world, threats, { stunned = null, fight = null } = 
   const where = `${plural(best.steps, 'step')} to the ${compass(here, best.cell)}`;
   const why = {
     adjacent: `${who} is next to you: strike it now.`,
-    hold: `Hold here, 2 steps from ${who}: let it step next to you, then strike first.`,
-    approach: `${where} puts you 2 steps from ${who}: wait there for it to step in, then strike first.`,
+    hold: `Hold here, 2 steps from ${who}: let it step in.`,
+    approach: `${where} puts you 2 steps from ${who}: wait there.`,
     close: `${where} puts you next to ${who}, still stunned by your strike.`,
   }[best.kind];
-  return { cell: [...best.cell], steps: best.steps, why: fight ? `${why} ${fightFacts(th, fight)}` : why };
+  return { cell: [...best.cell], steps: best.steps, why: fight ? `${why} ${fightFacts(th, fight, threats.length === 1)}` : why };
 }
 
 // Per legal move: does it lead into a known dead end (nothing unexplored past it, no loop back)?

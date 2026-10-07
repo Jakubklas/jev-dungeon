@@ -32,7 +32,7 @@ export const SCHEMA = [
   { key: 'clawDamage', group: 'Skills', label: 'Claw damage', hint: 'Lives a ghost claw strike takes.', type: 'range', min: 1, max: 3, step: 1, def: 1, when: 'next' },
   { key: 'clawCooldown', group: 'Skills', label: 'Claw cooldown', hint: 'Steps before a ghost can strike again.', type: 'range', min: 0, max: 6, step: 1, def: 2, when: 'next' },
   { key: 'ghostHp', group: 'Skills', label: 'Ghost hit points', hint: 'Hits a ghost takes before it is dispelled.', type: 'range', min: 1, max: 5, step: 1, def: 2, when: 'next' },
-  { key: 'coinDropChance', group: 'Skills', label: 'Coin drop chance', hint: 'Chance a dispelled ghost drops a coin.', type: 'range', min: 0, max: 1, step: 0.05, def: 1, when: 'next' },
+  { key: 'coinDropChance', group: 'Skills', label: 'Coin drop chance', hint: 'Chance a dispelled ghost drops a coin.', type: 'range', min: 0, max: 1, step: 0.05, def: 0.6, when: 'next' },
   { key: 'stunTicks', group: 'Skills', label: 'Stun ticks', hint: 'Ticks a struck ghost loses (no step, no Jev call).', type: 'range', min: 0, max: 6, step: 1, def: 2, when: 'next' },
   { key: 'lives', group: 'Explorer', label: 'Lives', hint: 'Lives the explorer starts with.', type: 'range', min: 1, max: 9, step: 1, def: 2, when: 'next' },
   { key: 'lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },

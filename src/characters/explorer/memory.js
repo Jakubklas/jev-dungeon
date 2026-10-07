@@ -125,6 +125,11 @@ export function switchApproach(memory, { id, text, thought }, reason, step) {
   startApproach(memory, id, text, thought, step);
 }
 
+// Switches to `id` with no `tried` row: the current approach did not fail (a coin detour starts or ends).
+export function changeApproach(memory, { id, text, thought }, step) {
+  startApproach(memory, id, text, thought, step);
+}
+
 // Parks the current approach (no `tried` row: it did not fail) and starts `id` from the next step.
 // If an approach is already parked, it stays parked.
 export function interruptApproach(memory, { id, text, thought }, reason, step) {
