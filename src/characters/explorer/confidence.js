@@ -39,14 +39,26 @@ export const GAP_STEPS = [[80, -1], [40, 0], [30, 1], [0, 2]];
 export const ENGAGE_MIN = 40;
 export const PRESSED_RANGE = 2; // steps, for applyTurn
 
+// The default event weights as one object, so C4's sweep can swap them (createConfidence({ weights })).
+export const WEIGHTS = { hit: D_HIT, struck: D_STRUCK, dispelled: D_DISPELLED, blocked: D_BLOCKED, evaded: D_EVADED, pressed: D_PRESSED, calm: D_CALM };
+
 const EVENTS = new Set(['hit', 'struck', 'dispelled', 'blocked', 'evaded', 'pressed', 'calm']);
 
 const round2 = (v) => Math.round(v * 100) / 100; // keeps 0.3 steps free of float drift
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const freshEnc = () => ({ chased: false, hurt: false, killed: false, pressed: 0 });
 
-export function createConfidence() {
-  return { value: START, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc() };
+// createConfidence() is the shipped model. C4's arms: { weights: {hit, struck, ...} } overrides some weights
+// (kept in the state as `w`, only when given, so the default state shape is unchanged), and { model: 'beta' }
+// is the weight-free alternative: value = 100 * (landed + 2) / (landed + taken + 4), landed = own strikes that
+// landed (struck or dispelled), taken = hits; blocked, evaded, pressed and calm do not move it. The lives cap
+// still applies to both.
+export function createConfidence({ weights = null, model = null } = {}) {
+  return {
+    value: START, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc(),
+    ...(weights ? { w: { ...WEIGHTS, ...weights } } : {}),
+    ...(model === 'beta' ? { model: 'beta', beta: { landed: 0, taken: 0 } } : {}),
+  };
 }
 
 // Highest C the lives left allow: 100 with full lives (or one life in all), LAST_LIFE_CAP on the last
@@ -63,21 +75,27 @@ export function apply(state, event, lives, maxLives) {
   if (!EVENTS.has(type)) throw new Error(`unknown confidence event: ${type}`);
   const counts = { ...state.counts };
   const enc = { ...(state.enc ?? freshEnc()) };
+  const w = state.w ?? WEIGHTS;
+  const beta = state.model === 'beta' ? { ...state.beta } : null;
   let v = state.value;
   const upTo = (d, ceiling) => (v >= ceiling ? v : Math.min(ceiling, v + d)); // never pulls a higher C down
   switch (type) {
-    case 'hit': v += D_HIT; enc.hurt = true; break;
-    case 'struck': v += D_STRUCK; counts.strikes += 1; break;
-    case 'dispelled': v += D_DISPELLED; counts.strikes += 1; enc.killed = true; break;
-    case 'blocked': v = upTo(D_BLOCKED, BLOCK_CEILING); counts.blocked += 1; break;
-    case 'evaded': v = upTo(D_EVADED, EVADE_CEILING); counts.evaded += 1; Object.assign(enc, freshEnc()); break;
+    case 'hit': v += w.hit; enc.hurt = true; if (beta) beta.taken += 1; break;
+    case 'struck': v += w.struck; counts.strikes += 1; if (beta) beta.landed += 1; break;
+    case 'dispelled': v += w.dispelled; counts.strikes += 1; enc.killed = true; if (beta) beta.landed += 1; break;
+    case 'blocked': v = upTo(w.blocked, BLOCK_CEILING); counts.blocked += 1; break;
+    case 'evaded': v = upTo(w.evaded, EVADE_CEILING); counts.evaded += 1; Object.assign(enc, freshEnc()); break;
     case 'pressed': {
-      const d = Math.min(-D_PRESSED, PRESSED_MAX - enc.pressed);
+      const d = Math.min(-w.pressed, PRESSED_MAX - enc.pressed);
       enc.pressed += d; v -= d; counts.pressed += 1; break;
     }
-    case 'calm': if (v < CALM_TARGET) v = Math.min(CALM_TARGET, v + D_CALM); break;
+    case 'calm': if (v < CALM_TARGET) v = Math.min(CALM_TARGET, v + w.calm); break;
   }
-  return { value: clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100), counts, enc };
+  if (beta) v = 100 * (beta.landed + 2) / (beta.landed + beta.taken + 4); // the posterior replaces every weighted change
+  return {
+    value: clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100), counts, enc,
+    ...(state.w ? { w: state.w } : {}), ...(beta ? { model: 'beta', beta } : {}),
+  };
 }
 
 // The brain saw a chasing adversary: this encounter now counts for 'evaded'. Returns a new state.

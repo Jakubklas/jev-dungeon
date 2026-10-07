@@ -3,7 +3,7 @@
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
 import { SENTIMENTS, effectiveGap, effectiveSentiment, effectiveProfile, CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
-import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn } from '../src/characters/explorer/confidence.js';
+import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn, WEIGHTS } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -142,6 +142,24 @@ ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40.3, 'calm turn dri
   ok(effectiveProfile({}, 50) === SENTIMENTS.steady, 'effectiveProfile without a mood falls back to steady');
   ok(CONFIDENCE_SENTENCE.length < 160, 'the sentence stays short');
 }
+
+// 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
+ok(JSON.stringify(Object.keys(createConfidence())) === '["value","counts","enc"]', 'default state has no w / model keys');
+ok(apply(createConfidence(), 'hit', 2, 3).value === 35, 'default weights: hit -15');
+let wv = createConfidence({ weights: { hit: -25, calm: 0 } });
+ok(wv.w.hit === -25 && wv.w.struck === WEIGHTS.struck, 'weights merge over the defaults');
+ok(apply(wv, 'hit', 2, 3).value === 25 && apply(apply(wv, 'hit', 2, 3), 'calm', 2, 3).value === 25, 'custom hit weight, calm 0');
+ok(apply(wv, 'hit', 2, 3).w === wv.w, 'weights survive apply');
+let bt = createConfidence({ model: 'beta' });
+ok(bt.value === 50, 'beta starts at 50');
+bt = apply(bt, 'hit', 2, 3);
+ok(Math.abs(bt.value - 40) < 0.01, `beta after one hit is 2/5: ${bt.value}`);
+bt = apply(apply(bt, 'struck', 2, 3), 'dispelled', 2, 3);
+ok(Math.abs(bt.value - 100 * 4 / 7) < 0.01, `beta after hit, 2 landed is 4/7: ${bt.value}`);
+const bt2 = apply(apply(bt, 'calm', 2, 3), 'pressed', 2, 3);
+ok(bt2.value === bt.value, 'beta ignores calm and pressed');
+ok(apply(createConfidence({ model: 'beta' }), 'hit', 1, 2).value === 40 && apply(apply(createConfidence({ model: 'beta' }), 'struck', 1, 2), 'struck', 1, 2).value === 45, 'beta obeys the lives cap');
+ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta state round-trips through JSON');
 
 // 10. purity: no imports, no Math.random, no Date
 const src = readFileSync(new URL('../src/characters/explorer/confidence.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');

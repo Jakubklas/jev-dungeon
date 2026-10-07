@@ -13,8 +13,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { clawDecide, mulberry32, man } from './lib/duel-harness.mjs'; // installs the fetch tripwire
-import { DIRS } from '../src/dungeon.js';
+import { clawDecide, mulberry32 } from './lib/duel-harness.mjs'; // installs the fetch tripwire
+import { makeAsk } from './lib/fight-executor.mjs';
 import { newGame, newTestGame } from '../src/turn.js';
 import { createConfidence, applyTurn } from '../src/characters/explorer/confidence.js';
 
@@ -27,38 +27,6 @@ const TICKS = Number(flags.ticks ?? 150);
 const PS = (flags.p ?? '0,0.2,0.5').split(',').map(Number);
 const MOOD = flags.mood ?? 'bold';
 const ZONE = [40, 80]; // neutral: 40 <= C < 80
-
-const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
-
-// The fighting executor. `own` is the script's PRNG for walk-in draws (never rng() of the game).
-function makeAsk(game, p, own, probe) {
-  return async ({ questions, state }) => {
-    probe.state = state;
-    const visible = state.threats?.visible?.length > 0;
-    const out = {};
-    // One walk-in draw per tick (a decision tick makes two requests).
-    if (probe.drawnAt !== game.steps) { probe.drawnAt = game.steps; probe.walkIn = visible && own() < p; }
-    for (const [k, q] of Object.entries(questions)) {
-      if (q.type === 'noul') { out[k] = { noul: k === 'leave_now' ? 0.1 : 0.9 }; continue; }
-      const keys = Object.keys(q.criteria);
-      if (k === 'sentiment') out[k] = answer(keys.includes(MOOD) ? MOOD : keys[0]);
-      else if (k === 'tactic') out[k] = answer(keys.includes('engage') ? 'engage' : keys.includes('run_away') ? 'run_away' : keys[0]);
-      else if (k === 'skill') out[k] = answer(keys.find((x) => x !== 'none') ?? 'none');
-      else if (k === 'next_move' || k.startsWith('move_if_')) {
-        const moves = keys.filter((d) => d !== 'stay');
-        let pick = null;
-        if (probe.walkIn) {
-          const near = game.adversaries.reduce((b, a) => (!b || man(a.pos, game.pos) < man(b.pos, game.pos) ? a : b), null);
-          const nx = (d) => [game.pos[0] + DIRS[d][0], game.pos[1] + DIRS[d][1]];
-          if (near) pick = moves.filter((d) => man(nx(d), near.pos) >= 1).sort((a, b) => man(nx(a), near.pos) - man(nx(b), near.pos))[0] ?? null;
-        }
-        pick ??= moves.find((d) => /Reaches the target/.test(q.criteria[d])) ?? moves.find((d) => /Closer to the target/.test(q.criteria[d])) ?? null;
-        out[k] = answer(pick ?? moves[0] ?? 'stay');
-      } else out[k] = answer(keys[0]);
-    }
-    return out;
-  };
-}
 
 async function playGame(kind, seed, p) {
   const dir = mkdtempSync(join(tmpdir(), 'jev-conf-'));
@@ -74,7 +42,7 @@ async function playGame(kind, seed, p) {
     if (kind === 'dungeon') run = newGame(seed, opts);
     else run = newTestGame({ size: 13 + (seed % 5), seed, numAdversaries: 1 + (seed % 3), ghostHp: 1 + (seed % 3) }, opts);
     const game = run.game;
-    holder.ask = makeAsk(game, p, mulberry32(seed * 104729 + Math.round(p * 1000)), probe);
+    holder.ask = makeAsk(game, p, mulberry32(seed * 104729 + Math.round(p * 1000)), probe, MOOD);
     let C = createConfidence();
     let lastState = null; // an engage-hold tick with no skill offered sends no request: it keeps the last one's view
     const r = { kind, seed, p, ticks: 0, min: 50, max: 50, left: false, hits: 0, strikes: 0, dispelled: 0, blocked: 0, evaded: 0, pressed: 0, won: false, lost: false };

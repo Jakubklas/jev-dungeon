@@ -276,7 +276,7 @@ export class ExplorerBrain {
     this.#encounter.pending = 'start';
     if (confidence) { // no request text uses it yet (C3): it only moves and is reported
       this.#csOn = true;
-      this.#cs = createConfidence();
+      this.#cs = createConfidence(typeof confidence === 'object' ? confidence : {}); // an object = C4's weights / model arm
       this.#syncConfidence();
     }
   }
