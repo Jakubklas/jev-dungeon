@@ -10,8 +10,8 @@ import { PLACEMENTS, playDuel } from './lib/duel-harness.mjs';
 
 export const SETS = { default: {}, 'stun 3': { stunTicks: 3 }, 'claw cd 3': { clawCooldown: 3 } };
 const OPEN_FLOOR = (c) => c[0] >= 1 && c[0] <= 13 && c[1] >= 1 && c[1] <= 5;
-// Open room: explorer [3,3]; the second ghost is N cells further along the row (N 0 = the cell below, or above on
-// row 5). Corridor: explorer [6,2], first ghost [10,2], second N cells behind it (N 1..5, one cell each).
+// Open room: explorer [3,3]; the second ghost is N cells further along the row (N 0 = the cell below, or the one
+// above for a ghost on row 4). Corridor: explorer [6,2], first ghost [10,2], second N cells behind it (N 1..5, one cell each).
 export const CASES = {
   open: {
     room: 'open', offsets: [0, 1, 2, 3, 4, 5, 6],
