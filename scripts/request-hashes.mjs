@@ -1,6 +1,7 @@
 // Request-hash baseline: sha256 of every explorer request body (kinds 'sentiment' and 'tick') over a fixed list
 // of scenarios, so a change that must not alter what Jev reads can be proved byte-identical. Library plus CLI.
 //   node scripts/request-hashes.mjs --write     recompute and write scripts/fixtures/request-hashes.json
+//   node scripts/request-hashes.mjs --caps --write   the same with confidence: 'caps' -> request-hashes-caps.json
 //   node scripts/request-hashes.mjs             print a one-line summary per scenario (no write)
 // Used by scripts/check-request-hashes.mjs. Scenarios: (a) every fixture in scripts/arenas/*.json for 60 ticks with
 // the measure-memory stub ('first': the first option of every question, which never fights) and with a fighting
@@ -22,6 +23,7 @@ const { DIRS } = await import('../src/dungeon.js');
 const { clawDecide, mulberry32, man } = await import('./lib/duel-harness.mjs');
 
 export const FIXTURE = new URL('./fixtures/request-hashes.json', import.meta.url);
+export const FIXTURE_CAPS = new URL('./fixtures/request-hashes-caps.json', import.meta.url); // the same scenarios with confidence: 'caps'
 const ARENAS = new URL('./arenas/', import.meta.url);
 
 const sha = (s) => createHash('sha256').update(s).digest('hex');
@@ -158,10 +160,12 @@ export async function computeAll(opts = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const data = await computeAll();
+  const caps = process.argv.includes('--caps');
+  const data = await computeAll(caps ? { confidence: 'caps' } : {});
   for (const [name, v] of Object.entries(data)) console.log(`${name.padEnd(36)} ticks ${String(v.ticks).padStart(3)} ${v.outcome.padEnd(8)} requests ${v.requests.length}`);
   if (process.argv.includes('--write')) {
-    writeFileSync(FIXTURE, JSON.stringify({ note: 'sha256 of explorer request bodies (keys sorted); see scripts/request-hashes.mjs', scenarios: data }) + '\n');
-    console.log(`wrote ${fileURLToPath(FIXTURE)}`);
+    const out = caps ? FIXTURE_CAPS : FIXTURE;
+    writeFileSync(out, JSON.stringify({ note: `sha256 of explorer request bodies (keys sorted)${caps ? ", confidence: 'caps'" : ''}; see scripts/request-hashes.mjs`, scenarios: data }) + '\n');
+    console.log(`wrote ${fileURLToPath(out)}`);
   }
 }

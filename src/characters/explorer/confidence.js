@@ -52,10 +52,11 @@ const freshEnc = () => ({ chased: false, hurt: false, killed: false, pressed: 0 
 // (kept in the state as `w`, only when given, so the default state shape is unchanged), and { model: 'beta' }
 // is the weight-free alternative: value = 100 * (landed + 2) / (landed + taken + 4), landed = own strikes that
 // landed (struck or dispelled), taken = hits; blocked, evaded, pressed and calm do not move it. The lives cap
-// still applies to both.
-export function createConfidence({ weights = null, model = null } = {}) {
+// still applies to both. `start` (default START) forces the history score from tick 0: the caps checks drive C with it
+// (PLAN-confidence-mood phase 3); with the lives cap applied by the first event, never by the constructor.
+export function createConfidence({ weights = null, model = null, start = START } = {}) {
   return {
-    value: START, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc(),
+    value: start, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc(),
     ...(weights ? { w: { ...WEIGHTS, ...weights } } : {}),
     ...(model === 'beta' ? { model: 'beta', beta: { landed: 0, taken: 0 } } : {}),
   };

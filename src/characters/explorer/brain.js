@@ -28,8 +28,10 @@ import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
   LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
-import { GRACE_TICKS } from '../adversary/adversary.js';
-import { PRESSED_RANGE, apply as applyConfidence, band as confidenceBand, closeEncounter, createConfidence, engageOpen, gaps as confidenceGaps, seeChase } from './confidence.js';
+import { ADVERSARY_SPEED, GRACE_TICKS } from '../adversary/adversary.js';
+import {
+  BOLD_MIN, PRESSED_RANGE, allowedMoods, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, engageOpen, gaps as confidenceGaps, seeChase, sightWeight,
+} from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
 const REVIEW_EVERY = 8; // steps between approach reviews
@@ -93,6 +95,18 @@ export const SENTIMENTS = {
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
   },
 };
+// Caps-mode wording (PLAN-confidence-mood section 5): the moods' `when` / `priority` once C decides which moods are offered
+// (confidence: 'caps'). A separate table, so SENTIMENTS and every request with caps off stay byte-identical. No word about
+// being outnumbered: how many adversaries there are is already inside `self.confidence`.
+export const CAPS_TEXT = {
+  wary: { when: 'Upside: gets you out alive. Risk: gives up coins and progress. Offered only when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by.' },
+  steady: { when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when no adversary is in sight and nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when adversaries are in sight and you would rather keep to the plan than fight them.' },
+  bold: {
+    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and `self.confidence` is even or better (it already weighs the adversaries you know, their hp and your lives), one adversary or several.',
+    priority: 'Bold: take the fight. Engage adversaries you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking.',
+  },
+};
+const MOOD_GLOSS = { wary: 'safety (wary)', steady: 'the plan (steady)', greedy: 'loot (greedy)', bold: 'the fight (bold)' };
 const DEFAULT_SENTIMENT = 'steady';
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
 
@@ -126,6 +140,7 @@ const profileNote = (id, C = null) => {
 
 // The one place Jev is told what self.confidence means (sentiment question only; rules() rides on every request).
 export const CONFIDENCE_SENTENCE = ' `self.confidence` sums up how your fights in this dungeon went; `threats` and the tactic facts say how this one stands.';
+export const CAPS_SENTENCE = ' `self.confidence` weighs your lives, sword and the adversaries you know against how your fights went; it decides which moods are offered.';
 
 const TRIGGER_TEXT = {
   start: 'The explorer is about to start exploring the dark dungeon.',
@@ -137,6 +152,7 @@ const TRIGGER_TEXT = {
   dispelled: 'The explorer has just dispelled an adversary; others may remain.',
   review: 'The explorer just dropped an exploration approach that was not working and switched to another.',
   hit: 'The explorer just lost a life to an adversary: rethink whether to keep at it.',
+  confidence: 'Your confidence changed enough that your mood no longer fits: choose again.',
 };
 
 // How each tactic should shape the move while an adversary is in sight.
@@ -256,9 +272,16 @@ export class ExplorerBrain {
   #cs = null;
   #csLast = 50;
   #csWhy = [];
+  // Confidence caps (PLAN-confidence-mood, confidence: 'caps'): C = capability + history decides which moods the sentiment question
+  // lists. #capFired = the directions ('up' wary closed, 'down' bold or greedy closed) whose `confidence` trigger already fired
+  // this encounter; #visibleIds = the ids in sight at the start of this tick (for the weights).
+  #caps = false;
+  #capFired = new Set();
+  #visibleIds = new Set();
 
   constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
-    this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a); 'multi' also holds against 2-3 ghosts (confidence caps)
+    this.#caps = confidence === 'caps' || confidence?.caps === true; // 'caps', or an arm object { caps: true, start } (the checks force the history score)
+    this.#holdOn = this.#caps ? 'multi' : hold; // false only for the duel checks that prove what the hold buys (P7a); 'multi' also holds against 2-3 ghosts (confidence caps)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#ask = ask ?? askReal;
@@ -280,6 +303,7 @@ export class ExplorerBrain {
       this.#csAct = confidence !== 'display';
       this.#cs = createConfidence(typeof confidence === 'object' ? confidence : {}); // an object = C4's weights / model arm
       this.#syncConfidence();
+      if (this.#caps) this.#csLast = this.#capState().C;
     }
   }
 
@@ -293,17 +317,47 @@ export class ExplorerBrain {
 
   // C for the gates: null with the toggle off (then every effective value is the plain SENTIMENTS one).
   #C() {
-    return this.#csAct ? this.#cs.value : null;
+    return this.#csAct && !this.#caps ? this.#cs.value : null; // caps mode has no gap shift: one source of truth
+  }
+
+  // Caps mode: { R capability, H history, C, ctx } now, from own lives, the live skill numbers and the brain's sightings (visible
+  // weight 1, remembered via sightWeight), all fog-safe; a ghost never seen is not in #seen.
+  #capState() {
+    const world = this.#world;
+    const k = this.#skills.skills.find((x) => x.kind === 'attack');
+    const cfg = skillConfig();
+    const ghosts = [...this.#seen.values()].map((r) => ({ hp: r.hp ?? r.maxHp ?? 2, weight: this.#visibleIds.has(r.id) ? 1 : sightWeight(world.steps - r.step) }));
+    const R = capability({
+      lives: world.health, maxLives: world.maxHealth, clawDamage: cfg.clawDamage, swordDamage: k?.damage ?? 1,
+      steady: k ? stunHolds(cfg.stunTicks, k.cooldown) : false, armed: !!k, ghosts,
+    });
+    const H = this.#cs.value;
+    const C = combine(R, H, world.health, world.maxHealth);
+    const swordDown = !!k && !this.#armed() && threatsOf(world).some((th) => th.chasing && threatDistance(th, world.pos) <= 3);
+    return { R, H, C, ctx: { lastLife: world.health <= cfg.clawDamage, swordDown, noSword: !k } };
+  }
+
+  // The moods the sentiment question lists at C (caps mode), the current mood kept by the hysteresis.
+  #allowed(cap = this.#capState()) {
+    return allowedMoods(cap.C, { ...cap.ctx, current: this.#memory.sentiment?.id ?? null });
   }
 
   // The current mood's profile at the current C (all gap readers below use it, never SENTIMENTS directly).
   #profile() {
-    return effectiveProfile(this.#memory, this.#C());
+    const p = effectiveProfile(this.#memory, this.#C());
+    const c = this.#caps ? CAPS_TEXT[this.#memory.sentiment?.id]?.priority : null;
+    return c ? { ...p, priority: c } : p;
   }
 
   // engage needs the sword ready and, with the model on, C >= ENGAGE_MIN.
   #engageArmed() {
-    return this.#armed() && (!this.#csAct || engageOpen(this.#cs.value));
+    return this.#armed() && (!this.#csAct || this.#caps || engageOpen(this.#cs.value));
+  }
+
+  // self.confidence as Jev reads it: "<floor C> <band>" (caps: C = capability + history; else the history score).
+  #confidenceWord() {
+    const c = this.#caps ? this.#capState().C : this.#cs.value;
+    return `${Math.floor(c)} ${confidenceBand(c)}`;
   }
 
   #syncConfidence() {
@@ -312,13 +366,14 @@ export class ExplorerBrain {
 
   // The turn's `confidence` object for the UI: value, band word, change since the last report and why.
   #confidenceReport() {
-    const value = this.#cs.value;
+    const cap = this.#caps ? this.#capState() : null;
+    const value = cap ? cap.C : this.#cs.value;
     const why = [...new Set(this.#csWhy)];
     const reason = (why.filter((w) => w !== 'calm').join(', ') || why[0]) ?? null;
     const delta = Math.round((value - this.#csLast) * 100) / 100;
     this.#csLast = value;
     this.#csWhy = [];
-    return { value, band: confidenceBand(value), delta, reason };
+    return { value, band: confidenceBand(value), delta, reason, ...(cap ? { capability: cap.R, history: cap.H } : {}) };
   }
 
   // Own shield stopped a claw (called by turn.js from the 'blocked' event) and saves.
@@ -362,7 +417,7 @@ export class ExplorerBrain {
     const i = a.interrupted;
     return {
       game: rules(this.#skills.size > 0, this.#combat()),
-      self: { ...sit.self, ...(this.#csAct ? { confidence: `${Math.floor(this.#cs.value)} ${confidenceBand(this.#cs.value)}` } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
+      self: { ...sit.self, ...(this.#csAct ? { confidence: this.#confidenceWord() } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
@@ -391,6 +446,7 @@ export class ExplorerBrain {
     const world = this.#world;
     const now = world.steps;
     const visible = new Set();
+    this.#visibleIds = visible;
     for (const v of world.visibleAdversaries()) {
       visible.add(v.id);
       this.#everSeen.add(v.id);
@@ -545,6 +601,22 @@ export class ExplorerBrain {
     // encounter starts on the same tick as a pending decision (start, exit, review), the
     // encounter trigger wins and the pending one is dropped: one sentiment call, not two.
     let trigger = enc.trigger ?? info.pending;
+    // Confidence caps: the current mood fell outside what C allows (past the hysteresis band). Ghost in sight: one `confidence`
+    // decision per direction per encounter (a trigger already due serves instead, and counts). Nothing in sight: a silent swap
+    // to steady, no call and no memory event.
+    if (this.#caps) {
+      const cap = this.#capState();
+      const cur = memory.sentiment.id;
+      if (!this.#allowed(cap).includes(cur)) {
+        const dir = cur === 'wary' ? 'up' : 'down';
+        if (inSight) {
+          if (!this.#capFired.has(dir) && (trigger || step - info.lastDecision >= REDECIDE_COOLDOWN)) { this.#capFired.add(dir); trigger ??= 'confidence'; }
+        } else {
+          setSentiment(memory, { id: 'steady' }, step);
+          policy = { from: cur, to: 'steady', reason: `confidence ${Math.floor(cap.C)}` };
+        }
+      }
+    }
     // Coins in view with no other decision due: ask the mood first (greedy may fit), then next_approach below.
     // Same gates as askCoins; the 10-step cap is #coinStep (set when a coin decision runs).
     if (!trigger && this.#coinDue && !forced && !inSight && !isTactic(memory.approach.id) && memory.approach.id !== 'collect_coins' && !this.#leaving() && !this.#leaveDue &&
@@ -594,7 +666,7 @@ export class ExplorerBrain {
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
     // A lone fight the duels back (#loneFight): under steady or greedy engaging is the default, so the mood's caution
     // does not talk the explorer out of the one fight it should take.
-    const loneEngage = tacticIds.includes('engage') && this.#loneFight(sit) &&
+    const loneEngage = tacticIds.includes('engage') && this.#fightOn(sit) &&
       (memory.sentiment.id === 'steady' || memory.sentiment.id === 'greedy');
     if (tacticIds.length) {
       questions.tactic = {
@@ -605,14 +677,18 @@ export class ExplorerBrain {
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
           priorities: loneEngage
             ? [
-              'Default: engage a lone adversary while the sword is ready (you act first). Run away when cramped or without the sword.',
+              sit.threats.visible.length > 1
+                ? 'Default: engage while the sword is ready (you act first; hold off the nearest). Run away when cramped or without the sword.'
+                : 'Default: engage a lone adversary while the sword is ready (you act first). Run away when cramped or without the sword.',
               profile.priority,
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
             ]
             : [
               profile.priority,
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
-              `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
+              this.#caps
+                ? 'Engage while the sword is ready: hold 2 steps off the nearest adversary so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.'
+                : `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
             ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
@@ -862,9 +938,27 @@ export class ExplorerBrain {
     return world.health > skillConfig().clawDamage && (world.health >= world.maxHealth || world.graceLeft > 0);
   }
 
-  // The encounter's stakes in one sentence, only for a #loneFight. Otherwise ''.
+  // Caps mode: the fight the multi hold backs (PLAN-confidence-mood section 5, phase 2 measurements). One adversary in sight:
+  // today's #loneFight, unchanged. 2-3: the sword ready, the stun outlasting its cooldown (`steady`), each visible one at most
+  // 3 strikes from dispelled, C at BOLD_MIN or better, a claw not lethal (lives above its damage), and with 3 in sight a
+  // speed below 1 (speed 1 measured 3.9% deaths). Never 4 or more. Remembered ghosts count through C, not here.
+  // Reads only the explorer's own state, the hp bars in sight and the sword.
+  #fightOn(sit) {
+    const n = sit.threats.visible.length;
+    if (!this.#caps) return this.#loneFight(sit);
+    if (n === 1) return this.#loneFight(sit);
+    if (n < 2 || n > 3) return false;
+    const fight = this.#fight();
+    if (!fight?.steady || !this.#armed()) return false;
+    if (n === 3 && ADVERSARY_SPEED >= 1) return false;
+    if (this.#world.visibleAdversaries().some((v) => Math.ceil(v.hp / fight.damage) > 3)) return false;
+    return this.#world.health > skillConfig().clawDamage && this.#capState().C >= BOLD_MIN;
+  }
+
+  // The encounter's stakes in one sentence, only for a #fightOn. Otherwise ''.
   #stakes(sit, trigger) {
-    if (!['encounter', 'tactic_failed', 'hit'].includes(trigger) || !this.#loneFight(sit)) return '';
+    if (!['encounter', 'tactic_failed', 'hit', 'confidence'].includes(trigger) || !this.#fightOn(sit)) return '';
+    if (sit.threats.visible.length > 1) return ' Holding 2 steps off the nearest and striking first, a fight with these adversaries usually costs at most one life; running may leave them hunting you.';
     return ' A lone adversary you can strike first costs at most one claw and a dispel removes it for good; running may leave it hunting you.';
   }
 
@@ -872,7 +966,12 @@ export class ExplorerBrain {
   async #askSentiment(sit, trigger) {
     const world = this.#world;
     const memory = this.#memory;
-    const ids = Object.keys(SENTIMENTS);
+    const caps = this.#caps ? this.#capState() : null;
+    const ids = caps ? this.#allowed(caps) : Object.keys(SENTIMENTS);
+    if (ids.length === 1) { // only one mood left: code takes it, no one-option Choice
+      setSentiment(memory, { id: ids[0] }, world.steps + 1);
+      return { choice: ids[0], probabilities: { [ids[0]]: 1 }, ms: 0 };
+    }
     const inSight = sit.threats.visible.length > 0;
     // With an adversary in sight, each mood also says which tactics its minimum gap leaves open here.
     const allowed = new Map();
@@ -885,22 +984,22 @@ export class ExplorerBrain {
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
       const s = effectiveSentiment(id, C);
       const here = inSight ? ` Tactics it leaves here: ${allowed.get(s.min_gap).join(', ') || 'none, only luck'}.` : '';
-      return [id, `${s.when} Effect: ${profileNote(id, C)}${here}`];
+      return [id, `${(caps && CAPS_TEXT[id]?.when) || s.when} Effect: ${profileNote(id, C)}${here}`];
     }));
     const questions = {
       sentiment: {
         type: 'choice',
         instructions:
-          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
+          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} ${caps ? `What should the explorer go after right now? Only the moods your confidence allows are listed: ${ids.map((id) => MOOD_GLOSS[id]).join(', ')}.` : 'What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)?'} ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
-          (this.#csAct ? CONFIDENCE_SENTENCE : ''),
+          (this.#csAct ? (caps ? CAPS_SENTENCE : CONFIDENCE_SENTENCE) : ''),
         criteria,
       },
     };
     const { answers, ms } = await this.#request('sentiment', this.#state(sit), questions);
     const a = answers.sentiment;
-    const choice = SENTIMENTS[a?.choice] ? a.choice : memory.sentiment.id;
+    const choice = ids.includes(a?.choice) ? a.choice : ids.includes(memory.sentiment.id) ? memory.sentiment.id : 'steady';
     setSentiment(memory, { id: choice }, world.steps + 1);
     return { choice, probabilities: a?.probabilities ?? null, ms };
   }
@@ -1067,6 +1166,7 @@ export class ExplorerBrain {
     if (visible.length && !info.active) {
       info.active = true;
       this.#exclude = null;
+      this.#capFired = new Set();
       countEncounter(memory, 'count', at);
     }
 
@@ -1109,6 +1209,7 @@ export class ExplorerBrain {
       }
       info.active = false;
       this.#exclude = null;
+      this.#capFired = new Set();
       info.encIds = new Set();
       info.modes = new Map();
     }
