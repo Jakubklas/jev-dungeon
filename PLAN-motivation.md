@@ -7,7 +7,7 @@ when to leave, states the two ways to win (leave through the portal, or dispel e
 what a fight is worth, makes coins pull on the moves, and cuts the six moods to four that each say
 what they go after. Measured on the same 10 gyms before and after (P5).
 
-Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is built and measured. P7: P7a (the engage hold, text and code) and P7b are built and measured for free (see "P7a/P7b results"); P7c was measured with no clean rule, so behaviour is unchanged (see "P7c results"); P7d is left as is by design. The live P7 measurement (the 5 seeded dungeons) has not been run. Code wins over this plan (AGENTS.md rule 3).
+Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is built and measured. P7: P7a (the engage hold, text and code) and P7b are built and measured for free (see "P7a/P7b results"); P7c was measured with no clean rule, so behaviour is unchanged (see "P7c results"); P7d is left as is by design. The live P7 measurement ran on the 5 seeded dungeons (see "P7 live results"). Code wins over this plan (AGENTS.md rule 3).
 
 ## 0. Baseline (live, 2026-10-07)
 
@@ -329,6 +329,39 @@ the mood `when` texts, the stakes sentence. The way forward, if the wary share s
 change the data cannot yet back: extend the hold to a pair (hold at the gap-2 cell of the nearest ghost while
 the other is 5+ steps behind) and re-measure with `measure-outnumbered.mjs`; the walk-in column must reach 0 claws
 and 0 deaths first. The 46% wary share stays as measured in P6.
+
+### P7 live results (5 real dungeons, merged main 9fbaa16, 2026-10-07)
+
+Same seeds 101-105 (`POST /api/new { seed }`), 120 steps, `runs/motivation/step-arenas.mjs`; confidence toggle off
+(its free calibration said not to ship it, so no live ablation was run). Before = main at 03188c9, P6 = the
+branch measured earlier, P7 = hold + P6 + everything merged.
+
+| Metric (5 games, 120 steps) | Before | P6 | P7 |
+| --- | --- | --- | --- |
+| `engage` chosen / offered | 1 / 35 (3%) | 8 / 26 (31%) | **11 / 16 (69%)** |
+| Strikes per game | 2.2 | 3.2 | **4.0** |
+| Ghosts dispelled | 4 | 6 | **9** |
+| Lives lost | 0 | **3** | **1** |
+| Games lost | 0 | 0 | 0 |
+| Coins collected / seen | 82% | 93% | 90% |
+| Wins (portal) | 0 | 2 (steps 104, 109) | 1 (step 57) |
+| Largest mood share of steps | wary 42% | wary 46% | **greedy 68%** (bold 18%, wary 3%) |
+| Hold ticks (engage, no move question) | 0 | 0 | 29 |
+
+**What happened in the 11 fights:** 10 ended with the explorer striking, the ghost stunned, a second strike and a
+dispel, no damage taken (5 coin drops); the explorer held 1-3 ticks before the ghost stepped next to it in 8 of
+them. The one life lost (r4, step 116) came 1 tick after the tactic ended in a dungeon with 12 ghosts, from a ghost
+that was not the one being fought; the hold does not cover a second ghost in sight (P7c found no clean rule).
+Compared with P6 the same 3 walk-in hits no longer happen: the hold works.
+
+**What did not change:** cleared wins stay 0 (4-12 ghosts per dungeon; 9 dispels in 5 games); the game is still
+mostly explored, not finished, at step 120 (1 of 5 won). Moods moved a lot more than the fix alone explains: wary
+dropped from 46% to 3% of steps, mostly because fights now end quickly instead of leaving ghosts hunting. This is
+a small sample: 5 games, one run each, 11 fights; the free duel tests are the stronger evidence for the hold.
+
+**Left open (P8, only if the live data keeps asking for it):** extend the hold to a pair of ghosts (P7c's plan);
+wait for 20+ live fights before judging a rule; the confidence model stays off (PLAN-confidence C0 passed, C4: no
+effect under stubs, ship false).
 
 ## 4. Cost, size and ownership
 
