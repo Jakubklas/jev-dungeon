@@ -6,7 +6,8 @@
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { DIRS, SIGHT_RANGE, hasLineOfSight } from '../src/dungeon.js';
-import { buildArena, normalizeConfig, TestbedError } from '../src/testbed.js';
+import { buildArena, normalizeConfig, explorerSkillSetOf, ghostSkillSetOf, TestbedError } from '../src/testbed.js';
+import { buildSkillSet } from '../src/skills/loadouts.js';
 import { newTestGame } from '../src/turn.js';
 import { ALERT_STEPS } from '../src/characters/adversary/adversary.js';
 import { situation } from '../src/characters/explorer/perception.js';
@@ -128,6 +129,8 @@ const floorCount = (d) => d.tiles.join('').split('').filter((c) => c === '.').le
   check(many > few, `'many' places more solid props than 'few' (${many} vs ${few})`);
   const list = buildArena({ size: [9, 9], props: [{ kind: 'crates', x: 3, y: 3 }, { kind: 'skull', x: 7, y: 7 }] }).dungeon;
   check(list.tiles[3][3] === '#' && list.tiles[7][7] === '.' && list.props.length === 2, 'explicit props: solid blocks, small stays floor');
+  const fresh = buildArena({ size: [9, 9], props: [{ kind: 'fountain', x: 3, y: 3 }, { kind: 'forge', x: 5, y: 3 }, { kind: 'anvil', x: 3, y: 6 }, { kind: 'goblet', x: 6, y: 6 }] }).dungeon;
+  check(fresh.tiles[3][3] === '#' && fresh.tiles[3][5] === '#' && fresh.tiles[6][3] === '.' && fresh.tiles[6][6] === '.' && fresh.props.length === 4, 'explicit props: fountain, forge (solid) and anvil, goblet (small)');
 }
 
 // 4. ASCII map.
@@ -176,6 +179,31 @@ for (const { name, config } of scenarios) {
   } catch (err) {
     fail(`${name}: threw ${err.stack}`);
   }
+}
+
+// 5b. Skill knobs: explorerSkills / ghostSkills / ghostHp parse, validate and reach buildArena's config.
+{
+  const d = normalizeConfig({});
+  check(d.explorerSkills === 'default' && d.ghostSkills === 'default' && d.ghostHp === null, 'skills: defaults');
+  check(explorerSkillSetOf(d) === 'explorer' && ghostSkillSetOf(d) === 'ghost', 'skills: default set names');
+  check(normalizeConfig({ explorerSkills: 'none' }).explorerSkills === 'none' && explorerSkillSetOf(normalizeConfig({ explorerSkills: 'none' })) === 'none', 'skills: explorerSkills none');
+  check(normalizeConfig({ explorerSkills: 'sword_strike;shield_block' }).explorerSkills.join() === 'sword_strike,shield_block', 'skills: URL list');
+  check(normalizeConfig({ explorerSkills: ['claw_strike'] }).explorerSkills.join() === 'claw_strike' && normalizeConfig({ explorerSkills: 'sword_strike' }).explorerSkills.join() === 'sword_strike', 'skills: array and single id');
+  check(normalizeConfig({ explorerSkills: [] }).explorerSkills === 'none', 'skills: empty list is none');
+  check(buildSkillSet(explorerSkillSetOf(normalizeConfig({ explorerSkills: 'shield_block' }))).size === 1, 'skills: list builds a skill set');
+  check(ghostSkillSetOf(normalizeConfig({ ghostSkills: 'none' })) === 'none' && normalizeConfig({ ghostSkills: 'none' }).ghostSkills === 'none', 'skills: ghostSkills none');
+  check(normalizeConfig({ ghostHp: '3' }).ghostHp === 3, 'skills: ghostHp from a URL string');
+  throwsBad({ explorerSkills: 'nope' }, 'explorerSkills unknown id');
+  throwsBad({ explorerSkills: ['sword_strike', 'sword_strike'] }, 'explorerSkills duplicate');
+  throwsBad({ explorerSkills: ['sword_strike', 'shield_block', 'claw_strike', 'a', 'b'] }, 'explorerSkills over 4');
+  throwsBad({ explorerSkills: 5 }, 'explorerSkills wrong type');
+  throwsBad({ ghostSkills: 'claws' }, 'ghostSkills bad value');
+  throwsBad({ ghostHp: 0 }, 'ghostHp 0');
+  throwsBad({ ghostHp: 6 }, 'ghostHp 6');
+  throwsBad({ ghostHp: 1.5 }, 'ghostHp fraction');
+  const a = buildArena({ explorerSkills: ['sword_strike'], ghostSkills: 'none', ghostHp: 4 });
+  check(a.config.explorerSkills.join() === 'sword_strike' && a.config.ghostSkills === 'none' && a.config.ghostHp === 4, 'skills: buildArena returns the knobs in config');
+  check(JSON.stringify(buildArena({ seed: 3 }).dungeon) === JSON.stringify(buildArena({ seed: 3, explorerSkills: 'none', ghostHp: 5 }).dungeon), 'skills: knobs do not change the arena');
 }
 
 // 6. Pack alert (P0 coverage): one ghost spots the explorer while the other is within ALERT_STEPS

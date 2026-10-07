@@ -1,7 +1,7 @@
 // Prop placement: wall decor first, then solid props, then small props (CONTRACT.md, v4).
 // Self-contained and DOM-free; does not import dungeon.js (that would be an import cycle).
 import {
-  KINDS, SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS,
+  KINDS, SOLID_KINDS, SINGLE_SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS,
   TORCH_MIN, TORCH_MAX, TORCH_GAP, BIG_MIN_RUN, BIG_CHANCE, CORRIDOR_TORCH_PER_ROOM, CORRIDOR_TORCH_GAP,
   CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_PER_CELLS, CLUSTER_MAX, CLUSTER_GAP, CLUSTER_TRIES, TREASURE_FRACTION, MIN_EXITS,
   SMALL_PER_CELLS, SMALL_MAX, CORRIDOR_SMALL_PER_CELLS,
@@ -215,7 +215,8 @@ export function placeProps(dungeon, rand) {
       const xs = cells.map((c) => c[0]), ys = cells.map((c) => c[1]);
       const spanX = Math.max(...xs) - Math.min(...xs), spanY = Math.max(...ys) - Math.min(...ys);
       const flip = spanX === spanY ? rand() < 0.5 : spanY > spanX;
-      for (const [x, y] of cells) props.push({ kind: pickKind(SOLID_KINDS), x, y, solid: true, flip });
+      const multiKinds = SOLID_KINDS.filter((k) => !SINGLE_SOLID_KINDS.includes(k));
+      for (const [x, y] of cells) props.push({ kind: pickKind(cells.length === 1 ? SOLID_KINDS : multiKinds), x, y, solid: true, flip });
     }
   }
 

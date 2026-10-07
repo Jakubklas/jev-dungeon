@@ -7,18 +7,25 @@ export const KINDS = {
   shelf: { cls: 'solid', solid: true, weight: 3 },
   crates: { cls: 'solid', solid: true, weight: 3 },
   storage_chest: { cls: 'solid', solid: true, weight: 2 },
+  // single: only picked for one-cell clusters (keeps multi-cell clusters, and so existing layouts, as they were)
+  fountain: { cls: 'solid', solid: true, single: true, weight: 1 }, // blue water, glows
+  forge: { cls: 'solid', solid: true, single: true, weight: 1 }, // glowing coals, glows
   pots: { cls: 'small', solid: false, weight: 3 },
   skull: { cls: 'small', solid: false, weight: 2 },
   tools: { cls: 'small', solid: false, weight: 2 },
   sword: { cls: 'small', solid: false, weight: 1 },
+  anvil: { cls: 'small', solid: false, weight: 1 },
+  goblet: { cls: 'small', solid: false, weight: 1 }, // blue-flame brazier, glows
   torch: { cls: 'decor', weight: 1 },
   fireplace: { cls: 'decor', big: true, weight: 3 },
   arch: { cls: 'decor', big: true, weight: 2 },
   gate: { cls: 'decor', big: true, weight: 2 },
+  banner: { cls: 'decor', big: true, weight: 2 },
 };
 
 const ids = (cls) => Object.keys(KINDS).filter((k) => KINDS[k].cls === cls);
 export const SOLID_KINDS = ids('solid');
+export const SINGLE_SOLID_KINDS = SOLID_KINDS.filter((k) => KINDS[k].single);
 export const SMALL_KINDS = ids('small');
 export const BIG_DECOR_KINDS = Object.keys(KINDS).filter((k) => KINDS[k].big);
 

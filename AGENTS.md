@@ -355,6 +355,9 @@ Code: `touchCheck`, `knockBack`, `graceLeft` in adversary.js; `Game.damage` in d
 | `characters` | `'standard'` | The ghosts' characters: `'standard'` (all), `'mixed'` (the shuffled preset deck of `assignCharacters`, seeded by `seed`), one preset id, or a list (URL: `ambusher;timid`) applied per ghost in id order and cycled. Preset ids are in `character.js`; a bad id or an empty list throws `TestbedError`. Independent of the `adversaryCharacters` setting, which only affects generated dungeons; the default leaves every existing arena unchanged. |
 | `props` | `'none'` | `'none'`, `'few'`, `'many'` (random 1-3 cell solid clusters plus small props; never next to the start or chest, never cutting floor off), or an explicit list `[{ kind, x, y, flip? }]` of `SOLID_KINDS`/`SMALL_KINDS`. Presets are ignored when `map` is given. |
 | `map` | `null` | ASCII rows (array, or one string split by newlines or `/`) overriding `size`, `start` and the shape: `#` wall, `.` floor, `@` start (required), `T` chest, `A` adversary, `p` solid prop, `s` small prop. Border must be wall; rows equal length; 5..62 per side. `A` cells override `numAdversaries`; with no `T`, `treasure` still applies. |
+| `explorerSkills` | `'default'` | The explorer's skill set: `'default'` (sword strike + shield block), `'none'`, or a list of loadout ids, at most 4 (URL: `sword_strike;shield_block`). A bad id, a duplicate or more than 4 throws `TestbedError`. `buildArena` returns it in `config`; the Run builds the brain with `explorerSkillSetOf(config)`. |
+| `ghostSkills` | `'default'` | `'default'` (claw strike) or `'none'` (harmless ghosts, for exploring tests); `ghostSkillSetOf(config)` gives the `buildSkillSet` argument. |
+| `ghostHp` | `null` | 1..5 hit points per ghost; `null` = the Skills setting `ghostHp`. |
 
 Unknown keys, bad values and impossible placements throw `TestbedError` with a readable message (the server answers **400**).
 
@@ -389,7 +392,7 @@ Unknown keys, bad values and impossible placements throw `TestbedError` with a r
   - `TW = 32`, `TH = 16` art px.
   - `isoX = (x - y)·16`, `isoY = (x + y)·8`, measured at the cell centre (x+.5, y+.5).
   - Walls are 1-3 blocks tall (`WALL_H = 11` px per block, `MAX_BLOCKS = 3`): a lit top, a medium left face and a darker right face, shaded per block. Height is `1 + floor(hash(x, y, seed ^ 0x5a17) * 3)`, computed in `app.js` (`indexHeights`) from the cell and `game.seed` only: no rng() draw, no server or `publicView` field, no gameplay effect. Floors stay flat (z = 0). A wall face is hidden only by a shown wall in front that is at least as tall; wall decor sits on the lowest visible block. Culling pads `dMax` for `MAX_BLOCKS` of height.
-  - Big decor (`fireplace`, `arch`, `gate`) is 1 or 2 blocks tall: `blocks = 1 + floor(hash(x, y, seed ^ 0x7b19) * 2)` in `indexProps`, no rng() draw. The 2-block art is the 1-block grid with its `stretch` row (in `wall-art.js`) repeated `WALL_H` times (`wallTall`/`metaTall` from `buildProps`). Clamped: a 2-tall item on a face with fewer than 2 visible blocks (`nb - hn < 2`) draws as 1-tall. Visual only.
+  - Big decor (`fireplace`, `arch`, `gate`, `banner`) is 1 or 2 blocks tall: `blocks = 1 + floor(hash(x, y, seed ^ 0x7b19) * 2)` in `indexProps`, no rng() draw. The 2-block art is the 1-block grid with its `stretch` row (in `wall-art.js`) repeated `WALL_H` times (`wallTall`/`metaTall` from `buildProps`). Clamped: a 2-tall item on a face with fewer than 2 visible blocks (`nb - hn < 2`) draws as 1-tall. Visual only.
 - Pixel look:
   - Everything draws into a low-res offscreen buffer, blitted at integer scale `S` with smoothing off.
   - `resizeBoard` must re-set `imageSmoothingEnabled`, because every resize resets it.

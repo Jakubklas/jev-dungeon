@@ -139,6 +139,35 @@ const GATE_FRAMES = [
   GATE_A.map((r) => r.replace(/[yOR]/g, (c) => ({ y: 'O', O: 'R', R: 'k' }[c]))),
 ];
 
+// ---------------------------------------------------------------- banner 12x17
+const BANNER_PAL = {
+  o: '#2a0a0e', // outline
+  g: '#8a7a52', // pole and finials
+  G: '#c4b078', // pole highlight
+  R: '#c0262a', // cloth
+  h: '#e8534a', // cloth highlight
+  r: '#7e1519', // cloth shade / tatters
+};
+const BANNER = [
+  'oG........Go',
+  'ogggggggggog',
+  '.oRhRRRRrRo.',
+  '.oRhRRRRrRo.',
+  '.oRhRRRRrRo.',
+  '.oRhRRRRrRo.', // stretch row
+  '.oRRRRrRRro.',
+  '.oRRRRrRRro.',
+  '.oRhRRRRrRo.',
+  '.oRhRRRrrRo.',
+  '.oRRRRRrRRo.',
+  '.oRRRrRRRRo.',
+  '.oRRrr.RRro.',
+  '.oRr....RRo.',
+  '.orR....rRo.',
+  '..or.....ro.',
+  '..o......o..',
+];
+
 export const WALL_ART = {
   torch: {
     palette: TORCH_PAL, frames: TORCH_FRAMES, frameMs: 130,
@@ -149,15 +178,24 @@ export const WALL_ART = {
     palette: FIRE_PAL, frames: FIRE_FRAMES, frameMs: 150,
     glow: { x: 7, y: 13, radius: 34, color: '#ff8a2a' },
     emissive: ['c', 'R', 'O', 'y', 'h'],
+    stretch: 5, // chimney row repeated for the 2-block variant
   },
   arch: {
     palette: ARCH_PAL, frames: [ARCH], frameMs: 1000,
     glow: null,
     emissive: [],
+    stretch: 7, // pillar row
   },
   gate: {
     palette: GATE_PAL, frames: GATE_FRAMES, frameMs: 200,
     glow: { x: 6, y: 7, radius: 16, color: '#ff9a3a' },
     emissive: ['O', 'y', 'R'],
+    stretch: 6, // bar row
+  },
+  banner: {
+    palette: BANNER_PAL, frames: [BANNER], frameMs: 1000,
+    glow: null,
+    emissive: [],
+    stretch: 5, // cloth row
   },
 };
