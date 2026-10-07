@@ -538,7 +538,7 @@ function blitSprite(spr, x, y, face, alpha = 1) {
 }
 
 // The goal portal (replaces the chest sprite): an upright ring of swirling fire standing on the
-// goal cell, with a dark hollow centre. The ring is a bright yellow-white band that cools to
+// goal cell, hovering and bobbing like the coins, its centre filled with a swirling glow. The ring is a bright yellow-white band that cools to
 // orange and red toward its edges, cut by spiral streaks that turn around it; flame wisps curl
 // off the outside, embers rise, and a glow pools on the floor. Drawn per pixel so the art stays
 // crisp; the win cell is still the single goal cell. Visual only: no rng, no game state.
@@ -546,14 +546,16 @@ const FIRE_COLS = ['#6e1409', '#b82d14', '#ff5a1c', '#ff8d1c', '#ffbb2e', '#ffe4
 const FLAME_COLS = ['#ffe46a', '#ffbb2e', '#ff8d1c', '#d9401a'];
 const fireHash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function drawPortal(px, py, now, alpha) {
-  const rx = 17, ry = 21, cy = py - ry + 2, t = now / 380;   // ring centre sits above the cell
+  // Hovers like the coins: floats up and down a few px, the floor glow shrinking as it rises.
+  const wave = Math.sin(now / 520), lift = Math.round(4 + 3 * wave);
+  const rx = 17, ry = 21, cy = py - ry - lift + 2, t = now / 380;   // ring centre sits above the cell
   // Floor glow under the ring.
   b.save();
   b.globalCompositeOperation = 'lighter';
   b.fillStyle = '#ff7a2a';
   for (const [k, a] of [[1.7, .05], [1.35, .08], [1, .1]]) {
-    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 210));
-    pixelEllipse(px, py, Math.round(rx * k), Math.round(5 * k));
+    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 210)) * (1 - .12 * wave);
+    pixelEllipse(px, py, Math.round(rx * k * (1 - .08 * wave)), Math.round(5 * k * (1 - .08 * wave)));
   }
   b.restore();
   // Ring body: bright band at r ~ .68, spiral streaks modulate its heat, a dark hole inside.
@@ -567,9 +569,11 @@ function drawPortal(px, py, now, alpha) {
         Math.sin(3 * ang + r * 4 - t) * .2;                       // -1..1, spirals with the spin
       const d = (r - .66) / (.22 + .05 * s), band = Math.exp(-d * d);
       const x = px + dx, y = cy + dy;
-      if (r < .62 && band < .35) {                              // hollow centre: dark, with ember wisps
-        b.globalAlpha = alpha * (.78 - .25 * Math.max(0, r - .4) / .26);
-        b.fillStyle = s > .55 && r > .45 ? '#3a0a06' : '#12040a';
+      if (r < .62 && band < .35) {                              // centre: filled with a swirling red-orange glow
+        const sw = Math.sin(3 * ang - r * 9 + t * 2.2);
+        const i = Math.max(0, Math.min(4, Math.floor(1.2 + (r / .62) * 1.5 + sw * .9 + s * .4)));
+        b.globalAlpha = alpha;
+        b.fillStyle = FIRE_COLS[i];
         b.fillRect(x, y, 1, 1);
         continue;
       }
