@@ -92,7 +92,7 @@ const PALETTE = {
   wallMortar: ['#080e21', '#191527', '#3b210b'],
   fog:        ['#0e1937', '#0b142c', '#090f22', '#060a19', '#050710'], // distance 1..5
   trail: '#ffd98c',
-  explorer: '#ffe7b0', chest: '#ffc633', enemy: '#ff4a3a', shadow: 'rgba(0, 0, 0, .45)',
+  explorer: '#ffe7b0', chest: '#ff9a1c', enemy: '#ff4a3a', shadow: 'rgba(0, 0, 0, .45)',
   brain: '#7ee8ff', brainEdge: '#082c36',   // "Jev brain on" marker above a ghost
 };
 
@@ -531,6 +531,36 @@ function blitSprite(spr, x, y, face, alpha = 1) {
   b.restore();
 }
 
+// The goal portal (replaces the chest sprite): a flat, spinning, glowing swirl lying on the
+// floor, 2x2 cells wide (a 64x32 art-px diamond) and centred on the goal cell. Drawn per pixel
+// from a rotating spiral so the art stays crisp; the win cell is still the single goal cell.
+const PORTAL_COLS = ['#2a0c02', '#7a2306', '#c2480e', '#f08a1c', '#ffc933', '#fff1a8'];
+function drawPortal(px, py, now, alpha) {
+  const rx = 30, ry = 15, t = Math.floor(now / 70) * .22;
+  b.save();
+  b.globalCompositeOperation = 'lighter';
+  b.fillStyle = '#ff8a1c';
+  for (const [k, a] of [[1.25, .07], [1.1, .09], [.95, .12]]) {
+    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 240));
+    pixelEllipse(px, py, Math.round(rx * k), Math.round(ry * k));
+  }
+  b.restore();
+  b.globalAlpha = alpha;
+  for (let dy = -ry; dy <= ry; dy++) {
+    const v = dy / (ry + .5), half = Math.round(rx * Math.sqrt(Math.max(0, 1 - v * v)));
+    for (let dx = -half; dx < half; dx++) {
+      const u = (dx + .5) / (rx + .5), r = Math.hypot(u, v);
+      if (r > 1) continue;
+      const arm = Math.sin(3 * Math.atan2(v, u) + r * 7 - t); // three spiral arms, turning
+      let i = Math.floor((1 - r) * 3.2) + (arm > .35 ? 2 : arm > -.2 ? 1 : 0);
+      if (r > .9) i = Math.max(i, 3);           // bright rim
+      b.fillStyle = PORTAL_COLS[Math.max(0, Math.min(PORTAL_COLS.length - 1, i))];
+      b.fillRect(px + dx, py + dy, 1, 1);
+    }
+  }
+  b.globalAlpha = 1;
+}
+
 function draw(now) {
   b.fillStyle = PALETTE.void;
   b.fillRect(0, 0, buf.width, buf.height);
@@ -887,11 +917,7 @@ function drawEntity(en, now, cx, cy) {
     return;
   }
   if (en.kind === 'chest') {
-    b.globalAlpha = en.alpha * .8;
-    b.fillStyle = PALETTE.shadow;
-    pixelEllipse(px, py + 1, 7, 2);
-    b.globalAlpha = 1;
-    blitSprite(frameOf(sprites.chest, now), px, py, 1, en.alpha);
+    drawPortal(px, py, now, en.alpha);
     return;
   }
   if (en.kind === 'knight') {
