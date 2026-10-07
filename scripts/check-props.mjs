@@ -2,7 +2,7 @@
 // Run from the dungeon-game directory: node scripts/check-props.mjs [seeds]
 
 import { generateDungeon, Game, hasLineOfSight, MIN_SIZE, MAX_SIZE, SIGHT_RANGE } from '../src/dungeon.js';
-import { KINDS, SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS, TORCH_MAX, BIG_MIN_RUN, CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_MAX, SMALL_MAX, TREASURE_FRACTION } from '../src/props/catalog.js';
+import { KINDS, SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS, TORCH_MAX, BIG_MIN_RUN, CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_MAX, FORGE_SHAPES, FORGE_MIN_INNER, SMALL_MAX, TREASURE_FRACTION } from '../src/props/catalog.js';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,6 +27,7 @@ const { generateDungeon: generateBare } = await import(pathToFileURL(join(tmp, '
 rmSync(tmp, { recursive: true, force: true });
 
 const NB = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+let forges = 0;
 const kindCount = Object.fromEntries(Object.keys(KINDS).map((k) => [k, 0]));
 let totalProps = 0, totalDecor = 0, totalMs = 0, maps = 0, small = 0, large = 0, corridorTorches = 0, corridorSmall = 0;
 let minW = Infinity, maxW = 0;
@@ -159,7 +160,20 @@ for (let seed = 1; seed <= SEEDS; seed++) {
   for (const [ci, cells] of comps.entries()) {
     const n = cells.length, [cx, cy] = cells[0], ri = roomIdx(cx, cy);
     clusters++;
-    if (n < CLUSTER_SIZE_MIN || n > CLUSTER_SIZE_MAX) fail(`${id}: cluster at ${cx},${cy} has ${n} cells`);
+    const isForge = cells.some(([x, y]) => propAt.get(key(x, y)).kind === 'forge');
+    if (isForge) { // one forge = one whole cluster: a full w x h block, one anchor (top-left) with w/h, the rest parts
+      const fp = cells.map(([x, y]) => propAt.get(key(x, y)));
+      const anchor = fp.filter((q) => q.w);
+      const x0 = Math.min(...cells.map((c) => c[0])), y0 = Math.min(...cells.map((c) => c[1]));
+      const a = anchor[0];
+      if (!fp.every((q) => q.kind === 'forge') || anchor.length !== 1 || a.x !== x0 || a.y !== y0 || !FORGE_SHAPES.some(([w, h]) => w === a.w && h === a.h) ||
+        n !== a.w * a.h || cells.some(([x, y]) => x >= x0 + a.w || y >= y0 + a.h) || fp.filter((q) => q.part).length !== n - 1 || new Set(fp.map((q) => q.flip)).size !== 1) {
+        fail(`${id}: bad forge at ${cx},${cy} (${n} cells)`);
+      }
+      const r = rooms[ri];
+      if (r.w - 2 < FORGE_MIN_INNER || r.h - 2 < FORGE_MIN_INNER) fail(`${id}: forge in a small room`);
+      forges++;
+    } else if (n < CLUSTER_SIZE_MIN || n > CLUSTER_SIZE_MAX) fail(`${id}: cluster at ${cx},${cy} has ${n} cells`);
     else sizeHist[n]++;
     if (cells.some(([x, y]) => roomIdx(x, y) !== ri)) fail(`${id}: cluster at ${cx},${cy} spans rooms`);
     for (const [x, y] of cells) {
@@ -268,7 +282,8 @@ for (const k of [...SOLID_KINDS, ...SMALL_KINDS, 'torch', ...BIG_DECOR_KINDS]) {
 
 console.log(`${maps} maps (${small} with a side <= ${MIN_SIZE + 10}, ${large} with a side >= ${MAX_SIZE - 15}; sides ${minW}..${maxW})`);
 console.log(`avg per map: ${(totalProps / maps).toFixed(1)} props (${corridorSmall} small in corridors overall), ${(totalDecor / maps).toFixed(1)} decor (${corridorTorches} corridor torches overall)`);
-console.log('per kind:', JSON.stringify(kindCount));
+console.log('per kind:', JSON.stringify(kindCount), `(forge: ${forges} footprints of 4-6 cells)`);
+if (!forges) fail('no forge footprint in the sampled seeds');
 console.log(`clusters: ${clusters} in ${clusterRooms}/${roomsTotal} rooms (${(clusters / maps).toFixed(1)}/map), sizes 1..${CLUSTER_SIZE_MAX}: ${JSON.stringify(sizeHist)}`);
 console.log(`cover (${COVER_SEEDS} seeds, ${coverRooms} rooms with clusters): ${(100 * coverBlocked / coverPairs).toFixed(1)}% of in-room pairs in sight range blocked; ` +
   `${(100 * coverHidden / coverCells).toFixed(1)}% of their floor cells hidden from >= 1/4 of the room in range`);

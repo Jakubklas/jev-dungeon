@@ -5,6 +5,7 @@ import {
   TORCH_MIN, TORCH_MAX, TORCH_GAP, BIG_MIN_RUN, BIG_CHANCE, CORRIDOR_TORCH_PER_ROOM, CORRIDOR_TORCH_GAP,
   CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_PER_CELLS, CLUSTER_MAX, CLUSTER_GAP, CLUSTER_TRIES, TREASURE_FRACTION, MIN_EXITS,
   SMALL_PER_CELLS, SMALL_MAX, CORRIDOR_SMALL_PER_CELLS,
+  FOOTPRINT_STANDIN, FORGE_SHAPES, FORGE_ROOM_CHANCE, FORGE_MIN_INNER, FORGE_MIN_AREA,
 } from './catalog.js';
 
 // `dungeon` needs width, height, tiles (strings), rooms, start, treasure. `rand` is () => [0,1).
@@ -161,8 +162,31 @@ export function placeProps(dungeon, rand) {
   // not flush corner fill), and keep CLUSTER_GAP from each other so they never merge.
   const nearSolid = new Uint8Array(N); // cells within CLUSTER_GAP-1 (Chebyshev) of a placed solid
   const nearStartOrTreasure = (x, y) => [start, treasure].some((c) => Math.abs(x - c[0]) <= 1 && Math.abs(y - c[1]) <= 1);
+  // Close `cells` of room r if that keeps the map sound (no dead-end pockets, room still in one piece, every
+  // floor cell still reachable, chest still far enough); otherwise reopen them. `surveyed`: the full BFS ran.
+  const closeCells = (cells, r) => {
+    for (const [x, y] of cells) open[at(x, y)] = 0;
+    // No dead-end pockets: each floor neighbour keeps MIN_EXITS floor neighbours.
+    let good = cells.every(([x, y]) => NB.every(([dx, dy]) => !isOpen(x + dx, y + dy) ||
+      NB.reduce((n, [ex, ey]) => n + (isOpen(x + dx + ex, y + dy + ey) ? 1 : 0), 0) >= MIN_EXITS));
+    if (good) good = roomConnected(r);
+    const surveyed = good;
+    if (good) {
+      const s = survey();
+      good = s.count === floorLeft - cells.length && s.treasure >= TREASURE_FRACTION * s.far;
+    }
+    if (!good) { for (const [x, y] of cells) open[at(x, y)] = 1; return { good, surveyed }; }
+    floorLeft -= cells.length;
+    for (const [x, y] of cells) {
+      for (let dy = 1 - CLUSTER_GAP; dy < CLUSTER_GAP; dy++) {
+        for (let dx = 1 - CLUSTER_GAP; dx < CLUSTER_GAP; dx++) if (inB(x + dx, y + dy)) nearSolid[at(x + dx, y + dy)] = 1;
+      }
+    }
+    return { good, surveyed };
+  };
   const props = [];
-  for (const r of rooms) {
+  const roomClusters = new Int16Array(rooms.length); // clusters placed per room
+  for (const [ri, r] of rooms.entries()) {
     const inner = (x, y) => x > r.x && x < r.x + r.w - 1 && y > r.y && y < r.y + r.h - 1;
     const ok = (x, y) => {
       const i = at(x, y);
@@ -193,30 +217,20 @@ export function placeProps(dungeon, rand) {
         if (!grow.length) break;
         cells.push(grow[Math.floor(rand() * grow.length)]);
       }
-      for (const [x, y] of cells) open[at(x, y)] = 0;
-      // No dead-end pockets: each floor neighbour keeps MIN_EXITS floor neighbours.
-      let good = cells.every(([x, y]) => NB.every(([dx, dy]) => !isOpen(x + dx, y + dy) ||
-        NB.reduce((n, [ex, ey]) => n + (isOpen(x + dx + ex, y + dy + ey) ? 1 : 0), 0) >= MIN_EXITS));
-      if (good) good = roomConnected(r);
-      if (good) {
-        tries++;
-        const s = survey();
-        good = s.count === floorLeft - cells.length && s.treasure >= TREASURE_FRACTION * s.far;
-      }
-      if (!good) { for (const [x, y] of cells) open[at(x, y)] = 1; continue; }
-      floorLeft -= cells.length;
+      const res = closeCells(cells, r);
+      if (res.surveyed) tries++;
+      if (!res.good) continue;
       placed++;
-      for (const [x, y] of cells) {
-        for (let dy = 1 - CLUSTER_GAP; dy < CLUSTER_GAP; dy++) {
-          for (let dx = 1 - CLUSTER_GAP; dx < CLUSTER_GAP; dx++) if (inB(x + dx, y + dy)) nearSolid[at(x + dx, y + dy)] = 1;
-        }
-      }
+      roomClusters[ri]++;
       // One facing per cluster: a row along x backs onto y-1 (flip:false), a column along y onto x-1.
       const xs = cells.map((c) => c[0]), ys = cells.map((c) => c[1]);
       const spanX = Math.max(...xs) - Math.min(...xs), spanY = Math.max(...ys) - Math.min(...ys);
       const flip = spanX === spanY ? rand() < 0.5 : spanY > spanX;
       const multiKinds = SOLID_KINDS.filter((k) => !SINGLE_SOLID_KINDS.includes(k));
-      for (const [x, y] of cells) props.push({ kind: pickKind(cells.length === 1 ? SOLID_KINDS : multiKinds), x, y, solid: true, flip });
+      for (const [x, y] of cells) {
+        const kind = pickKind(cells.length === 1 ? SOLID_KINDS : multiKinds);
+        props.push({ kind: KINDS[kind].footprint ? FOOTPRINT_STANDIN : kind, x, y, solid: true, flip });
+      }
     }
   }
 
@@ -242,6 +256,45 @@ export function placeProps(dungeon, rand) {
   shuffle(lanes);
   const nLane = Math.min(Math.floor(lanes.length / CORRIDOR_SMALL_PER_CELLS + rand()), lanes.length);
   for (let k = 0; k < nLane; k++) addSmall(lanes[k]);
+
+  // 4. Forges, last: they take only what is still free (no small prop under them), draw nothing from `rand`
+  // (their own stream is keyed on the room's geometry), so every other prop is exactly where it would be without them.
+  rooms.forEach((r, ri) => {
+    const innerW = r.w - 2, innerH = r.h - 2;
+    if (innerW < FORGE_MIN_INNER || innerH < FORGE_MIN_INNER || innerW * innerH < FORGE_MIN_AREA || roomClusters[ri] >= CLUSTER_MAX) return;
+    let h = Math.imul(r.x * 73856093 ^ r.y * 19349663 ^ r.w * 83492791 ^ r.h * 2654435761 ^ (start[0] * 31 + start[1]) * 40503 ^ W * 7919, 2246822519) >>> 0;
+    const own = () => { // mulberry32
+      h = (h + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(h ^ (h >>> 15), 1 | h);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    if (own() >= FORGE_ROOM_CHANCE) return;
+    const ok = (x, y) => {
+      const i = at(x, y);
+      return x > r.x && x < r.x + r.w - 1 && y > r.y && y < r.y + r.h - 1 && open[i] && !front[i] && !doorNear[i] && !nearSolid[i] &&
+        !taken[i] && !nearStartOrTreasure(x, y);
+    };
+    const [fw, fh] = FORGE_SHAPES[Math.floor(own() * FORGE_SHAPES.length)];
+    const flip = own() < 0.5;
+    const spots = [];
+    for (let y = r.y + 1; y + fh <= r.y + r.h - 1; y++) {
+      for (let x = r.x + 1; x + fw <= r.x + r.w - 1; x++) {
+        let all = true;
+        for (let dy = 0; dy < fh && all; dy++) for (let dx = 0; dx < fw && all; dx++) all = ok(x + dx, y + dy);
+        if (all) spots.push([x, y]);
+      }
+    }
+    for (let i = spots.length - 1; i > 0; i--) { const j = Math.floor(own() * (i + 1)); [spots[i], spots[j]] = [spots[j], spots[i]]; }
+    for (const [x0, y0] of spots.slice(0, CLUSTER_TRIES)) {
+      const cells = [];
+      for (let dy = 0; dy < fh; dy++) for (let dx = 0; dx < fw; dx++) cells.push([x0 + dx, y0 + dy]);
+      if (!closeCells(cells, r).good) continue;
+      // The anchor (top-left cell, min x then min y) carries the footprint size; the other cells are parts.
+      for (const [x, y] of cells) props.push({ kind: 'forge', x, y, solid: true, flip, ...(x === x0 && y === y0 ? { w: fw, h: fh } : { part: true }) });
+      break;
+    }
+  });
 
   const byPos = (a, b) => a.y - b.y || a.x - b.x;
   props.sort(byPos);

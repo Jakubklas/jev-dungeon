@@ -62,7 +62,8 @@ async function api(method, path) {
 const TW = 32, TH = 16;           // tile diamond, art px
 const HW = TW / 2, HH = TH / 2;
 const WALL_H = 11;                // one wall block's height, art px
-const MAX_BLOCKS = 3;             // a wall is 1..MAX_BLOCKS blocks tall (z dimension)
+const MAX_BLOCKS = 2;             // a wall is 1..MAX_BLOCKS blocks tall (z dimension)
+const TALL_WALL_SHARE = .25;      // share of walls that are MAX_BLOCKS tall; the rest are 1 block
 const BANDS = 8;                  // light bands for known cells
 const FOG_BANDS = 5;              // glow bands for unknown cells (distance 1..5 to known)
 const FOG_PAD = FOG_BANDS;        // the glow may spill this far past the map edge
@@ -286,10 +287,12 @@ const GLOW_COLOR = '#ffb458';
 function indexProps() {
   const { width: W, height: H } = game;
   solidProp = new Uint8Array(W * H);
-  floorProps = (game.props ?? []).map((p) => {
+  floorProps = [];
+  for (const p of game.props ?? []) {
     if (p.solid) solidProp[p.y * W + p.x] = 1;
-    return { ...p, depth: p.x + p.y, phase: hash(p.x, p.y, 9) };
-  });
+    if (p.part) continue; // the other cells of a forge: solid, drawn by the anchor
+    floorProps.push({ ...p, depth: p.x + p.y, phase: hash(p.x, p.y, 9) });
+  }
   indexHeights();
   decorAt = new Map();
   for (const d of game.decor ?? []) {
@@ -299,13 +302,13 @@ function indexProps() {
 }
 const isSolidProp = (x, y) => solidProp[y * game.width + x] === 1;
 
-// Wall height in blocks (1..MAX_BLOCKS): a pure hash of cell + seed, so it never touches the
+// Wall height in blocks (1 or MAX_BLOCKS = 2, TALL_WALL_SHARE of the walls the tall one): a pure hash of cell + seed, so it never touches the
 // game rng, gameplay or the server. Walls only: floors stay flat at z = 0.
 let wallBlocks = new Uint8Array(0);
 function indexHeights() {
   const { width: W, height: H } = game, sd = Number(game.seed) | 0;
   wallBlocks = new Uint8Array(W * H);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) wallBlocks[y * W + x] = 1 + Math.floor(hash(x, y, sd ^ 0x5a17) * MAX_BLOCKS);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) wallBlocks[y * W + x] = hash(x, y, sd ^ 0x5a17) < TALL_WALL_SHARE ? MAX_BLOCKS : 1;
 }
 const blocksAt = (x, y) => wallBlocks[y * game.width + x];
 
@@ -577,6 +580,7 @@ function drawScene(now) {
   }
   if (propArt) {
     for (const p of floorProps) {
+      if (p.w) { pushForge(ents, p, known, shown, reveal); continue; }
       const art = propArt.floor[p.kind];
       const lit = known(p.x, p.y);
       if (!art || !(lit || reveal)) continue;
@@ -787,8 +791,48 @@ function drawTrail(cx, cy) {
   b.globalAlpha = 1;
 }
 
+// The forge: one big sprite over a wx x wy block of solid cells, cut into 16 px strips along its front (the
+// bottom-left face, then the bottom-right face), one strip per footprint cell on that front. Each strip is its
+// own entity at its cell's depth, so the knight and the ghosts pass in front of the part of the furnace that is
+// behind them and are covered by the part in front of them. flip:true draws the mirrored art (forge_<wy>x<wx>).
+const FORGE_STRIP = 16;
+function pushForge(ents, p, known, shown, reveal) {
+  const { w: wx, h: wy } = p, flip = !!p.flip, key = flip ? `forge_${wy}x${wx}` : `forge_${wx}x${wy}`;
+  const bands = propArt.floor[key];
+  if (!bands) return;
+  let lit = false, s = 0;
+  for (let y = p.y; y < p.y + wy; y++) for (let x = p.x; x < p.x + wx; x++) if (known(x, y)) { lit = true; s = Math.max(s, shown[y][x]); }
+  if (!lit && !reveal) return;
+  const n = wx + wy, T = [Math.round(isoX(p.x, p.y)), Math.round(isoY(p.x, p.y))];
+  for (let t = 0; t < n; t++) {
+    const [gx, gy] = t < wx ? [p.x + t, p.y + wy - 1] : [p.x + wx - 1, p.y + wy - 1 - (t - wx)];
+    ents.push({ depth: gx + gy, order: -1, kind: 'forge', gx, gy, key, art: bands[bandOf(s)], flip, wx, wy, t, n, T, phase: p.phase,
+      alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
+  }
+}
+function drawForgeStrip(en, now, cx, cy) {
+  const spr = frameOf(en.art, now, en.phase * 4), { wy, flip, t, n } = en;
+  const Tx = en.T[0] - cx, Ty = en.T[1] - cy, ix = Tx - en.art.anchorX, iy = Ty - en.art.anchorY;
+  if (Tx + spr.w < 0 || Tx - spr.w > buf.width || Ty + spr.h < 0 || Ty - spr.h > buf.height) return;
+  const lo = t === 0 ? -1e5 : Tx - FORGE_STRIP * wy + FORGE_STRIP * t, hi = t === n - 1 ? 1e5 : lo + FORGE_STRIP;
+  const c0 = Math.max(0, flip ? 2 * Tx - ix - hi + 1 : lo - ix), c1 = Math.min(spr.w, flip ? 2 * Tx - ix - lo + 1 : hi - ix);
+  if (c1 > c0) {
+    b.save();
+    b.globalAlpha = en.alpha;
+    if (flip) { b.translate(2 * Tx + 1, 0); b.scale(-1, 1); }
+    b.drawImage(spr.canvas, c0, 0, c1 - c0, spr.h, ix + c0, iy, c1 - c0, spr.h);
+    b.restore();
+  }
+  const fg = t === 0 && frameGlows && propArt?.floorMeta[en.key]?.glow;
+  if (fg) { // coals at the fire mouth: same flicker as the other glowing floor props
+    const dx = fg.x - en.art.anchorX;
+    frameGlows.push({ floor: true, d: en, g: fg, x: Tx + (flip ? -dx : dx), y: Ty + fg.y - en.art.anchorY, alpha: en.alpha });
+  }
+}
+
 let frameGlows = null; // this frame's glow queue (drawEntity pushes the glow of floor props)
 function drawEntity(en, now, cx, cy) {
+  if (en.kind === 'forge') { drawForgeStrip(en, now, cx, cy); return; }
   const px = Math.round(isoX(en.gx + .5, en.gy + .5)) - cx;
   const py = Math.round(isoY(en.gx + .5, en.gy + .5)) - cy;
   if (px < -40 || py < -10 || px > buf.width + 40 || py > buf.height + 60) return;

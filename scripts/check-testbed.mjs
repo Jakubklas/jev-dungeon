@@ -130,7 +130,21 @@ const floorCount = (d) => d.tiles.join('').split('').filter((c) => c === '.').le
   const list = buildArena({ size: [9, 9], props: [{ kind: 'crates', x: 3, y: 3 }, { kind: 'skull', x: 7, y: 7 }] }).dungeon;
   check(list.tiles[3][3] === '#' && list.tiles[7][7] === '.' && list.props.length === 2, 'explicit props: solid blocks, small stays floor');
   const fresh = buildArena({ size: [9, 9], props: [{ kind: 'fountain', x: 3, y: 3 }, { kind: 'forge', x: 5, y: 3 }, { kind: 'anvil', x: 3, y: 6 }, { kind: 'goblet', x: 6, y: 6 }] }).dungeon;
-  check(fresh.tiles[3][3] === '#' && fresh.tiles[3][5] === '#' && fresh.tiles[6][3] === '.' && fresh.tiles[6][6] === '.' && fresh.props.length === 4, 'explicit props: fountain, forge (solid) and anvil, goblet (small)');
+  check(fresh.tiles[3][3] === '#' && fresh.tiles[3][5] === '#' && fresh.tiles[6][3] === '.' && fresh.tiles[6][6] === '.' && fresh.props.length === 7, 'explicit props: fountain, forge (solid, 2x2 = 4 cells) and anvil, goblet (small)');
+  const fg = fresh.props.filter((p) => p.kind === 'forge');
+  check(fg.length === 4 && fg.filter((p) => p.w).length === 1 && fg.find((p) => p.w).x === 5 && fg.find((p) => p.w).y === 3 && fg.find((p) => p.w).w === 2 && fg.find((p) => p.w).h === 2 &&
+    fg.every((p) => p.solid && fresh.tiles[p.y][p.x] === '#') && fg.filter((p) => p.part).length === 3, 'forge: 2x2 footprint, anchor carries w/h, 3 parts, all solid');
+  const f6 = buildArena({ size: [9, 9], props: [{ kind: 'forge', x: 2, y: 2, w: 3, h: 2, flip: true }] }).dungeon;
+  check(f6.props.length === 6 && f6.props.every((p) => p.flip) && f6.tiles[3][4] === '#' && f6.tiles[4][2] === '.', 'forge 3x2: six cells, flip kept');
+  for (const bad of [{ w: 3, h: 3 }, { w: 1, h: 2 }, { x: 9, y: 9 }, { x: 1, y: 1 }]) {
+    let threw = false;
+    try { buildArena({ size: [9, 9], start: [1, 1], props: [{ kind: 'forge', x: 8, y: 8, ...bad }] }); } catch (e) { threw = e instanceof TestbedError; }
+    check(threw, `forge ${JSON.stringify(bad)} is rejected`);
+  }
+  for (const seed of [1, 2, 3, 4, 5, 6]) {
+    const r = buildArena({ size: [12, 10], props: 'many', seed }).dungeon.props.concat(buildArena({ map: ['#######', '#@.p.T#', '#.ppp.#', '#.....#', '#######'], seed }).dungeon.props);
+    check(r.every((p) => p.kind !== 'forge'), `random and ASCII props never make a lone forge (seed ${seed})`);
+  }
 }
 
 // 4. ASCII map.
