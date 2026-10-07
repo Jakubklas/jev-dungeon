@@ -7,7 +7,7 @@ when to leave, states the two ways to win (leave through the portal, or dispel e
 what a fight is worth, makes coins pull on the moves, and cuts the six moods to four that each say
 what they go after. Measured on the same 10 gyms before and after (P5).
 
-Status: **proposal, not approved.** Nothing here is built. Code wins over this plan (AGENTS.md rule 3).
+Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is proposed. Code wins over this plan (AGENTS.md rule 3).
 
 ## 0. Baseline (live, 2026-10-07)
 
@@ -146,6 +146,45 @@ second batch where the exit is not on the way: a `map` arena with the portal beh
 | Largest mood share | 65% (cautious) | ≤ 50% |
 
 Plus the free checks (`check-dungeon`, `check-skills`, `check-testbed`) and the request-size bounds.
+
+### P5 results (live, 2026-10-07, commit 8b83250)
+
+P1-P4 built on `feature/motivation`. Batch `m` = the baseline gyms; batch `x` = 31x31, portal 9-10
+cells from the start and unlit at step 0, 15 coins. `coinDropChance` 1 on these gyms (default 0.6).
+60 steps max. Data: `runs/motivation/after.jsonl` (`after-m.jsonl`, `after-x.jsonl`).
+
+| Metric | Baseline | After, m | After, x | Target |
+| --- | --- | --- | --- | --- |
+| Coins collected / seen | 13 / 86 (15%) | 44 / 80 (55%) | 46 / 67 (69%) | ≥ 50% ✔ |
+| Coins held at a win (avg) | 0.4 | 3.8 | 3.3 | |
+| Steps away from a lit coin within 3 | 88 of 173 | 35 of 177 | 26 of 166 | |
+| Exits (portal) | 5, all at step 20 | 5, steps 24-48 | 3, steps 14-49 | |
+| go_to_exit start → game end (avg step) | - | 30.5 → 42.0 | 33.8 → 41.8 | |
+| `engage` chosen / offered | 0 / 25 | 2 / 33 (6%) | 1 / 18 (6%) | ≥ 30% ✘ |
+| Strikes per game | 0.1 | 0.4 | 0.2 | ≥ 1 ✘ |
+| Cleared wins | 0 | 0 | 0 | some ✘ |
+| Lives lost / losses | 0 / 0 | 0 / 0 | 0 / 0 | some / rare |
+| Largest mood share | cautious 65% | steady 45% | steady 53% | ≤ 50% ~ |
+| Mood picks (decisions) | - | steady 36, wary 15, greedy 13, bold 2 | steady 31, greedy 14, wary 2 | |
+
+**Fixed:** the coin indifference and the instant beeline. Leaving is now a decision. The explorer leaves
+about 11 steps after deciding, carrying coins.
+
+**Not fixed: fighting.** When the mood was `bold`, `engage` won with 88-95%. Under `steady` it got
+13-39% and `run_away` won almost every time. `bold` was picked on 2 of about 100 decisions, so the
+bottleneck is **mood selection at the encounter**, not the tactic text. Likely cause: an encounter starts
+at sight range (about 7 steps), and steady's `when` ("an adversary far off (6+ steps) or patrolling")
+covers exactly that case, overlapping bold's "one adversary in sight". Candidate fix (P6): steady's `when`
+covers no adversary in sight at all; bold's `when` is "a lone adversary in sight (any distance), the sword
+ready, full lives or hit protection"; and the tactic question under steady says "engage a lone adversary
+when the sword is ready" first. Still 0 lives lost in about 1000 ticks, so the caution costs nothing yet.
+
+**Small findings:**
+- x9 left at step 14 with 0 coins. Correct per the code: `leave_now` said 61% while a ghost chased it
+  (leaving as an escape). But the switch wrote a `plan.tried` row for `nearest_frontier`
+  ("Jev decided to leave"), which reads as a failure; it should use `changeApproach` like the coin switches.
+- `analyze.mjs` misses a leave decided mid-encounter (`replaceInterrupted` sets no `policy`), so its
+  `leave_pct` column is empty for those games; the memory event has the number.
 
 ## 4. Cost, size and ownership
 

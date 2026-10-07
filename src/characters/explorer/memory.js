@@ -11,10 +11,10 @@
 //   sentiment_history - the last few picks, [{ id, step }]
 //   recent            - the last 6 moves and 8 positions (a ping-pong shows as back_and_forth)
 //   encounters        - counters: { count, escaped, hits, dispelled, last_at_step }
-//   events            - up to 6 short milestones [{ step, text }] (chest seen, hit, switch, win)
+//   events            - up to 6 short milestones [{ step, text }] (portal seen, hit, switch, win)
 //   skills            - a plain-JSON mirror of the skill set, up to 4: [{ id, kind, name, text, ready, cooldown_left }]
 //                       (brain.js rewrites it every turn from the live skills; Jev's state carries id -> readiness only)
-//   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the chest is
+//   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the portal is
 //                       pinned, the oldest of the rest is evicted. Perception turns them into
 //                       relative direction/distance each tick.
 //
@@ -34,7 +34,7 @@ export const LIMITS = {
   sentimentHistory: 5,
   events: 6, // oldest dropped first
   eventText: 200,
-  landmarks: 8, // the chest is never evicted
+  landmarks: 8, // the portal is never evicted
   landmarkNote: 120,
   recentMoves: 6,
   skills: 4,
@@ -42,12 +42,15 @@ export const LIMITS = {
   recentCells: 8, // 6 moves plus the two positions before them, so every move can be judged
 };
 
-export const LANDMARK_KINDS = ['chest', 'dead_end_explored', 'hit_here', 'hiding_spot_used'];
+export const LANDMARK_KINDS = ['exit', 'dead_end_explored', 'hit_here', 'hiding_spot_used'];
 
 const WINDOW = 10; // revisits_last_10
 // The rolling window of revisit flags lives outside the memory object, so it never
 // reaches JSON.stringify (Jev's state, memory.json, the browser).
 const revisitWindows = new WeakMap();
+
+// The mood ids (brain.js SENTIMENTS has exactly these keys; check-dungeon asserts it). Validation accepts nothing else.
+export const MOOD_IDS = ['wary', 'steady', 'greedy', 'bold'];
 
 export function createMemory({ approachId, approachText, thought, sentiment, start }) {
   const memory = {
@@ -111,9 +114,9 @@ export function setSkills(memory, summaries) {
 }
 
 // Adds a located fact. One entry per kind + cell (a repeat refreshes its step and note and makes
-// it the newest). Over the limit the oldest non-chest landmark goes.
+// it the newest). Over the limit the oldest non-exit landmark goes.
 export function addLandmark(memory, { kind, cell, step, note }) {
-  memory.landmarks = addLandmarkTo(memory.landmarks, { kind, cell, step, note }, { max: LIMITS.landmarks, noteMax: LIMITS.landmarkNote, pinnedKind: 'chest' });
+  memory.landmarks = addLandmarkTo(memory.landmarks, { kind, cell, step, note }, { max: LIMITS.landmarks, noteMax: LIMITS.landmarkNote, pinnedKind: 'exit' });
 }
 
 // Drops the current approach (with why) and starts a new one from the next step.
@@ -122,6 +125,11 @@ export function switchApproach(memory, { id, text, thought }, reason, step) {
   const a = memory.approach;
   a.tried.push({ id: a.id, approach: a.current, steps: `${a.since_step}–${step}`, reason: String(reason).slice(0, LIMITS.approach) });
   a.tried = a.tried.slice(-LIMITS.triedApproaches);
+  startApproach(memory, id, text, thought, step);
+}
+
+// Switches to `id` with no `tried` row: the current approach did not fail (a coin detour starts or ends).
+export function changeApproach(memory, { id, text, thought }, step) {
   startApproach(memory, id, text, thought, step);
 }
 
@@ -145,8 +153,8 @@ export function resumeApproach(memory, step, thoughtOf) {
   return parked.id;
 }
 
-// Replaces the parked approach, e.g. the chest was spotted mid-chase: after the chase the explorer
-// should head for the chest, not resume exploring. The dropped one goes into `tried` with `reason`.
+// Replaces the parked approach, e.g. the portal was spotted mid-chase: after the chase the explorer
+// should head for the portal, not resume exploring. The dropped one goes into `tried` with `reason`.
 export function replaceInterrupted(memory, { id, text }, reason, step) {
   const a = memory.approach;
   const old = a.interrupted;
@@ -212,10 +220,10 @@ export function validateMemory(m) {
     if (!isNum(p[k])) fail(`progress.${k}`);
   }
   const s = m.sentiment;
-  if (!s || typeof s !== 'object' || !isStr(s.id, 32) || !s.id || !isNum(s.since_step)) fail('sentiment');
+  if (!s || typeof s !== 'object' || !MOOD_IDS.includes(s.id) || !isNum(s.since_step)) fail('sentiment');
   if (!Array.isArray(m.sentiment_history) || m.sentiment_history.length > LIMITS.sentimentHistory) fail('sentiment_history');
   m.sentiment_history.forEach((h, i) => {
-    if (!h || !isStr(h.id, 32) || !isNum(h.step)) fail(`sentiment_history[${i}]`);
+    if (!h || !MOOD_IDS.includes(h.id) || !isNum(h.step)) fail(`sentiment_history[${i}]`);
   });
   const r = m.recent;
   if (!r || typeof r !== 'object') fail('recent');

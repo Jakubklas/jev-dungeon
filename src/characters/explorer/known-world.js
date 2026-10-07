@@ -1,5 +1,5 @@
 // The explorer's only window on the game. Fog-safe reads only: its own state (purse included), cells
-// that are lit, the adversaries it sees right now (with the health bar over each), the chest and coins
+// that are lit, the adversaries it sees right now (with the health bar over each), the portal and coins
 // once lit. This is the single explorer file allowed to hold a Game (the static guard in
 // check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
@@ -37,7 +37,7 @@ export class KnownWorld {
     return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp }));
   }
 
-  // The chest cell once it is lit, else null. A testbed arena may have no chest at all.
+  // The portal (dungeon.treasure) once it is lit, else null. A testbed arena may have none.
   seenTreasure() {
     const t = this.#game.dungeon.treasure;
     return t && this.#game.isKnown(t) ? t : null;
