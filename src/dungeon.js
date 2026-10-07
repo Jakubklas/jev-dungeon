@@ -189,7 +189,14 @@ export function generateDungeon(seed = randomSeed()) {
     // Adversaries need a room cell at least SPAWN_STEPS from start and out of its sight.
     if (!pool.length || !spawnable) continue;
     pool.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-    const treasure = pool[Math.floor(rand() * pool.length)];
+    // The portal is drawn 2x2 cells wide, so keep it a full cell clear of any wall (all 8
+    // neighbours floor). Filtering the pool first leaves the rand() call count unchanged.
+    const clear = pool.filter(([x, y]) => {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (grid[y + dy]?.[x + dx] !== '.') return false;
+      return true;
+    });
+    const choices = clear.length ? clear : pool;
+    const treasure = choices[Math.floor(rand() * choices.length)];
     const dungeon = {
       seed, width, height,
       tiles: grid.map((row) => row.join('')),

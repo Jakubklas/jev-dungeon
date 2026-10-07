@@ -537,32 +537,61 @@ function blitSprite(spr, x, y, face, alpha = 1) {
   b.restore();
 }
 
-// The goal portal (replaces the chest sprite): a flat, spinning, glowing swirl lying on the
-// floor, 2x2 cells wide (a 64x32 art-px diamond) and centred on the goal cell. Drawn per pixel
-// from a rotating spiral so the art stays crisp; the win cell is still the single goal cell.
-const PORTAL_COLS = ['#2a0c02', '#7a2306', '#c2480e', '#f08a1c', '#ffc933', '#fff1a8'];
+// The goal portal (replaces the chest sprite): a flat, spinning fire ball lying on the floor,
+// 2x2 cells wide (a 64x32 art-px diamond) and centred on the goal cell. Off-white in the
+// middle, through yellow and orange to light red at the rim, with flame tongues and sparks
+// flung off the edge as it spins. Drawn per pixel so the art stays crisp; the win cell is
+// still the single goal cell. Visual only: no rng, no game state.
+const FIRE_COLS = ['#fffdf0', '#fff6c2', '#ffe971', '#ffd23a', '#ffae3a', '#ff8d4a', '#ff7a6e'];
+const FLAME_COLS = ['#ffe971', '#ffc23a', '#ff9a4a', '#ff7a6e'];
+const fireHash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function drawPortal(px, py, now, alpha) {
-  const rx = 30, ry = 15, t = Math.floor(now / 70) * .22;
+  const rx = 26, ry = 13, spin = now / 420;
+  // Soft warm halo.
   b.save();
   b.globalCompositeOperation = 'lighter';
-  b.fillStyle = '#ff8a1c';
-  for (const [k, a] of [[1.25, .07], [1.1, .09], [.95, .12]]) {
-    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 240));
+  b.fillStyle = '#ff9a4a';
+  for (const [k, a] of [[1.35, .06], [1.2, .08], [1.05, .1]]) {
+    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 200));
     pixelEllipse(px, py, Math.round(rx * k), Math.round(ry * k));
   }
   b.restore();
   b.globalAlpha = alpha;
+  // Flame tongues: leaning along the spin, each flickering in length, fading yellow -> light red.
+  const TONGUES = 20;
+  for (let k = 0; k < TONGUES; k++) {
+    const ang = (k / TONGUES) * Math.PI * 2 + spin;
+    const flick = .5 + .5 * Math.sin(now / 130 + k * 2.3 + fireHash(k) * 6);
+    const len = 5 + Math.round(flick * 9 + fireHash(k + 40) * 4);
+    for (let j = 0; j < len; j++) {
+      const f = j / len, a = ang - f * .55;       // curl backwards against the spin
+      const x = Math.round(Math.cos(a) * (rx - 1 + j)), y = Math.round(Math.sin(a) * (ry - 1 + j * ry / rx));
+      b.fillStyle = FLAME_COLS[Math.min(FLAME_COLS.length - 1, Math.floor(f * FLAME_COLS.length))];
+      b.fillRect(px + x, py + y, f < .6 ? 2 : 1, f < .6 ? 2 : 1);
+    }
+  }
+  // Fire ball body.
+  const t = spin * 1.6;
   for (let dy = -ry; dy <= ry; dy++) {
     const v = dy / (ry + .5), half = Math.round(rx * Math.sqrt(Math.max(0, 1 - v * v)));
     for (let dx = -half; dx < half; dx++) {
       const u = (dx + .5) / (rx + .5), r = Math.hypot(u, v);
       if (r > 1) continue;
-      const arm = Math.sin(3 * Math.atan2(v, u) + r * 7 - t); // three spiral arms, turning
-      let i = Math.floor((1 - r) * 3.2) + (arm > .35 ? 2 : arm > -.2 ? 1 : 0);
-      if (r > .9) i = Math.max(i, 3);           // bright rim
-      b.fillStyle = PORTAL_COLS[Math.max(0, Math.min(PORTAL_COLS.length - 1, i))];
+      const arm = Math.sin(3 * Math.atan2(v, u) + r * 6 - t);   // three turning swirls
+      let i = Math.floor(Math.pow(r, 1.3) * 7.2 +(arm > .4 ? -1 : arm < -.4 ? 1 : 0) * .9);
+      b.fillStyle = FIRE_COLS[Math.max(0, Math.min(FIRE_COLS.length - 1, i))];
       b.fillRect(px + dx, py + dy, 1, 1);
     }
+  }
+  // Sparks: leave the rim on a curved path, brightest at birth, cooling to red as they die.
+  for (let k = 0; k < 22; k++) {
+    const life = ((now / 900 + fireHash(k + 7)) % 1);
+    const ang = fireHash(k) * Math.PI * 2 + spin * 1.3 - life * .9;
+    const d = 1 + life * .55;                      // rim -> a little over half a radius out
+    const x = Math.round(Math.cos(ang) * rx * d), y = Math.round(Math.sin(ang) * ry * d);
+    b.globalAlpha = alpha * (1 - life * life);
+    b.fillStyle = life < .3 ? '#fffdf0' : life < .6 ? '#ffe971' : '#ff8d4a';
+    b.fillRect(px + x, py + y, 1, 1);
   }
   b.globalAlpha = 1;
 }
