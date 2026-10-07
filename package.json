@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node hub.js",
+    "server": "node server.js"
   }
 }

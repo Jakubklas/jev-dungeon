@@ -6,7 +6,7 @@ within `LIGHT_RADIUS` (7, Euclidean, no line of sight needed). Lit cells are **k
 Adversaries roam the dungeon. An adversary that sees the explorer gives chase, and each touch costs the
 explorer a life (2 at the start); the game is lost when the last life goes. Reload regenerates everything.
 
-Zero dependencies (Node ≥ 20.12, ES modules). `JEV_API_KEY` is in `../.env` and never reaches the browser. Port 3003.
+Zero dependencies (Node ≥ 20.12, ES modules). `JEV_API_KEY` is in `../.env` and never reaches the browser. Port 3003 standalone; `hub.js` (port 3000) routes `/arena/<name>/` and `/gym/<name>/` to per-instance `server.js` processes (see AGENTS.md).
 
 **The code is the source of truth.** This file describes it as of the memory redesign on top of the OOP refactor (`Game`, `KnownWorld`, `ExplorerBrain`, `Adversary`, `Run`, injected Jev calls, regrouped explorer state, explorer and adversary memory, settings, capability scaffold). Numbers quoted here are the **defaults**: the tunables live in `src/settings.js` and are edited on the `/settings` page. [AGENTS.md](AGENTS.md) is the working guide (rules, checks, caveats); if the two disagree with the code, fix them.
 

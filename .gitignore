@@ -7,3 +7,4 @@ adversaries.json
 .DS_Store
 server*.log
 settings-*.json
+runs/

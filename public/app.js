@@ -48,7 +48,7 @@ const TESTBED = query.has('testbed') ? Object.fromEntries(query) : null;
 
 async function api(method, path) {
   const body = method !== 'POST' ? undefined : JSON.stringify(path === '/api/new' && TESTBED ? { testbed: TESTBED } : {});
-  const res = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body });
+  const res = await fetch(path.replace(/^\//, ''), { method, headers: { 'Content-Type': 'application/json' }, body });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
 }

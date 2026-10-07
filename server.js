@@ -2,6 +2,8 @@
 // The API key stays here and never reaches the browser.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 
 // .env lives at the repo root, shared with the other projects. Load it before
 // importing the turn module (it pulls in the brain and jev.js, which may read the key at load).
@@ -12,14 +14,18 @@ const { TestbedError } = await import('./src/testbed.js');
 const settings = await import('./src/settings.js');
 
 const PORT = Number(process.env.PORT) || 3003;
+// DATA_DIR (set by hub.js) moves everything this server writes (settings.json, memory.json/md,
+// adversaries.json) into its own folder, so many servers can run side by side. Unset = next to server.js.
+const DATA = process.env.DATA_DIR ? pathToFileURL(resolve(process.env.DATA_DIR) + '/') : null;
+const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
-await settings.loadSettings(new URL(`settings-${PORT}.json`, import.meta.url));
+await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
 // TESTBED=size=9x9&numAdversaries=2 (or a JSON object) makes this server a testbed: every new game
 // without its own { testbed } body is that arena. Empty means a normal dungeon server.
 const TESTBED = !process.env.TESTBED ? null
   : process.env.TESTBED.trim().startsWith('{') ? JSON.parse(process.env.TESTBED)
   : Object.fromEntries(new URLSearchParams(process.env.TESTBED));
-if (TESTBED) newTestGame(TESTBED); // fail at startup on a bad config, not on the first page load
+if (TESTBED) newTestGame(TESTBED, GAME_OPTS); // fail at startup on a bad config, not on the first page load
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
@@ -57,7 +63,7 @@ function send(res, status, body, type = 'application/json') {
 async function startNewGame(testbed = null) {
   while (busy) await busy.catch(() => {});
   settings.applyNextGame(); // saved settings that wait for a new game take effect here
-  run = testbed ? newTestGame(testbed) : newGame();
+  run = testbed ? newTestGame(testbed, GAME_OPTS) : newGame(undefined, GAME_OPTS);
   await run.persist(); // fresh memory.json/md and adversaries.json now, not at the first step
   const d = run.game.dungeon;
   console.log(`New ${testbed ? 'testbed arena' : 'dungeon'}, seed ${d.seed}, ${d.width}x${d.height}, ${run.game.adversaries?.length ?? 0} adversaries`);
@@ -134,4 +140,4 @@ createServer(async (req, res) => {
     console.error(err);
     send(res, 500, { error: 'Server error' });
   }
-}).listen(PORT, () => console.log(`Jev Dungeon${TESTBED ? ' testbed' : ''} running at http://localhost:${PORT}`));
+}).listen(PORT, process.env.HOST || undefined, () => console.log(`Jev Dungeon${TESTBED ? ' testbed' : ''} running at http://localhost:${PORT}`));
