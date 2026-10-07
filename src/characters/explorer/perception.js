@@ -183,8 +183,8 @@ function frozenThreats(world, remembered) {
 // around as the explorer moves (the "past the adversary" test depends on where the explorer is).
 // `avoid` (optional Set from avoidZone): the exploration approaches skip frontier cells in it
 // while any other frontier cell exists.
-// `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage.
-export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null } = {}) {
+// `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage; `fight`: see tacticFeasibility.
+export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null } = {}) {
   // Only the leaving approaches may route through the portal; for all others it is a wall.
   const dist = knownDistances(world, world.pos, null, null, null, approachId === 'go_to_exit');
 
@@ -211,7 +211,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
       return { cell: [...exitCell], steps: safe.get(exitCell), why: `The portal is ${plural(safe.get(exitCell), 'step')} away by a known path that keeps the adversary at least ${plural(minGap, 'step')} off.` };
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
-    if (approachId === 'engage') return engageTarget(world, threats, { stunned });
+    if (approachId === 'engage') return engageTarget(world, threats, { stunned, fight });
     const safe = safeDistances(world, threats, minGap);
     const goals = goalsAt(world, threats, safe);
     if (goal && !sameCell(goal, world.pos) && safe.has(goal)) {
@@ -292,7 +292,8 @@ function hereKind(world) {
 // -> { [id]: { target, fact } } (infeasible tactics are left out); empty while nothing is in sight.
 // `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
 // closing in is the point).
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null } = {}) {
+// `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -300,7 +301,7 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   const s = enc.survey;
   const add = (id, ok) => {
     if (!ok) return;
-    const target = approachTarget(world, id, { minGap, exclude, stunned });
+    const target = approachTarget(world, id, { minGap, exclude, stunned, fight });
     // `exclude` (cells a ping-pong bounced between, and the target that led there) rules a tactic out
     // when its only target is one of them; run_away picks another cell by itself.
     if (target && !exclude?.has(key(target.cell))) {

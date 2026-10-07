@@ -3,7 +3,7 @@
 // reads ghostHp / stunTicks (skillConfig().ghostHp, skillConfig().stunTicks) when a ghost is created / hit.
 const DEFAULTS = Object.freeze({
   swordDamage: 1, swordCooldown: 1, shieldChance: 0.6, shieldCooldown: 2,
-  clawDamage: 1, clawCooldown: 2, ghostHp: 2, stunTicks: 2, coinDropChance: 0.5,
+  clawDamage: 1, clawCooldown: 2, ghostHp: 2, stunTicks: 2, coinDropChance: 1,
 });
 let current = DEFAULTS;
 
