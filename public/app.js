@@ -1132,6 +1132,7 @@ function think(id, key, text, kind, tag = null) {
   if (t.key === key && t.tag === tag) return;
   t.key = key;
   t.tag = tag;
+  if (typeof text === 'function') text = text();
   if (!text) return;
   t.text = text;
   t.t0 = performance.now();
@@ -1145,18 +1146,47 @@ function think(id, key, text, kind, tag = null) {
   }
 }
 
+// Short first-person lines per approach id (explorer and ghosts). One is picked at random each time a
+// bubble shows, never the one the same character showed last. Visual only: no server state, no rng().
+const THOUGHTS = {
+  nearest_frontier: ["Let's check the closest dark edge.", 'Something lurks in that dark corner.', 'What is just past the light?', 'Closest shadow first.'],
+  largest_unexplored: ['That big dark patch looks promising.', 'So much unexplored dark over there!', 'Adventure lies in that gloom.', 'The biggest mystery is that way.'],
+  far_side: ["Let's try the far side of this place.", 'Somewhere far from here, then.', 'I have not been over there yet.', 'Time for fresh ground.'],
+  collect_coins: ["Coins! That's worth a detour!", 'Shiny! Mine!', 'I can hear the coins calling.', 'Gold, gold, gold!'],
+  go_to_exit: ['The portal! Time to leave.', 'Home stretch. To the portal!', 'Loot secured. Out we go.', 'Out of this place at last.'],
+  slip_past: ['I can slip past!', 'Quiet feet, quiet feet...', 'Tiptoe around it.', 'Sneaking by, nothing to see.'],
+  run_away: ['Run away!', 'Nope nope nope!', 'Time to go. Now!', 'Too many claws, bye!'],
+  engage: ['Have at you!', 'Charge!!', 'Take this!!', 'Taste my sword!!'],
+  hide: ['Duck out of sight.', 'Hush, hide, wait...', 'Into the shadows!', 'Nobody here but me.'],
+  race_to_exit: ['Go for the portal!', 'Race you to the exit!', 'Faster, faster, portal!', 'Catch me if you can!'],
+  carry_on: ["It hasn't seen me, keep going.", 'Still unseen. Good.', 'Eyes elsewhere, ghost...', 'Stay calm, carry on.'],
+  direct_pursuit: ['I see you!', 'Get back here!', 'You cannot hide!', 'Got you in my sights!'],
+  cut_off: ['You will come this way.', 'I will block your path!', 'Cutting you off!', 'Wait for it...'],
+  sweep_last_seen: ['Where did you go?', 'It was right here...', 'Come out, come out!', 'Just checking the corners.'],
+};
+const lastPick = new Map(); // character id -> last line shown
+function thoughtFor(charId, approachId, fallback) {
+  const pool = THOUGHTS[approachId];
+  if (!pool) return fallback;
+  const prev = lastPick.get(charId);
+  const options = pool.filter((t) => t !== prev);
+  const pick = options[Math.floor(Math.random() * options.length)];
+  lastPick.set(charId, pick);
+  return pick;
+}
+
 // The approach each character holds now, as { id, key, text, kind } (text null = no thought).
 function currentApproaches() {
   const out = [];
   if (memory?.approach) {
     const a = memory.approach;
     // v4: the first-person thought, tagged with the sentiment; older backends only have `current`.
-    out.push({ id: '@', key: `${a.id}@${a.since_step}`, text: a.thought || a.current, kind: 'explorer', tag: memory.sentiment?.id ?? null });
+    out.push({ id: '@', key: `${a.id}@${a.since_step}`, text: () => thoughtFor('@', a.id, a.thought || a.current), kind: 'explorer', tag: memory.sentiment?.id ?? null });
   }
   for (const ad of game?.adversaries ?? []) {
     const br = ad.brain;
     // Brain off is code patrol, not a formulated approach: no bubble.
-    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? br.approach_text : null, kind: 'adversary' });
+    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? () => thoughtFor(ad.id, br.approach, br.approach_text) : null, kind: 'adversary' });
   }
   return out;
 }
