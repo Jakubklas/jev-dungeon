@@ -212,12 +212,27 @@ In the tree: `Adversary` private `#skills`, `#facing`, `#hp/#maxHp`, `#stun` wit
 
 ### Remaining work, in order
 
-1. **Finish S4** (one Sonnet agent, files: `adversary/*`, `turn.js`, `skills/resolve.js`, `check-adversaries.mjs`, `check-skills.mjs`):
+1. **Finish S4** (DONE) (one Sonnet agent, files: `adversary/*`, `turn.js`, `skills/resolve.js`, `check-adversaries.mjs`, `check-skills.mjs`):
    - `turn.js` `newTestGame`: read `config` from `buildArena`; pass `skills: explorerSkillSetOf(config)` to `ExplorerBrain` (Run needs an opt for it); give ghosts `ghostSkillSetOf(config)` and `config.ghostHp ?? skillConfig().ghostHp`. `view()` top-level `block: game.block`.
    - `resolve.js`: drop the temporary ghost WeakMap / `hitGhost` fallback now that `Adversary.takeHit` exists (update `check-skills.mjs` and the check-dungeon fog twin, which calls `hitGhost` when `takeHit` is missing); read hp/stun from `skillConfig()`.
    - Verify the caution trait → `keepDistance` and aggression → strike line; ghost strikes respect grace + one-hit-per-tick latch; 'caught' on last life.
    - Get `check-adversaries.mjs` green (strike damage, bump, grace → protected, two strikes one hit, shield vs claw seeded, stunned = no Jev call, dispel, six public keys, synchronous request building).
-2. **Review + full check run**: `check-skills`, `check-dungeon`, `check-adversaries`, `check-testbed`, `check-characters`, `check-memory-kit`, `check-props`; dry `measure-memory.mjs --arena skills`. Report ghost request max size.
-3. **Docs** (one Sonnet agent): AGENTS.md rule 6 rewritten (touch = bump, only strikes take lives), a Skills section, repo-map rows (`src/skills/`, `check-skills.mjs`, capabilities gone), open issues (request size headroom ~60 B, dormant D4-a path); CONTRACT.md (`Game.facing/block/strikes/skillRand`, `KnownWorld.useSkill`, turn `skill_decision`, `view().strikes/block`, adversary `facing/hp/max_hp`, memory `skills`, new event types); one-line "superseded by PLAN-skills.md" in PLAN-memory.md P3 and PLAN-adversary-memory.md A5.
-4. **Commit** (ask the user first).
-5. **Gym runs (paid, user-approved)**: the four scenarios in the Execution table via `node scripts/arenas.mjs up --gym ...` with `--opt` maps, ~30 ticks each, then `arenas.mjs down`. Report strikes, blocks, bumps, lives lost, how often `skill` was asked vs used, and request sizes.
+2. **Review + full check run** (DONE): `check-skills`, `check-dungeon`, `check-adversaries`, `check-testbed`, `check-characters`, `check-memory-kit`, `check-props`; dry `measure-memory.mjs --arena skills`. Report ghost request max size.
+3. **Docs** (DONE; one Sonnet agent): AGENTS.md rule 6 rewritten (touch = bump, only strikes take lives), a Skills section, repo-map rows (`src/skills/`, `check-skills.mjs`, capabilities gone), open issues (request size headroom ~60 B, dormant D4-a path); CONTRACT.md (`Game.facing/block/strikes/skillRand`, `KnownWorld.useSkill`, turn `skill_decision`, `view().strikes/block`, adversary `facing/hp/max_hp`, memory `skills`, new event types); one-line "superseded by PLAN-skills.md" in PLAN-memory.md P3 and PLAN-adversary-memory.md A5.
+4. **Commit** (DONE: 727aa56 on feature/skills; ask the user first).
+5. **Gym runs (DONE, see below; paid, user-approved)**: the four scenarios in the Execution table via `node scripts/arenas.mjs up --gym ...` with `--opt` maps, ~30 ticks each, then `arenas.mjs down`. Report strikes, blocks, bumps, lives lost, how often `skill` was asked vs used, and request sizes.
+
+## Gym results (2026-10-07)
+
+4 scenarios x 30 ticks on the live Jev.
+
+| Scenario | Skill asked / used | Outcome |
+| --- | --- | --- |
+| Adjacent ghost | asked 7x, used 0 (sword 0.14 at best) | Explorer ran away, 2/2 lives. |
+| Corridor | asked 9x, used 4 (all shield) | 6 bumps, the ghost never struck: a **bump-lock**. Fixed here: a bump keeps the ghost's budget (only a sword hit's knockback stuns). Check added in `check-adversaries.mjs`. |
+| No threat | never asked | As designed. |
+| Two ghosts | asked 3x, used 1 (shield) | One claw hit landed, 1/2 lives, pack alert fired. |
+
+Open:
+- Jev rarely picks the sword (0.01-0.19): tune the skill text / `SKILL_MIN`.
+- Per-ghost skill decisions are not in the turn's `adversaryTurns`.

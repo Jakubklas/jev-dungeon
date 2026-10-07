@@ -341,6 +341,23 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   };
   const r1 = await rolls(), r2 = await rolls();
   check(r1 === r2 && r1.includes('true') && r1.includes('false'), `block: seeded rolls differ between runs or never vary (${r1} / ${r2})`);
+  // Bump-lock: a 1-wide corridor, a hunting ghost, an explorer that steps onto it every tick. A bump keeps the
+  // ghost's budget, so it still acts (claw strike) within a few ticks instead of being pushed along forever.
+  const g8 = handMap(['###########', '#E........#', '###########']);
+  const lock = clawGhost('a1', [3, 1]);
+  g8.adversaries = [lock];
+  resetStub(g8, { strike: true });
+  let strikeTick = 0, bumps8 = 0;
+  for (let t = 1; t <= 6 && !strikeTick; t++) {
+    g8.clearTickState();
+    const dir = same(lock.pos, [g8.pos[0] + 1, g8.pos[1]]) ? 'right' : null;
+    if (dir) g8.applyMove(dir);
+    const ev = (await step(g8)).events;
+    bumps8 += ev.filter((e) => e.type === 'bump').length;
+    if (ev.some((e) => e.type === 'hit' || (e.type === 'strike' && e.result === 'protected'))) strikeTick = t;
+  }
+  check(strikeTick > 0 && strikeTick <= 4 && bumps8 >= 1, `bump-lock: explorer pushing a ghost down a corridor was struck at tick ${strikeTick} after ${bumps8} bumps`);
+  console.log(`bump-lock: bumped ghost struck at tick ${strikeTick} (${bumps8} bumps)`);
   stubGame = g6;
   console.log('damage: a touch is a bump, claw strikes hurt, grace and the one-hit latch hold, patrollers never strike, shield rolls are seeded');
 }

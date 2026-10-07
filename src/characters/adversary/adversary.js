@@ -499,7 +499,8 @@ function codeHuntDir(game, a) {
 // only when boxed in. No rng, so seeds stay reproducible.
 function knockBack(game, a, from = null) {
   a.route = null; // patrol routes assume contiguous cells
-  a.budget = 0; // no step straight back in this tick
+  // The budget is kept on purpose: a bump must not cost the ghost its next act, or a ghost bumped every tick
+  // (explorer pushing it down a corridor) would never strike. Only a sword hit stuns (Adversary.takeHit).
   if (from && isFloor(game.dungeon, from) && !same(from, game.pos)) {
     a.pos = [...from];
     return;
