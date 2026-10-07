@@ -24,6 +24,8 @@ let advTurns = new Map(); // id -> this tick's adversaryTurn (v3), cleared every
 let advLatency = null;    // slowest adversary Jev call this tick, null when none called Jev
 let approachesUsed = new Set();
 let eventLog = [];        // newest first: { step, text, type }
+let strikeFx = null;      // this tick's attacks to flash: { t0, strikes } (S5), null when none
+let lastSkillDecision = null; // turn.skill_decision with its step, null before the first one
 let elapsed = 0, resumedAt = 0;
 
 const delayMs = () => Number($('delay').value);
@@ -59,7 +61,8 @@ async function api(method, path) {
 
 const TW = 32, TH = 16;           // tile diamond, art px
 const HW = TW / 2, HH = TH / 2;
-const WALL_H = 11;                // raised wall block height, art px
+const WALL_H = 11;                // one wall block's height, art px
+const MAX_BLOCKS = 3;             // a wall is 1..MAX_BLOCKS blocks tall (z dimension)
 const BANDS = 8;                  // light bands for known cells
 const FOG_BANDS = 5;              // glow bands for unknown cells (distance 1..5 to known)
 const FOG_PAD = FOG_BANDS;        // the glow may spill this far past the map edge
@@ -67,6 +70,9 @@ const FLOOR_VARIANTS = 6;
 const TWEEN_MS = 150;             // entity move tween
 const BOB_PX = 2, BOB_MS = 1600;  // ghost hover
 const ANIM_MS = 260;              // idle animation frame time
+const STRIKE_MS = 350;            // strike overlay flash and fade
+const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
+const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
 
 // Known stone ramps from cold navy (light 0.2, the edge of what Jev has seen) through
@@ -166,7 +172,7 @@ function paint(target, pattern, cols, dy = 0) {
   g.putImageData(img, 0, dy);
 }
 
-// Pre-rendered tiles: floors[band][variant], walls[band][top][mask], fogTiles[d-1].
+// Pre-rendered tiles: floors[band][variant], walls[band][top][blocks-1][mask], fogTiles[d-1].
 // mask bit 1 = draw the left side face, bit 2 = the right one.
 const floorPatterns = Array.from({ length: FLOOR_VARIANTS }, (_, i) => stonePattern(i % 3, 11 + i));
 const capPatterns = [stonePattern(0, 51, true), stonePattern(1, 52, true)];
@@ -181,28 +187,31 @@ for (let band = 0; band < BANDS; band++) {
   const top = ramp('wallTop', band), mortar = ramp('wallMortar', band);
   const tc = [null, mortar, mix(top, ramp('wallL', band), .45), top, ramp('wallTopHi', band)];
   const faces = { L: ramp('wallL', band), R: ramp('wallR', band) };
-  walls.push(capPatterns.map((cap, ci) => [0, 1, 2, 3].map((mask) => {
-    const c = makeCanvas(TW, TH + WALL_H);
+  walls.push(capPatterns.map((cap, ci) => Array.from({ length: MAX_BLOCKS }, (_, hi) => [0, 1, 2, 3].map((mask) => {
+    const nb = hi + 1;
+    const c = makeCanvas(TW, TH + WALL_H * nb);
     const g = c.getContext('2d');
     for (let px = 0; px < TW; px++) {
       const left = px < HW;
       if (!(mask & (left ? 1 : 2))) continue;
       const face = faces[left ? 'L' : 'R'];
       const r0 = bottomRow(px) + 1, u = left ? px : TW - 1 - px;
-      for (let k = 0; k < WALL_H; k++) {
-        const course = Math.floor(k / 4);
-        let col = face;
-        if (k % 4 === 3 || k === WALL_H - 1 || (u + course * 3 + ci) % 6 === 0) col = mortar;
-        else if (k === 0) col = mix(face, mortar, .35);                       // shade under the cap
-        else if (hash(Math.floor((u + course * 3) / 6), course, ci + px * 0 + (left ? 3 : 4)) < .3) col = mix(face, mortar, .25);
-        else if (left && px === HW - 1) col = mix(face, top, .3);             // front corner catches light
+      for (let k = 0; k < WALL_H * nb; k++) {
+        // Each block is shaded on its own: blocks nearer the floor are a little darker.
+        const blk = Math.floor(k / WALL_H), kk = k % WALL_H;
+        const course = Math.floor(kk / 4), fb = mix(face, mortar, .1 * (nb - 1 - blk));
+        let col = fb;
+        if (kk % 4 === 3 || kk === WALL_H - 1 || (u + course * 3 + ci + blk * 2) % 6 === 0) col = mortar;
+        else if (kk === 0) col = mix(fb, mortar, blk === 0 && nb === 1 ? .35 : .5);        // shade under a cap / block seam
+        else if (hash(Math.floor((u + course * 3) / 6), course + blk * 5, ci + px * 0 + (left ? 3 : 4)) < .3) col = mix(fb, mortar, .25);
+        else if (left && px === HW - 1) col = mix(fb, top, .3);               // front corner catches light
         g.fillStyle = css(col);
         g.fillRect(px, r0 + k, 1, 1);
       }
     }
     paint(c, cap, tc);
     return c;
-  })));
+  }))));
 }
 const fogTiles = PALETTE.fog.map((hex) => {
   const c = makeCanvas(TW, TH);
@@ -281,13 +290,24 @@ function indexProps() {
     if (p.solid) solidProp[p.y * W + p.x] = 1;
     return { ...p, depth: p.x + p.y, phase: hash(p.x, p.y, 9) };
   });
+  indexHeights();
   decorAt = new Map();
   for (const d of game.decor ?? []) {
     const k = d.y * W + d.x;
-    (decorAt.get(k) ?? decorAt.set(k, []).get(k)).push({ ...d, phase: hash(d.x, d.y, 5) });
+    (decorAt.get(k) ?? decorAt.set(k, []).get(k)).push({ ...d, phase: hash(d.x, d.y, 5), blocks: 1 + Math.floor(hash(d.x, d.y, (Number(game.seed) | 0) ^ 0x7b19) * 2) });
   }
 }
 const isSolidProp = (x, y) => solidProp[y * game.width + x] === 1;
+
+// Wall height in blocks (1..MAX_BLOCKS): a pure hash of cell + seed, so it never touches the
+// game rng, gameplay or the server. Walls only: floors stay flat at z = 0.
+let wallBlocks = new Uint8Array(0);
+function indexHeights() {
+  const { width: W, height: H } = game, sd = Number(game.seed) | 0;
+  wallBlocks = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) wallBlocks[y * W + x] = 1 + Math.floor(hash(x, y, sd ^ 0x5a17) * MAX_BLOCKS);
+}
+const blocksAt = (x, y) => wallBlocks[y * game.width + x];
 
 // ---------- board, buffer, camera ----------
 
@@ -343,12 +363,19 @@ function syncActors(reset) {
   const now = performance.now();
   if (reset) actors.clear();
   moveActor('@', game.pos, now, false);
+  if (FACE_X[game.facing]) actors.get('@').face = FACE_X[game.facing]; // server facing wins when present
+  const ids = new Set();
   for (const ad of game.adversaries ?? []) {
+    ids.add(ad.id);
     const prev = actors.get(ad.id);
     const jumped = prev && Math.abs(ad.pos[0] - prev.to[0]) + Math.abs(ad.pos[1] - prev.to[1]) > 1;
     moveActor(ad.id, ad.pos, now, !prev?.drawn || jumped);
-    actors.get(ad.id).drawn = ad.visible || revealOn();
+    const act = actors.get(ad.id);
+    act.drawn = ad.visible || revealOn();
+    if (FACE_X[ad.facing]) act.face = FACE_X[ad.facing];
   }
+  // A ghost that left the game (dispelled) is forgotten at once: no tween, no ghost frame.
+  for (const id of [...actors.keys()]) if (id !== '@' && !ids.has(id)) actors.delete(id);
 }
 
 // Camera: world art px of the buffer's top-left. Centres on the (tweened) explorer.
@@ -376,7 +403,7 @@ function moveCamera(dt) {
 function viewBounds(cx, cy) {
   return {
     dMin: Math.floor(cy / HH) - 2,
-    dMax: Math.ceil((cy + buf.height) / HH) + 6,
+    dMax: Math.ceil((cy + buf.height) / HH) + Math.ceil(MAX_BLOCKS * WALL_H / HH) + 2, // a tall wall's top reaches up into view
     eMin: Math.floor(cx / HW) - 2,
     eMax: Math.ceil((cx + buf.width) / HW) + 2,
   };
@@ -431,6 +458,7 @@ function resetBoard() {
   computeFog();
   indexProps();
   syncActors(true);
+  strikeFx = null;
   snapCamera();
 }
 
@@ -440,6 +468,8 @@ function boardUpdate() {
   computeFog();
   indexProps();
   syncActors(false);
+  // Only a view that arrives from a step flashes its strikes (a page load does not replay them).
+  strikeFx = Array.isArray(game.strikes) && game.strikes.length ? { t0: performance.now(), strikes: game.strikes } : null;
 }
 
 // Ease displayed brightness toward the real light, for on-screen cells only.
@@ -535,6 +565,7 @@ function drawScene(now) {
   }
   drawTrail(cx, cy);
   drawLandmarks(cx, cy, known);
+  drawStrikes(cx, cy, now, known, reveal);
 
   // Entities, sorted by depth (x+y of the cell; the larger one while moving).
   const ents = [];
@@ -552,7 +583,7 @@ function drawScene(now) {
       const px = isoX(p.x + .5, p.y + .5) - cx, py = isoY(p.x + .5, p.y + .5) - cy;
       if (px < -40 || py < -10 || px > buf.width + 40 || py > buf.height + 70) continue;
       const s = lit ? shown[p.y][p.x] : 0;
-      ents.push({ depth: p.depth, order: -1, kind: 'prop', gx: p.x, gy: p.y, art: art[bandOf(s)], face: p.flip ? -1 : 1,
+      ents.push({ depth: p.depth, order: -1, kind: 'prop', prop: p.kind, gx: p.x, gy: p.y, art: art[bandOf(s)], face: p.flip ? -1 : 1,
         phase: p.phase, alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
     }
   }
@@ -561,7 +592,8 @@ function drawScene(now) {
     if (!a) continue;
     const [gx, gy] = actorPos(a, now);
     ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', face: a.face,
-      id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
+      id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
+      maxHp: reveal && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
   const me = actors.get('@');
   const [mx, my] = actorPos(me, now);
@@ -569,6 +601,7 @@ function drawScene(now) {
   ents.sort((p, q) => p.depth - q.depth || p.order - q.order);
 
   const glows = [];
+  frameGlows = glows;
 
   // Pass B: wall blocks per diagonal, then the entities standing on that diagonal.
   let ei = 0;
@@ -580,14 +613,17 @@ function drawScene(now) {
       if (!isWall(x, y)) continue;
       const isKnown = known(x, y);
       if (!isKnown && !reveal) continue;
-      const mask = (wallShown(x, y + 1) ? 0 : 1) | (wallShown(x + 1, y) ? 0 : 2);
+      // A face is drawn unless a shown wall in front is at least as tall (it would cover it).
+      const nb = blocksAt(x, y), hL = wallShown(x, y + 1) ? blocksAt(x, y + 1) : 0, hR = wallShown(x + 1, y) ? blocksAt(x + 1, y) : 0;
+      const mask = (hL >= nb ? 0 : 1) | (hR >= nb ? 0 : 2);
       const s = isKnown ? shown[y][x] : 0;
-      const tile = walls[bandOf(s)][hash(x, y, 3) < .5 ? 0 : 1][mask];
+      const tile = walls[bandOf(s)][hash(x, y, 3) < .5 ? 0 : 1][nb - 1][mask];
       const alpha = isKnown ? Math.min(1, s / .2) : REVEAL_ALPHA;
       if (alpha < 1) b.globalAlpha = alpha;
-      const ox = e * HW - HW - cx, oy = d * HH - WALL_H - cy;
-      b.drawImage(tile, ox, oy);
-      if (propArt && decorAt.size) drawDecor(decorAt.get(y * MW + x), mask, bandOf(s), ox, oy, alpha, now, glows);
+      const ox = e * HW - HW - cx, oy0 = d * HH - WALL_H - cy; // oy0: top of a one-block wall
+      b.drawImage(tile, ox, oy0 - (nb - 1) * WALL_H);
+      // Decor sits on the lowest block of its face that is not hidden by a wall in front.
+      if (propArt && decorAt.size) drawDecor(decorAt.get(y * MW + x), mask, bandOf(s), ox, oy0, alpha, now, glows, nb, hL, hR);
       b.globalAlpha = 1;
     }
     while (ei < ents.length && ents[ei].depth <= d) drawEntity(ents[ei++], now, cx, cy);
@@ -598,14 +634,18 @@ function drawScene(now) {
 
 // Wall decor, right after its wall block (same band and alpha). Only faces that are drawn
 // (mask bit set) get their decor. Items with a glow are queued for drawGlows.
-function drawDecor(list, mask, band, ox, oy, alpha, now, glows) {
+function drawDecor(list, mask, band, ox, oy0, alpha, now, glows, nb, hL, hR) {
   if (!list) return;
   for (const d of list) {
     if (!(mask & (d.face === 'L' ? 1 : 2))) continue;
     const art = propArt.wall[d.kind]?.[d.face]?.[band], meta = propArt.meta[d.kind];
     if (!art) continue;
-    b.drawImage(frameOf(art, now / (meta.frameMs / ANIM_MS), d.phase * 4).canvas, ox, oy);
-    if (meta.glow) glows.push({ d, meta, ox, oy, alpha });
+    const hn = d.face === 'L' ? hL : hR, oy = oy0 - hn * WALL_H;
+    // Big decor: 1 or 2 blocks tall (d.blocks), clamped to the visible part of its wall (nb - hn).
+    const tall = d.blocks > 1 && nb - hn >= 2 && propArt.wallTall[d.kind]?.[d.face]?.[band];
+    const a = tall || art, m = tall ? propArt.metaTall[d.kind] : meta;
+    b.drawImage(frameOf(a, now / (m.frameMs / ANIM_MS), d.phase * 4).canvas, ox, tall ? oy - WALL_H : oy);
+    if (m.glow) glows.push({ d, meta: m, ox, oy, alpha, pool: hn === 0 });
   }
 }
 
@@ -616,7 +656,18 @@ function drawGlows(glows, now) {
   if (!glows.length) return;
   b.save();
   b.globalCompositeOperation = 'lighter';
-  for (const { d, meta, ox, oy, alpha } of glows) {
+  for (const item of glows) {
+    if (item.floor) { // floor prop: rings around the glow point, plus a flat pool at its base
+      const { d, g, x, y, alpha } = item, ph = d.phase * 6.283, r = g.radius ?? 8;
+      const flick = .8 + .12 * Math.sin(now / 110 + ph) + .08 * Math.sin(now / 47 + ph * 3);
+      b.fillStyle = parseGlow(g.color);
+      for (const [k, a] of [[1, .05], [.72, .07], [.46, .1]]) {
+        b.globalAlpha = alpha * a * flick;
+        pixelEllipse(Math.round(x), Math.round(y), Math.round(r * k), Math.round(r * k * .85));
+      }
+      continue;
+    }
+    const { d, meta, ox, oy, alpha, pool } = item;
     const g = meta.glow, ph = d.phase * 6.283;
     const flick = .8 + .12 * Math.sin(now / 110 + ph) + .08 * Math.sin(now / 47 + ph * 3);
     const col = parseGlow(g.color);
@@ -628,7 +679,8 @@ function drawGlows(glows, now) {
       b.globalAlpha = alpha * a * flick;
       pixelEllipse(gx, gy, Math.round(r * k), Math.round(r * k * .85));
     }
-    // Pool on the floor tile in front of the face (L: x, y+1; R: x+1, y).
+    // Pool on the floor tile in front of the face (L: x, y+1; R: x+1, y); none when a lower wall is in front.
+    if (!pool) continue;
     const fcx = ox + HW + (d.face === 'L' ? -HW : HW) * .8, fcy = oy + WALL_H + HH + HH * .8;
     for (const [k, a] of [[1, .05], [.62, .07]]) {
       b.globalAlpha = alpha * a * flick;
@@ -666,6 +718,56 @@ function drawLandmarks(cx, cy, known) {
   }
 }
 
+// Strike overlays: a solid iso diamond per struck cell that flashes and fades over STRIKE_MS
+// after the view arrived. Drawn in the flats pass (above floor, below entities). A cell is
+// drawn only if it is known (lit), unless Reveal map is on, so a strike never leaks the map.
+// Blocked strikes flash steel blue instead of red. The few cells are drawn per frame.
+const diamondCache = new Map();
+function diamondTile(color) {
+  let c = diamondCache.get(color);
+  if (!c) {
+    c = makeCanvas(TW, TH);
+    const g = c.getContext('2d');
+    g.fillStyle = color;
+    for (let py = 0; py < TH; py++) for (let px = 0; px < TW; px++) if (inDiamond(px, py)) g.fillRect(px, py, 1, 1);
+    diamondCache.set(color, c);
+  }
+  return c;
+}
+function drawStrikes(cx, cy, now, known, reveal) {
+  if (!strikeFx) return;
+  const k = (now - strikeFx.t0) / STRIKE_MS;
+  if (k >= 1) { strikeFx = null; return; }
+  const flash = Math.floor(k * 6) % 2 ? .55 : .95;
+  for (const st of strikeFx.strikes) {
+    if (!Array.isArray(st?.cells)) continue;
+    const blocked = st.result === 'blocked';
+    const tile = diamondTile(blocked ? BLOCK_COLOR : STRIKE_COLOR);
+    b.globalAlpha = (1 - k) * flash * (st.result === 'miss' ? .45 : .75);
+    for (const c of st.cells) {
+      if (!Array.isArray(c)) continue;
+      const [x, y] = c;
+      if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= game.width || y >= game.height) continue;
+      if (!reveal && !known(x, y)) continue;
+      const sx = (x - y) * HW - cx, sy = (x + y) * HH - cy;
+      if (sx < -TW || sy < -TH || sx > buf.width || sy > buf.height) continue;
+      b.drawImage(tile, sx, sy);
+    }
+  }
+  b.globalAlpha = 1;
+}
+
+// Shield glyph beside the knight while game.block is active (5x6 art px).
+const SHIELD_ROWS = ['EEEEE', 'EBBBE', 'EBHBE', 'EBBBE', '.EBE.', '..E..'];
+const SHIELD_COLORS = { E: '#0b1430', B: '#8fb4ff', H: '#e4eeff' };
+function drawShield(x, y) {
+  SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
+    if (ch === '.') return;
+    b.fillStyle = SHIELD_COLORS[ch];
+    b.fillRect(x + rx, y + ry, 1, 1);
+  }));
+}
+
 function drawTrail(cx, cy) {
   const t = game.trail;
   if (!t?.length) return;
@@ -685,12 +787,18 @@ function drawTrail(cx, cy) {
   b.globalAlpha = 1;
 }
 
+let frameGlows = null; // this frame's glow queue (drawEntity pushes the glow of floor props)
 function drawEntity(en, now, cx, cy) {
   const px = Math.round(isoX(en.gx + .5, en.gy + .5)) - cx;
   const py = Math.round(isoY(en.gx + .5, en.gy + .5)) - cy;
   if (px < -40 || py < -10 || px > buf.width + 40 || py > buf.height + 60) return;
   if (en.kind === 'prop') {
     blitSprite(frameOf(en.art, now, en.phase * 4), px, py, en.face, en.alpha);
+    const fg = propArt?.floorMeta[en.prop]?.glow;
+    if (fg && frameGlows) { // blue flames / water, forge coals: glow on the floor prop, same flicker as torches
+      const dx = fg.x - en.art.anchorX;
+      frameGlows.push({ floor: true, d: en, g: fg, x: px + (en.face < 0 ? -dx : dx), y: py + fg.y - en.art.anchorY, alpha: en.alpha });
+    }
     return;
   }
   if (en.kind === 'chest') {
@@ -708,6 +816,7 @@ function drawEntity(en, now, cx, cy) {
     // Hit protection (grace after a hit): the knight blinks.
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
+    if (game?.block) drawShield(px + (en.face < 0 ? -12 : 8), py - 16);
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
@@ -728,7 +837,20 @@ function drawEntity(en, now, cx, cy) {
   b.globalAlpha = 1;
   const spr = frameOf(sprites.ghost, now, en.phase * 4);
   blitSprite(spr, px, py - 2 + bob, en.face, en.alpha);
-  heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0), alpha: en.alpha });
+  const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
+  heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
+  // Hit points (Reveal map only, never a tell in normal play): one pip per point.
+  if (en.maxHp) {
+    const x0 = px - Math.floor((en.maxHp * 4 - 1) / 2);
+    b.globalAlpha = en.alpha;
+    for (let i = 0; i < en.maxHp; i++) {
+      b.fillStyle = PALETTE.brainEdge;
+      b.fillRect(x0 + i * 4 - 1, pipY - 1, 4, 4);
+      b.fillStyle = i < en.hp ? PALETTE.enemy : '#2c3d72';
+      b.fillRect(x0 + i * 4, pipY, 2, 2);
+    }
+    b.globalAlpha = 1;
+  }
   // Brain on: a small cyan pixel diamond floating above the head (distinct from the red chase glow).
   if (en.brain) {
     const top = py - 2 + bob - spr.anchorY - 5;
@@ -1019,6 +1141,39 @@ function renderMind() {
   else delete $('tactic-probs').dataset.sentiment;
 }
 
+// Skills (S5): memory.skills = [{ id, kind, name, text, ready, cooldown_left }], at most 4. The
+// block is hidden when the memory has no skills. The skill used this turn is highlighted; the
+// choice may carry an aim suffix (sword_strike_left), so match on the id prefix too.
+function renderSkills() {
+  const list = Array.isArray(memory?.skills) ? memory.skills.filter((k) => k && k.id != null).slice(0, 4) : [];
+  $('skills-panel').hidden = !list.length;
+  if (!list.length) return;
+  const sd = lastSkillDecision;
+  const choice = sd?.choice != null ? String(sd.choice) : null;
+  const usedNow = !!sd?.used && choice && choice !== 'none';
+  $('skills').replaceChildren(...list.map((k) => {
+    const id = String(k.id);
+    const used = usedNow && (choice === id || choice.startsWith(`${id}_`));
+    const ready = k.ready !== false && !(k.cooldown_left > 0);
+    const li = el('li', null, `skill${used ? ' used' : ''}${ready ? '' : ' cooling'}`);
+    if (k.text) li.title = k.text;
+    li.append(
+      el('i', null, 'skill-pip'),
+      el('b', k.name ?? label(id), 'skill-name'),
+      el('span', k.kind ? label(k.kind) : '', 'skill-kind'),
+      el('span', ready ? 'ready' : `cooldown ${k.cooldown_left ?? '?'}`, 'skill-state'),
+    );
+    if (used) li.append(el('span', 'used', 'skill-used'));
+    return li;
+  }));
+  const note = $('skill-note');
+  note.hidden = !sd || choice == null;
+  if (!note.hidden) {
+    const p = sd.probabilities?.[sd.choice];
+    note.textContent = `Step ${sd.step}: ${choice === 'none' ? 'no skill' : label(choice)}${p != null ? ` (${Math.round(p * 100)}%)` : ''}${sd.used ? '' : choice === 'none' ? '' : ', not used'}.`;
+  }
+}
+
 // 8-bit hearts: one per life, filled while it lasts.
 const HEART_ROWS = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
 function renderHearts() {
@@ -1052,6 +1207,7 @@ function renderMemory() {
   renderDanger();
   renderAdversaries();
   renderMind();
+  renderSkills();
   if (!memory) { renderRecent(); renderEvents(); renderLandmarks(); return; }
 
   const ap = memory.approach;
@@ -1146,7 +1302,7 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, e.type === 'caught' || e.type === 'hit' ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
@@ -1160,6 +1316,10 @@ const EVENT_TEXT = {
   lost_sight: (id) => `${id} lost sight of Jev and is searching`,
   gave_up: (id) => `${id} gave up the search`,
   caught: (id) => `${id} caught Jev`,
+  blocked: (id) => `Shield blocked ${id}'s claw`,
+  dispelled: (id) => `Jev dispelled ${id}`,
+  struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
+  bump: (id) => `${id} bumped Jev`,
   alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,
   brain_off: (id, e) => `${id} brain off${e.reason ? `: ${e.reason}` : ''}`,
@@ -1231,10 +1391,27 @@ function renderAdversaries() {
   $('adversaries').replaceChildren(...(list.length ? list.map(adversaryCard) : [el('p', '—', 'muted')]));
 }
 
+// 'strike' { id, cells, result }: id is the striker ('explorer' or a ghost id). An explorer strike
+// that lands is logged by its own 'struck' / 'dispelled' event (which names the ghost), so only
+// a miss, a block or protection gets a strike line here.
+const isExplorerId = (id) => id === 'explorer' || id === '@' || id === 'jev' || id === 'Jev';
+function strikeText(e, turn) {
+  const miss = e.result === 'miss';
+  if (isExplorerId(e.id)) {
+    if (e.result === 'hit' || e.result === 'dispelled') return null;
+    return miss ? 'Jev struck and missed' : `Jev struck (${e.result ?? 'no effect'})`;
+  }
+  // A blocked ghost strike already has its own "Shield blocked" line.
+  if ((turn.events ?? []).some((x) => x.type === 'blocked' && x.id === e.id)) return null;
+  return `${e.id} struck Jev${miss ? ' and missed' : e.result === 'protected' || e.result === 'blocked' ? ` (${e.result})` : ''}`;
+}
+
 function logEvents(turn) {
   for (const e of turn.events ?? []) {
-    const text = (EVENT_TEXT[e.type] ?? ((id) => `${id}: ${e.type}`))(e.id, e);
-    eventLog.unshift({ step: turn.step ?? game.steps, text: e.at ? `${text} at (${e.at.join(',')})` : text, type: e.type });
+    if (e.type === 'dispelled') actors.delete(e.id); // snap: no tween
+    const text = e.type === 'strike' ? strikeText(e, turn) : (EVENT_TEXT[e.type] ?? ((id) => `${id}: ${e.type}`))(e.id, e);
+    if (text == null) continue;
+    eventLog.unshift({ step: turn.step ?? game.steps, text: Array.isArray(e.at) && e.type !== 'struck' ? `${text} at (${e.at.join(',')})` : text, type: e.type });
   }
   eventLog.length = Math.min(eventLog.length, LOG_MAX);
   if ((turn.events ?? []).some((e) => e.type === 'hit')) flashHit();
@@ -1301,6 +1478,8 @@ function renderTurn(turn) {
     $('probs').removeAttribute('title');
   }
 
+  const sd = turn.skill_decision;
+  lastSkillDecision = sd && typeof sd === 'object' ? { ...sd, step: turn.step } : null; // this turn's only
   if (turn.review) lastReview = { ...turn.review, step: turn.step };
   if (!turn.forced && turn.apiMs != null) lastLatency = Math.round(turn.apiMs);
   // Adversary calls run in parallel, so the tick waits for the slowest one.
@@ -1327,6 +1506,7 @@ function renderReview() {
 function resetPane() {
   lastReview = null;
   lastDecision = null;
+  lastSkillDecision = null;
   lastLatency = null;
   advTurns = new Map();
   advLatency = null;

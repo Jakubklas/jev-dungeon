@@ -364,8 +364,8 @@ src/props/catalog.js        prop kinds, placement rules, weights (DOM-free, no i
 src/props/place.js          placeProps(dungeon, rand) -> { tiles, props, decor }              -> props-world agent
 src/dungeon.js              generateDungeon calls placeProps; Game.publicView adds props, decor -> props-world agent (only these two edits)
 scripts/check-props.mjs     placement checks over many seeds (no Jev, no DOM)                 -> props-world agent
-public/props/floor-art.js   FLOOR_ART: pixel art for the 7 floor props (DOM-free)              -> floor-art agent
-public/props/wall-art.js    WALL_ART: pixel art for the 4 wall decor kinds (DOM-free)          -> wall-art agent
+public/props/floor-art.js   FLOOR_ART: pixel art for the 11 floor props (DOM-free)              -> floor-art agent
+public/props/wall-art.js    WALL_ART: pixel art for the 5 wall decor kinds (DOM-free)          -> wall-art agent
 public/props/index.js       buildProps(): rasterises both art files into banded sprites        -> renderer agent
 public/app.js, server.js    drawing props/decor and glow; serving /props/*.js                  -> renderer agent
 ```
@@ -384,6 +384,10 @@ Floor props, one cell each:
 | `skull` | no | skull with a couple of scattered bones |
 | `tools` | no | pickaxe and shovel lying on the floor (image 1) |
 | `sword` | no | dropped sword with an arrow or two (image 1) |
+| `anvil` | no | small iron anvil |
+| `goblet` | no | stone chalice brazier with blue flames (animated, blue glow) |
+| `fountain` | yes | stone fountain with blue water (animated, blue glow); picked only for one-cell clusters |
+| `forge` | yes | brick forge with glowing coals and bellows (animated, warm glow); picked only for one-cell clusters |
 
 Wall decor (on a wall's visible face):
 
@@ -393,6 +397,7 @@ Wall decor (on a wall's visible face):
 | `fireplace` | stone fireplace with burning logs, casts a strong warm glow (image 6) |
 | `arch` | dark stone archway opening flanked by small columns (image 4) |
 | `gate` | arched barred gate with warm light glowing behind the bars (image 5), faint glow |
+| `banner` | big: red tattered banner on a pole, 1 or 2 blocks tall (`stretch`), no glow |
 
 ## Data (server -> browser)
 
@@ -411,7 +416,7 @@ decor: [{ kind, x, y, face: 'L'|'R' }]             // wall decor, sorted by y th
 - Seeded: `placeProps` gets `rng(seed ^ 0x2c1b3c6d)` from `generateDungeon`, after the layout, start and treasure are chosen. The layout, start and treasure must stay exactly what they were without props. Same seed gives the same props.
 - **Solid props** stand in free-standing **clusters of 1-4 4-connected cells** inside room rectangles, off the room's edge ring (never on a room cell touching the room's wall line), so a walkable lane runs behind them and they make hiding spots. Clusters keep a Chebyshev gap of 2 from each other (one free cell between, diagonals included), so they never merge. Each cluster has one `flip` (a row along x is `false`, a column along y is `true`, square shapes random); it only mirrors the sprite. Never in a corridor, never 4-adjacent to a doorway (a room floor cell that touches floor outside the room rectangle), never on or 8-adjacent to the start or treasure, never on the floor cell in front of any decor. After each cluster, all remaining floor must stay one connected region, each room's floor must stay connected inside its own rectangle, and the treasure must stay at a path distance of at least 60% of the farthest reachable cell from start; otherwise skip it. No dead-end pockets: each floor 4-neighbour of a cluster keeps at least 2 floor 4-neighbours. Density: about one cluster per 30 inner room cells (the room minus its edge ring), at most 3 per room. Values live in `catalog.js` (`CLUSTER_*`).
 - **Small props** stand on floor cells (rooms, rarely corridors), never on the start, treasure or 4-adjacent to the treasure, never on a solid prop. Roughly one per 25 room cells, at most 3 per room.
-- **Wall decor** sits on wall cells (never prop cells) whose decor face touches room floor that is not a solid prop. `fireplace`, `arch` and `gate` need a straight wall run (both neighbours along the wall are also walls with the same floor side) and are at most one of them per room, in rooms at least 6 cells along that wall. `torch` is the common one: 1-3 per room, plus the occasional corridor torch. No two decor items on 4-adjacent wall cells.
+- **Wall decor** sits on wall cells (never prop cells) whose decor face touches room floor that is not a solid prop. `fireplace`, `arch`, `gate` and `banner` need a straight wall run (both neighbours along the wall are also walls with the same floor side) and are at most one of them per room, in rooms at least 6 cells along that wall. `torch` is the common one: 1-3 per room, plus the occasional corridor torch. No two decor items on 4-adjacent wall cells.
 - Decor is placed first, then solid props, then small props.
 
 ## Art format (art agents)
@@ -422,12 +427,12 @@ Same style as `public/sprites.js`: DOM-free string grids, one char per art pixel
 export const FLOOR_ART = { shelf: { palette, frames: [grid, ...], anchorX, anchorY, emissive: [] }, ... };  // floor-art.js
 export const WALL_ART  = { torch: { palette, frames: [grid, ...], frameMs, glow, emissive: [...] }, ... };  // wall-art.js
 ```
-- Iso tile: diamond 32x16 art px; a cell's centre is the diamond centre. A wall block is 11 art px tall; a wall is 1-3 blocks. Wall decor is drawn on the lowest block not hidden by a wall in front. Big decor (fireplace, arch, gate) is 1 or 2 blocks tall (hash of cell + seed, renderer only), clamped to the visible blocks of its wall; WALL_ART entries may give `stretch` (front-view row repeated 11 times for the 2-block variant); `buildProps` also returns `wallTall` / `metaTall`. The knight is 18x24, the ghost 18x20, the treasure chest 12x10.
+- Iso tile: diamond 32x16 art px; a cell's centre is the diamond centre. A wall block is 11 art px tall; a wall is 1-3 blocks. Wall decor is drawn on the lowest block not hidden by a wall in front. Big decor (fireplace, arch, gate, banner) is 1 or 2 blocks tall (hash of cell + seed, renderer only), clamped to the visible blocks of its wall; WALL_ART entries may give `stretch` (front-view row repeated 11 times for the 2-block variant); `buildProps` also returns `wallTall` / `metaTall`. The knight is 18x24, the ghost 18x20, the treasure chest 12x10.
 - **Floor props:** drawn in the same 3/4 isometric pixel style as the characters, authored for `flip: false` (backed onto the wall at the upper right, front facing lower-left). The renderer mirrors for `flip: true`. `anchorX, anchorY` = the pixel that sits on the cell centre (the base of the prop). Solid props up to 28 wide x 30 tall; small props up to 20 x 14 and low to the ground.
 - **Wall decor:** authored as a flat **front view** (no perspective). The renderer shears it onto the iso wall face (each column shifted down half a pixel per column for `L`, mirrored for `R`). Width up to 14 px. The bottom row sits on the floor line of the face. Height up to 19 px: the face is 11 px tall, so anything above row 11 from the bottom (a chimney hood, an arch keystone) rises above the wall top.
 - `frames`: 1-4 frames, all the same size. `frameMs`: frame time for animated flames (default 260).
 - `emissive`: palette chars (flames, glowing light) that the renderer must not darken in the cold, dim light bands.
-- `glow` (decor only, optional): `{ x, y, radius, color }`, with x, y in front-view art coordinates, radius in art px. The renderer draws a soft, flickering warm glow there and on the floor in front.
+- `glow` (decor, and floor props `goblet`, `fountain`, `forge`; optional): `{ x, y, radius, color }`, with x, y in front-view art coordinates, radius in art px. The renderer draws a soft, flickering warm glow there and on the floor in front.
 - Palettes should sit next to the existing ones: warm wood browns, cold stone greys, dark navy outlines (`#1b252d`-ish), muted steel, warm flame yellow/orange.
 
 ## Rendering (renderer agent)

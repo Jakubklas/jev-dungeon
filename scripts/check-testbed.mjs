@@ -128,6 +128,8 @@ const floorCount = (d) => d.tiles.join('').split('').filter((c) => c === '.').le
   check(many > few, `'many' places more solid props than 'few' (${many} vs ${few})`);
   const list = buildArena({ size: [9, 9], props: [{ kind: 'crates', x: 3, y: 3 }, { kind: 'skull', x: 7, y: 7 }] }).dungeon;
   check(list.tiles[3][3] === '#' && list.tiles[7][7] === '.' && list.props.length === 2, 'explicit props: solid blocks, small stays floor');
+  const fresh = buildArena({ size: [9, 9], props: [{ kind: 'fountain', x: 3, y: 3 }, { kind: 'forge', x: 5, y: 3 }, { kind: 'anvil', x: 3, y: 6 }, { kind: 'goblet', x: 6, y: 6 }] }).dungeon;
+  check(fresh.tiles[3][3] === '#' && fresh.tiles[3][5] === '#' && fresh.tiles[6][3] === '.' && fresh.tiles[6][6] === '.' && fresh.props.length === 4, 'explicit props: fountain, forge (solid) and anvil, goblet (small)');
 }
 
 // 4. ASCII map.

@@ -6,6 +6,8 @@
 //   p.floor[kind][band]      -> { canvas, w, h, anchorX, anchorY, frames? }  (frames are the same shape)
 //   p.wall[kind].L[band]     -> same, a TW x (TH+wallH) canvas to draw at the wall tile's origin
 //   p.wall[kind].R[band]     -> the mirrored right face
+//   p.wallTall[kind], p.metaTall[kind] -> the 2-block variant of big kinds (canvas TH+2*wallH, draw 1 block higher)
+//   p.floorMeta[kind]        -> { glow } for glowing floor props (x, y in sprite px, flipped with the sprite)
 //   p.meta[kind]             -> { frameMs, glow, w, h } for decor (glow in front-view art coords)
 //
 // bands: number of light bands. navy: [r, g, b] cold stone target of band 0. tw/th/wallH/bottomRow:
@@ -78,11 +80,12 @@ export async function buildProps({ bands, navy, tw, th, wallH, bottomRow }) {
     loadArt('./wall-art.js', 'WALL_ART'),
   ]);
   const geom = { tw, th, wallH, bottomRow };
-  const out = { floor: {}, wall: {}, meta: {} };
+  const out = { floor: {}, floorMeta: {}, wall: {}, meta: {}, wallTall: {}, metaTall: {} };
 
   for (const [kind, def] of Object.entries(FLOOR_ART)) {
     if (!def?.frames?.length) continue;
     const gr = rows(def.frames[0]), w = Math.max(...gr.map((r) => r.length)), h = gr.length;
+    if (def.glow) out.floorMeta[kind] = { glow: def.glow };
     out.floor[kind] = Array.from({ length: bands }, (_, band) => {
       const pal = bandPalette(def, band, bands, navy);
       return sprite(def.frames.map((f) => floorFrame(f, pal)), w, h, def.anchorX ?? w >> 1, def.anchorY ?? h - 1);
@@ -102,6 +105,18 @@ export async function buildProps({ bands, navy, tw, th, wallH, bottomRow }) {
     }
     out.wall[kind] = sides;
     out.meta[kind] = { frameMs: def.frameMs ?? 260, glow: def.glow ?? null, w, h };
+    // Two-block variant of a big kind (def.stretch = the front-view row repeated wallH times).
+    if (Number.isInteger(def.stretch)) {
+      const st = def.stretch, grow = (f) => { const g = rows(f).slice(); g.splice(st, 0, ...Array(wallH).fill(g[st])); return g; };
+      const tall = { L: [], R: [] }, tgeom = { tw, th, wallH: wallH * 2, bottomRow };
+      for (let band = 0; band < bands; band++) {
+        const pal = bandPalette(def, band, bands, navy);
+        for (const side of ['L', 'R']) tall[side].push(sprite(def.frames.map((f) => faceFrame(grow(f), pal, side, tgeom)), tw, th + wallH * 2, 0, 0));
+      }
+      const gl = def.glow;
+      out.wallTall[kind] = tall;
+      out.metaTall[kind] = { frameMs: def.frameMs ?? 260, glow: gl && { ...gl, y: gl.y > st ? gl.y + wallH : gl.y }, w, h: h + wallH };
+    }
   }
   return out;
 }

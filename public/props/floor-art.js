@@ -379,6 +379,141 @@ function makeSword() {
   return { palette: STEEL_PAL, frames: [rows], anchorX: 11 - x0, anchorY: 10 - y0, emissive: [] };
 }
 
+// ------------------------------------------------------------------ anvil / goblet / fountain / forge
+// (added later: small anvil + goblet, solid fountain + forge. `glow` / `frameMs` are read by buildProps
+// (floorMeta) and drawn like the torch glow; glow x, y are in sprite pixels, mirrored with the sprite.)
+const padRows = (rows) => { const w = Math.max(...rows.map((r) => r.length)); return rows.map((r) => r.padEnd(w, '.')); };
+const withRows2 = (base, rows) => base.map((r, i) => (i in rows ? rows[i] : r));
+
+const ANVIL_PAL = {
+  o: '#1b1223', D: '#3b4660', M: '#6b7c99', L: '#a9b8d0', W: '#e9eef7',
+};
+const ANVIL = padRows([
+  '....oooooooooo....',
+  '..oooWWLLLLLLLoo..',
+  'oooLLLLMMMMMMMMDoo',
+  'oLLMMMMMMMMMMMDDDo',
+  '.ooMMMMMMMMMMDDDo.',
+  '...oooMMMMMMDDoo..',
+  '......oMMMMDDo....',
+  '......oMMMMDDo....',
+  '.....oMMMMMDDDo...',
+  '...ooMMMMMMMDDDoo.',
+  '..oLLMMMMMMMMDDDo.',
+  '..oooooooooooooooo',
+]);
+
+const GOBLET_PAL = {
+  o: '#1b1223', S: '#9983b3', s: '#745d92', d: '#4b3b62', k: '#16102a',
+  R: '#1f4fd0', O: '#3f8cff', y: '#9fdcff', h: '#e8f9ff',
+};
+const GOBLET_BASE = padRows([
+  '............',
+  '............',
+  '............',
+  '............',
+  '............',
+  '.oSSSSSSSdo.',
+  'oSssssssssdo',
+  'oSssssssssdo',
+  '.oSsssssddo.',
+  '..ooSsssdoo.',
+  '....oSsdo...',
+  '....oSsdo...',
+  '...oSssddo..',
+  '..oSSsssddo.',
+  '.oSssssssdo.',
+  '.oooooooooo.',
+]);
+const GOBLET_FRAMES = [
+  withRows2(GOBLET_BASE, { 0: '.....R......', 1: '....ROR.....', 2: '...ROyOR.R..', 3: '...OyhyORO..', 4: '..ROyhhyOR..' }),
+  withRows2(GOBLET_BASE, { 0: '......R.....', 1: '.....ROR....', 2: '..R.ROyOR...', 3: '..ROyhyyO...', 4: '..ROyhhyOR..' }),
+  withRows2(GOBLET_BASE, { 0: '............', 1: '....R.R.....', 2: '...ROROR....', 3: '..ROyhyOR.R.', 4: '..ROyhhyOR..' }),
+];
+
+// ---- ellipse painters for the fountain
+function ell(L, cx, cy, rx, ry, c) {
+  for (let y = -ry; y <= ry; y++) {
+    const w = Math.round(rx * Math.sqrt(1 - (y * y) / ((ry + 0.5) * (ry + 0.5))));
+    for (let x = -w; x <= w; x++) L.set(cx + x, cy + y, c);
+  }
+}
+const FOUNTAIN_PAL = {
+  o: '#1b1223', S: '#9983b3', s: '#745d92', d: '#4b3b62',
+  b: '#1f3f9a', B: '#2f6fe0', n: '#58a6ff', w: '#c6ecff', R: '#1f4fd0',
+};
+function makeFountain() {
+  const frames = [0, 1, 2].map((f) => {
+    const L = new Layer(32, 32);
+    const o = new Layer(32, 32);
+    // basin: rim wall, rim top, water
+    ell(o, 14, 25, 13, 6, 'd'); for (let y = 21; y <= 25; y++) ell(o, 14, y, 13, 6, 's');
+    ell(o, 14, 21, 13, 6, 'S'); ell(o, 14, 21, 11, 5, 'd'); ell(o, 14, 21, 10, 4, 'B');
+    for (let x = 6; x <= 22; x += 3) o.set(x + (f % 2), 22 + (x % 2), 'n');
+    o.set(5 + f * 2, 20, 'w'); o.set(22 - f * 2, 22, 'w');
+    // pedestal and upper bowl
+    for (let y = 11; y <= 20; y++) for (let x = 12; x <= 16; x++) o.set(x, y, x === 12 ? 'S' : x >= 15 ? 'd' : 's');
+    ell(o, 14, 10, 7, 3, 'S'); ell(o, 14, 10, 6, 2, 'd'); ell(o, 14, 10, 5, 2, 'B');
+    o.set(11 + f, 10, 'w'); o.set(16 - f, 11, 'n');
+    // spout and water arcs falling into the bowls (animated)
+    for (const [x, y] of [[14, 4], [14, 5], [14, 6], [14, 7], [14, 8]]) o.set(x, y, 'n');
+    o.set(13, 5, f === 1 ? 'w' : 'n'); o.set(14, 3, f === 2 ? 'n' : 'w');
+    for (const sx of [-1, 1]) {
+      const pts = [[2, 5], [3, 4], [4, 4], [5, 5], [6, 7], [7, 9]];
+      pts.forEach(([dx, y], i) => o.set(14 + sx * dx, y + 0, (i + f) % 3 === 0 ? 'w' : 'n'));
+    }
+    for (const sx of [-1, 1]) for (const [dx, y] of [[8, 13], [9, 15], [9, 17], [10, 19]]) o.set(14 + sx * dx, y, ((dx + f) % 3 === 0) ? 'w' : 'n');
+    L.merge(o, 'o');
+    return L.crop();
+  });
+  const { x0, y0 } = frames[0];
+  return { palette: FOUNTAIN_PAL, frames: frames.map((c) => c.rows), anchorX: 14 - x0, anchorY: 21 - y0,
+    emissive: ['n', 'w', 'B'], glow: { x: 14 - x0, y: 9 - y0, radius: 26, color: '#4aa3ff' } };
+}
+
+// ---- forge: brick furnace with a glowing mouth and a bellows
+const FORGE_PAL = {
+  o: '#1e1608', b: '#a3976a', m: '#7d7149', n: '#53492f', k: '#120a05',
+  c: '#ff5a1a', R: '#e74a0e', O: '#ff9a2e', y: '#ffe27a', h: '#fff6c8',
+  w: '#603312', W: '#93531f', L: '#c4782e', t: '#aec4dc',
+};
+function makeForge() {
+  const mk = (f) => {
+    const L = new Layer(CW, CH), o = new Layer(CW, CH);
+    const base = box(o, 1, 1, 11, 11, 0, 9, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
+    // brick courses on both faces
+    for (let v = 2; v < 9; v += 3) {
+      for (let u = 0; u < 11; u++) { const [x, y] = base.lf(u, v); o.set(x, y, 'n'); }
+      for (let s = 0; s < 11; s++) { const [x, y] = base.rf(s, v); o.set(x, y, 'k'); }
+    }
+    for (let v = 0; v < 9; v += 3) for (let u = 1 + (v % 2); u < 11; u += 4) { const [x, y] = base.lf(u, v + 1); o.set(x, y, 'n'); }
+    // dome: narrower stack, its top a dark flue
+    const dome = box(o, 3, 3, 7, 7, 9, 10, { top: 'b', topEdge: 'b', left: 'm', right: 'n' });
+    for (let v = 1; v < 10; v += 3) {
+      for (let u = 0; u < 7; u++) { const [x, y] = dome.lf(u, v); o.set(x, y, 'n'); }
+      for (let s = 0; s < 7; s++) { const [x, y] = dome.rf(s, v); o.set(x, y, 'k'); }
+    }
+    ell(o, dome.fx, dome.fy - 10 - 3, 4, 2, 'n'); ell(o, dome.fx, dome.fy - 10 - 3, 3, 1, 'k');
+    // fire mouth on the front-left face
+    for (let u = 3; u <= 8; u++) for (let v = 1; v <= 6; v++) { const [x, y] = base.lf(u, v); o.set(x, y, 'k'); }
+    const flame = [['..R..R', '.ROyOR', 'ROyhyO'], ['.R..R.', 'ROyOR.', 'OyhyOR'], ['R..R..', '.ROyOR', 'ROyhyO']][f];
+    flame.forEach((row, i) => [...row].forEach((ch, j) => { if (ch !== '.') { const [x, y] = base.lf(3 + j, 6 - i - (i === 0 ? 0 : 0)); o.set(x, y + 0, ch); } }));
+    for (let u = 3; u <= 8; u++) { const [x, y] = base.lf(u, 1); o.set(x, y, (u + f) % 2 ? 'c' : 'R'); }
+    for (let u = 2; u <= 9; u++) { const [x, y] = base.lf(u, 0); o.set(x, y, 'o'); }
+    L.merge(o, 'o');
+    // bellows beside the forge: leather wedge with a wooden handle and nozzle
+    const bw = new Layer(CW, CH);
+    const bx = box(bw, 12, 3, 4, 9, 0, 4, { top: 'L', topEdge: 'L', left: 'W', right: 'w' });
+    bw.line(bx.fx + 6, bx.fy - 7, bx.fx + 12, bx.fy - 5, 'W'); bw.line(bx.fx + 6, bx.fy - 6, bx.fx + 12, bx.fy - 4, 'w');
+    L.merge(bw, 'o');
+    return { ...L.crop(), mouth: base.lf(5, 4) };
+  };
+  const fr = [0, 1, 2].map(mk);
+  const { x0, y0, mouth } = fr[0];
+  return { palette: FORGE_PAL, frames: fr.map((c) => c.rows), anchorX: X0 + 8 - 8 - x0, anchorY: Y0 + 8 - y0,
+    emissive: ['c', 'R', 'O', 'y', 'h'], glow: { x: mouth[0] - x0, y: mouth[1] - y0, radius: 24, color: '#ff8a2a' } };
+}
+
 export const FLOOR_ART = {
   shelf: makeShelf(),
   crates: makeCrates(),
@@ -387,4 +522,9 @@ export const FLOOR_ART = {
   skull: makeSkull(),
   tools: makeTools(),
   sword: makeSword(),
+  anvil: { palette: ANVIL_PAL, frames: [ANVIL], anchorX: 9, anchorY: 8, emissive: [] },
+  goblet: { palette: GOBLET_PAL, frames: GOBLET_FRAMES, anchorX: 6, anchorY: 13, emissive: ['R', 'O', 'y', 'h'],
+    glow: { x: 6, y: 4, radius: 18, color: '#4aa3ff' } },
+  fountain: makeFountain(),
+  forge: makeForge(),
 };
