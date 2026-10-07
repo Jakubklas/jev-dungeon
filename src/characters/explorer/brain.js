@@ -276,10 +276,12 @@ export class ExplorerBrain {
   // lists. #capFired = the directions ('up' wary closed, 'down' bold or greedy closed) whose `confidence` trigger already fired
   // this encounter; #visibleIds = the ids in sight at the start of this tick (for the weights).
   #caps = false;
+  #wExtra; // capability()'s wPerExtra override (undefined = the default)
   #capFired = new Set();
   #visibleIds = new Set();
 
   constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
+    this.#wExtra = confidence && typeof confidence === 'object' ? confidence.wPerExtra : undefined; // arm object only: the measurement compares W_PER_EXTRA 0.35 and 0.5
     this.#caps = confidence === 'caps' || confidence?.caps === true; // 'caps', or an arm object { caps: true, start } (the checks force the history score)
     this.#holdOn = this.#caps ? 'multi' : hold; // false only for the duel checks that prove what the hold buys (P7a); 'multi' also holds against 2-3 ghosts (confidence caps)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
@@ -330,7 +332,7 @@ export class ExplorerBrain {
     const R = capability({
       lives: world.health, maxLives: world.maxHealth, clawDamage: cfg.clawDamage, swordDamage: k?.damage ?? 1,
       steady: k ? stunHolds(cfg.stunTicks, k.cooldown) : false, armed: !!k, ghosts,
-    });
+    }, this.#wExtra);
     const H = this.#cs.value;
     const C = combine(R, H, world.health, world.maxHealth);
     const swordDown = !!k && !this.#armed() && threatsOf(world).some((th) => th.chasing && threatDistance(th, world.pos) <= 3);

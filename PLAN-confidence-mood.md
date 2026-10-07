@@ -333,3 +333,14 @@ P7 had only one 2-ghost decision in 5 games, so add 5 seeds or a 2-ghost gym to 
 2. **Three ghosts at 2 lives read 33** (wary allowed, bold closed), although the stubbed games show fighting them is safe. Should 3 ghosts at 2 lives be "even"? That needs `W_PER_EXTRA = 0.35`.
 3. **Default on after phase 5**: yes or no.
 4. **Phase 5 is paid.**
+
+## Phase 3/4 results (free, stubbed)
+
+Phase 3 is built: `confidence: 'caps'` (or an arm object `{ caps: true, start, wPerExtra }`), setting `confidenceCaps`, `scripts/check-confidence-caps.mjs`, caps request-hash fixture. Worst-case decision tick in caps mode (`check-dungeon` 4e): 9013 B chase / 9577 B patrol (bounds 9500 / 10500 unchanged; the plan expected about 9001 / 9565).
+
+Phase 4 (`scripts/measure-caps.mjs`, stub Jev picks bold if offered, else steady, else wary; engages when bold or steady). Two runs, 3 arms (off, caps W 0.35, caps W 0.5):
+- **Full run**: dungeons and crowds, seeds 1-30, p 0 and 0.2, lives 2 and 4, 150 ticks (240 games per arm). Paired caps35 minus off: lost 0.000 +- 0.008 (2 vs 2), hits/game -0.179 +- 0.037, dispels/game -0.013 +- 0.060, coins/game -0.550 +- 0.106, cleared 0.000 +- 0.022. caps50 is the same within noise (hits -0.188, coins -0.558).
+- **Reduced run** (seeds 1-12, p 0.2, 120 ticks, 48 games per arm): caps35 lost -0.021 +- 0.021, hits -0.083 +- 0.072, dispels +0.042 +- 0.163, coins -0.646 +- 0.230, cleared 34 vs 31. Gate passes for both W (small sample).
+- Wary share is 0% in every arm and request bytes fall (sentiment about 4.95 -> 4.75 KB dungeons, 5.28 -> 5.0 KB crowds; tick request about 5.3 -> 4.7 KB in crowds). The stub takes bold whenever offered, so the off arm is already a maximal fighter: the stub cannot show the plan's flee problem, and "dispels must rise" cannot be shown here (the full run is flat, -0.013 +- 0.06).
+- **Open finding**: coins per game fall by about 0.55-0.65 (significant, about 12-20%) in caps mode, with the same cleared wins. Not diagnosed: the multi hold waits in place more, and the stub (which never reads text) is otherwise identical. Look at it before turning caps on.
+- **W decision**: keep W_PER_EXTRA 0.35 (the gate holds on the reduced slice; W 0.5 differs only by noise). The sample is small.
