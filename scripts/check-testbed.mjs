@@ -52,6 +52,16 @@ const floorCount = (d) => d.tiles.join('').split('').filter((c) => c === '.').le
   check(u.size[0] === 9 && u.size[1] === 7 && u.numAdversaries === 2 && u.seed === 5 && u.treasure === 'far', 'URL string coercion');
   check(u.start[0] === 2 && u.start[1] === 3 && u.adversaries.length === 2 && u.adversariesInSight === false, 'URL cells and booleans');
   check(normalizeConfig({ size: 6 }).size.join() === '6,6', 'size as one number');
+  check(d.characters === 'standard', 'characters defaults to standard');
+  check(normalizeConfig({ characters: 'mixed' }).characters === 'mixed' && normalizeConfig({ characters: 'timid' }).characters === 'timid', 'characters: string forms');
+  { const t = buildArena({ map: ['#######', '#@.A.A#', '#.....#', '#..A..#', '#######'], characters: ['timid', 'ambusher'] }).adversaries; check(t.map((a) => a.character).join() === 'timid,ambusher,timid' && t[0].memory.character.id === 'timid', 'characters: applied per ghost in id order, cycled'); }
+  check(buildArena({ numAdversaries: 2 }).adversaries.every((a) => a.character === 'standard'), 'characters: default standard');
+  check(normalizeConfig({ characters: 'ambusher;timid' }).characters.join() === 'ambusher,timid', 'characters: URL list form');
+  check(normalizeConfig({ characters: ['rover', 'standard'] }).characters.join() === 'rover,standard', 'characters: array form');
+  check(buildArena({ characters: 'pursuer' }).config.characters === 'pursuer', 'arena returns characters');
+  throwsBad({ characters: 'villain' }, 'bad character id');
+  throwsBad({ characters: ['timid', 'villain'] }, 'bad character id in list');
+  throwsBad({ characters: [] }, 'empty characters list');
   throwsBad({ size: [2, 9] }, 'size too small');
   throwsBad({ size: [61, 9] }, 'size too big');
   throwsBad({ numAdversaries: 9 }, 'too many adversaries');

@@ -16,7 +16,7 @@ Give every ghost (1) a **fixed character** made of five small traits, set at spa
 
 Recommended defaults: toggles `adversaryCharacters` and `limitedMap` both **off** until A3 is measured; then on. Everything is deterministic from the seed.
 
-Coordination: other agents are editing explorer and adversary files right now. The explorer's `memory.js` already has `recent`, `landmarks`, `encounters`, `events`, and `perception.js` has `rememberedView`/`avoidZone`. Reuse their pure helpers by extracting a shared kit (A3) rather than copying or importing across character folders.
+Status (2026-10-07, after commit db86226): the explorer memory work is finished and committed, so its files are free to change. Its `memory.js` has `recent`, `landmarks`, `encounters`, `events` (with `backAndForth` and `addLandmark` as exported helpers), and `perception.js` has `rememberedView`/`avoidZone` (zone radius 10 for sightings under 10 steps old, 6 up to 15, plus a sector for chasing sightings). Reuse their pure helpers by extracting a shared kit (A3) rather than copying or importing across character folders. **Already built on the adversary side** (the "P2" rebuild, not part of A1-A5): `tally` + `events` instead of findings, search-only `tried`, `surroundings`, `team` roles, regrouped state `{ game, tick, self, surroundings, explorer, last_seen, team, recent }`, rules text following live tunables. **Still to build:** everything character-, view- and sighting-memory-related (A1-A5).
 
 ## What the code does today (the parts that matter)
 
@@ -25,7 +25,7 @@ Coordination: other agents are editing explorer and adversary files right now. T
 - Hard-coded temperament, one value for all ghosts: `CHASE_RANGE 7`, `MAX_SEARCH_TICKS 18`, `KEEP_HUNTING_MIN 0.5`, `ALERT_STEPS 24`, `SWEEP_RADIUS 10`, `CUT_MAX 24`, `PACK_ALERT`, `TEAM_SIGHT`, and one shared `game.patrolRand`.
 - `team()` already tells every ghost the position and role of **every** packmate, hunting or not.
 - `lastSeen` is a single cell; `heading` is frozen at the last sighting; nothing remembers earlier sightings, where sight was lost, or where it hit.
-- Request size (from PLAN-memory.md): adversary step avg 5.5 KB, max 7.0 KB. One Jev call per hunting ghost per step, hedged x2; a step happens on 0.6 of ticks (`ADVERSARY_SPEED`).
+- Request size (measured after the adversary rebuild, stubbed): adversary step avg ~3.9 KB, max ~5.9 KB (was 5.5 / 7.0 KB before it). One Jev call per hunting ghost per step, hedged x2; a step happens on 0.6 of ticks (`ADVERSARY_SPEED`).
 - The capability registry (src/capabilities/index.js) is a scaffold with `who: ['explorer'|'adversary']`, `feasible(view, self)`, `actionQuestion(options, contextLine)`. Nothing is registered.
 
 ## 1. Character model
@@ -144,7 +144,7 @@ All of it is plain JSON in `memory.js`, validated, size-capped, written to `adve
 
 ### Shared kit (to avoid copy-paste across the two characters)
 
-Extract pure helpers to `src/characters/shared/memory-kit.js`: `backAndForth`, a ring-buffer push, an `addLandmark` that takes the allowed kinds and the pinned kind, `ageEntries`. The explorer's memory.js keeps its own validation. No explorer-to-adversary imports. Needs the explorer's brain agent to agree because it is their file.
+Extract pure helpers to `src/characters/shared/memory-kit.js`: `backAndForth`, a ring-buffer push, an `addLandmark` that takes the allowed kinds and the pinned kind, `ageEntries`. The explorer's memory.js keeps its own validation. No explorer-to-adversary imports. The explorer files are no longer being edited, so the extraction can go ahead; keep the explorer's `check-dungeon` and `measure-memory` numbers unchanged by it.
 
 ## 3. State sent to Jev
 
@@ -185,15 +185,15 @@ Rules: numbers only for geometry; character in words; `explorer.position` only w
 | `recent` (+path, lifetime) | ~0.6 K | ~0.8 K |
 | options (4 moves) | ~1.0 K | ~1.0 K |
 | questions (+character lines) | ~1.1 K | ~1.4 K |
-| **Average / max** | **5.5 K / 7.0 K** | **~6.3 K / <= 8.5 K** |
+| **Average / max** | **3.9 K / 5.9 K** (the per-part rows above are the old, pre-rebuild split; re-measure before A3) | **~4.6 K / <= 7 K** (old estimate +15%) |
 
-Budget: average <= 7 KB, max <= 9 KB, asserted in `measure-memory`.
+Budget: average <= 5.5 KB, max <= 8 KB (tightened from 7 / 9 KB: the baseline dropped), asserted in `measure-memory`.
 
 ### Cost
 
 - Calls are unchanged in kind: one hedged call per brain-on ghost per **step** (0.6 steps per tick). 12 ghosts all hunting is about 7 calls per tick; that worst case does not change with this plan.
 - Likely **fewer** calls on average: `timid`/`short_sighted` quit at 10 ticks, calm ghosts rest after giving up, loners ignore calls and make none, a ghost whose only route is unknown is a code move. Expect hunts per game to fall 10-25% with `mixed`; to be measured.
-- ~+15% bytes per call. Optional lever (open question 5): `maxConcurrentBrains` (e.g. 4); extra hunters follow a code BFS path to the freshest sighting. Not recommended for the first release.
+- ~+15% bytes per call (on the new, smaller baseline). Optional lever (open question 5): `maxConcurrentBrains` (e.g. 4); extra hunters follow a code BFS path to the freshest sighting. Not recommended for the first release.
 
 ## 4. World knowledge with limits
 

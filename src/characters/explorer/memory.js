@@ -23,6 +23,7 @@
 //
 // Zero dependencies: hand-written validation instead of zod.
 import { writeFile } from 'node:fs/promises';
+import { addLandmarkTo, backAndForth, pushRing } from '../shared/memory-kit.js';
 
 export const LIMITS = {
   approach: 240,
@@ -61,18 +62,7 @@ export function createMemory({ approachId, approachText, thought, sentiment, sta
   return memory;
 }
 
-// Moves in the recent window that returned to the cell two positions back (A -> B -> A). Standing
-// still never counts: the position must differ from the one just left.
-export function backAndForth(cells, moves) {
-  let n = 0;
-  for (let t = 0; t < moves; t++) {
-    const i = cells.length - 1 - t;
-    if (i < 2) break;
-    const here = cells[i], one = cells[i - 1], two = cells[i - 2];
-    if (here[0] === two[0] && here[1] === two[1] && (here[0] !== one[0] || here[1] !== one[1])) n++;
-  }
-  return n;
-}
+export { backAndForth };
 
 // Called once per step, after the move was applied. `pos` is where the explorer stands now.
 export function recordStep(memory, { step, dir, pos, revealed, revisit, known_floor_cells }) {
@@ -87,8 +77,8 @@ export function recordStep(memory, { step, dir, pos, revealed, revisit, known_fl
   revisitWindows.set(memory, window);
   p.revisits_last_10 = window.filter(Boolean).length;
   const r = memory.recent;
-  r.moves = [...r.moves, dir].slice(-LIMITS.recentMoves);
-  r.cells = [...r.cells, [...pos]].slice(-LIMITS.recentCells);
+  r.moves = pushRing(r.moves, dir, LIMITS.recentMoves);
+  r.cells = pushRing(r.cells, [...pos], LIMITS.recentCells);
   r.back_and_forth = backAndForth(r.cells, LIMITS.recentMoves);
 }
 
@@ -110,14 +100,7 @@ export function countEncounter(memory, field, step) {
 // Adds a located fact. One entry per kind + cell (a repeat refreshes its step and note and makes
 // it the newest). Over the limit the oldest non-chest landmark goes.
 export function addLandmark(memory, { kind, cell, step, note }) {
-  const text = String(note).trim().slice(0, LIMITS.landmarkNote);
-  const list = memory.landmarks.filter((l) => !(l.kind === kind && l.cell[0] === cell[0] && l.cell[1] === cell[1]));
-  list.push({ kind, cell: [...cell], step, note: text });
-  while (list.length > LIMITS.landmarks) {
-    const i = list.findIndex((l) => l.kind !== 'chest');
-    list.splice(i === -1 ? 0 : i, 1);
-  }
-  memory.landmarks = list;
+  memory.landmarks = addLandmarkTo(memory.landmarks, { kind, cell, step, note }, { max: LIMITS.landmarks, noteMax: LIMITS.landmarkNote, pinnedKind: 'chest' });
 }
 
 // Drops the current approach (with why) and starts a new one from the next step.

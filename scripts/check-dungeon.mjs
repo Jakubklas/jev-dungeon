@@ -45,8 +45,10 @@ const ALLOWED_IMPORTS = {
   // the explorer stands within sight range of the frozen cell with a known line of sight to it.
   '../../dungeon.js': ['DIRS', 'LIGHT_RADIUS', 'STAY', 'EXPLORER_LIVES', 'SIGHT_RANGE'],
   '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
+  // Pure helpers shared with the adversary side (PLAN-adversary-memory.md A3); they import nothing from the game.
+  '../shared/memory-kit.js': null,
 };
-function fogViolations(name, source) {
+function fogViolations(name, source, allowedImports = ALLOWED_IMPORTS) {
   const out = [];
   const code = source.replace(/(^|[^:'"\\])\/\/.*$/gm, '$1'); // line comments may talk about the game
   if (/\bgame\s*\??\.[A-Za-z_$#]/.test(code)) out.push(`${name}: reads a game property`);
@@ -57,8 +59,8 @@ function fogViolations(name, source) {
   // Re-exports count too: `export { x } from` would hand a hidden-state helper to explorer code.
   for (const m of code.matchAll(/\b(?:import|export)\s+([^'"]*?)\s+from\s+['"]([^'"]+)['"]/g)) {
     const [, names, spec] = m;
-    if (!(spec in ALLOWED_IMPORTS)) { out.push(`${name}: imports ${spec}`); continue; }
-    const allowed = ALLOWED_IMPORTS[spec];
+    if (!(spec in allowedImports)) { out.push(`${name}: imports ${spec}`); continue; }
+    const allowed = allowedImports[spec];
     if (allowed) {
       const wanted = names.replace(/[{}]/g, '').split(',').map((n) => n.trim()).filter(Boolean);
       for (const n of wanted) if (!allowed.includes(n)) out.push(`${name}: imports ${n} from ${spec}`);
@@ -75,6 +77,28 @@ function fogViolations(name, source) {
   const files = readdirSync(dirUrl).filter((f) => f.endsWith('.js') && f !== 'known-world.js');
   if (!files.includes('brain.js') || !files.includes('perception.js')) fail('fog guard: explorer files not found');
   for (const f of files) for (const v of fogViolations(f, readFileSync(new URL(f, dirUrl), 'utf8'))) fail(`static fog guard: ${v}`);
+}
+
+// 0b. The same guard for ghosts (PLAN-adversary-memory.md section 4): adversary perception, brain, memory
+//     (and character.js once it exists) read the world only through an AdversaryView. adversary.js (physics)
+//     and adversary-view.js are exempt, like known-world.js.
+const ADVERSARY_ALLOWED_IMPORTS = {
+  './perception.js': null, './brain.js': null, './memory.js': null, './character.js': null, './adversary-view.js': null,
+  '../shared/memory-kit.js': null, '../../jev.js': null, 'node:fs/promises': null,
+  // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
+  '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
+  './adversary.js': ['ADVERSARY_SPEED'],
+};
+{
+  const adv = (n, src) => fogViolations(n, src, ADVERSARY_ALLOWED_IMPORTS);
+  if (adv('synthetic', "const t = game.dungeon.tiles;\nimport { isFloor, floorDistances } from '../../dungeon.js';").length < 3) fail('adversary fog guard missed a game read or hidden-state imports');
+  if (adv('synthetic', "import { hasLineOfSight } from '../../dungeon.js';").length < 1) fail('adversary fog guard missed hasLineOfSight');
+  if (adv('synthetic', "import { Game } from '../../dungeon.js';").length < 1) fail('adversary fog guard missed a Game import');
+  if (adv('synthetic', "import { DIRS, SIGHT_RANGE } from '../../dungeon.js';\nimport { x } from './perception.js';").length) fail('adversary fog guard rejects allowed imports');
+  const advUrl = new URL('../src/characters/adversary/', import.meta.url);
+  const guarded = ['perception.js', 'brain.js', 'memory.js', 'character.js'].filter((f) => readdirSync(advUrl).includes(f));
+  if (guarded.length < 3) fail('adversary fog guard: adversary files not found');
+  for (const f of guarded) for (const v of adv(f, readFileSync(new URL(f, advUrl), 'utf8'))) fail(`adversary static fog guard: ${v}`);
 }
 
 // 1. Generation: ~200 seeds.

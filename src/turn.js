@@ -59,7 +59,7 @@ export class Run {
     return {
       ...game.publicView(),
       adversaries: game.adversaries.map((a) => ({
-        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a),
+        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, // character: Reveal-only display, the explorer never reads it
       })),
       grace_ticks: graceLeft(game),
       invulnerable: graceLeft(game) > 0,

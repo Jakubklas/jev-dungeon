@@ -5,6 +5,7 @@
 import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
+import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
 
 export const TESTBED_MIN = 3; // interior floor cells per side
 export const TESTBED_MAX = 60;
@@ -18,6 +19,7 @@ export const DEFAULTS = {
   adversaries: null,
   minAdversaryGap: 4,
   adversariesInSight: null,
+  characters: 'standard',
   props: 'none',
   map: null,
 };
@@ -89,6 +91,17 @@ export function normalizeConfig(raw = {}) {
     if (cfg.minAdversaryGap < 1) bad('minAdversaryGap must be at least 1');
   }
   if (given('adversariesInSight')) cfg.adversariesInSight = toBool(raw.adversariesInSight, 'adversariesInSight');
+  if (given('characters')) {
+    // 'standard', 'mixed', one preset id, or a list (URL: "ambusher;timid") applied per ghost in id order, cycled.
+    let c = raw.characters;
+    if (typeof c === 'string' && /[;|,]/.test(c)) c = c.split(/[;|,]/).filter(Boolean);
+    const ok = (id) => id === 'mixed' || PRESET_IDS.includes(id);
+    if (Array.isArray(c)) {
+      if (!c.length) bad('characters list must not be empty');
+      c.forEach((id) => { if (!ok(id) || id === 'mixed') bad(`characters entry ${JSON.stringify(id)} is not one of ${PRESET_IDS.join(', ')}`); });
+    } else if (typeof c !== 'string' || !ok(c)) bad(`characters must be 'standard', 'mixed', one of ${PRESET_IDS.join(', ')} or a list, got ${JSON.stringify(c)}`);
+    cfg.characters = c;
+  }
   if (given('props')) {
     if (Array.isArray(raw.props)) {
       cfg.props = raw.props.map((p, i) => {
@@ -294,7 +307,8 @@ export function buildArena(rawConfig = {}) {
     positions = shuffle(rand, pool).slice(0, cfg.numAdversaries);
   }
   // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
-  const adversaries = positions.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos }));
+  const characters = charactersFor(cfg.characters, cfg.seed, positions.length);
+  const adversaries = positions.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos, character: characters[i] }));
 
   const dungeon = {
     seed: cfg.seed,

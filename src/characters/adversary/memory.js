@@ -2,6 +2,7 @@
 // situation facts). Mirrors the explorer's memory shape:
 //
 //   id             - which adversary this is
+//   character      - { id } of its fixed character (character.js); the UI and adversaries.json read it
 //   objective      - "Catch the explorer before it finds the treasure"
 //   brain          - on/off, since which tick, and why it last switched
 //   approach       - how it is hunting now (null id while the brain is off), plus approaches dropped
@@ -11,22 +12,32 @@
 //   progress       - ticks_hunting, ticks_since_seen, distance_trend
 //   latest_action  - Jev's last next_move answer: choice, confidence, forced, fallback (no
 //                    probabilities: the UI reads those from the private hunt state, see brain.js)
+//   sightings      - frozen explorer sightings { cell, tick, heading, source: 'seen'|'called', by? }, newest first
+//   recent         - { moves[], cells[], back_and_forth } of the ghost's own last steps
+//   landmarks      - located facts { kind, cell, tick, note } (kinds in LANDMARK_KINDS; never the chest)
+//   lifetime       - counters over the ghost's whole life, never reset: hunts, escapes, hits, last_hunt_end_tick
+//   The last four are only filled while the adversaryCharacters toggle is on (brain.js MEMORY_ON).
 //
 // All memories are written together to dungeon-game/adversaries.json each tick (turn.js).
 // FOG: nothing here may hold the explorer's position except as it was when seen.
 // Zero dependencies: hand-written validation.
 import { writeFile } from 'node:fs/promises';
+import { addLandmarkTo, ageEntries, backAndForth, pushRing } from '../shared/memory-kit.js';
 
-export const LIMITS = { objective: 200, approach: 240, triedApproaches: 5, events: 5, event: 200, reason: 200, trend: 160 };
+export const LIMITS = { objective: 200, approach: 240, triedApproaches: 5, events: 5, event: 200, reason: 200, trend: 160, sightings: 5, landmarks: 8, landmarkNote: 120, moves: 6, cells: 8 };
+export const LANDMARK_KINDS = ['home', 'explorer_seen', 'explorer_lost', 'explorer_hid', 'hit_here', 'area_checked']; // `chest` is never legal: ghosts do not know it
+export const SIGHTING_SPACING = 3; // a new sighting is stored only when the explorer moved this far from the newest one
+const SOURCES = ['seen', 'called'];
 export const OBJECTIVE = 'Catch the explorer before it finds the treasure.';
 const OFF_TEXT = 'Brain off: patrolling the dungeon by code.';
 const SEARCH_IDS = ['cut_off', 'sweep_last_seen']; // the only approaches whose outcome goes into `tried`
 export const TALLY_KEYS = ['sightings', 'lost_sight', 'hits', 'alerts_heard'];
 const newTally = () => ({ sightings: 0, lost_sight: 0, hits: 0, alerts_heard: 0 });
 
-export function createMemory(id) {
+export function createMemory(id, character = 'standard') {
   return {
     id,
+    character: { id: character },
     objective: OBJECTIVE,
     brain: { on: false, since_tick: 0, last_reason: null },
     approach: { id: null, current: OFF_TEXT, since_step: 0, tried: [] },
@@ -34,7 +45,56 @@ export function createMemory(id) {
     events: [],
     progress: { ticks_hunting: 0, ticks_since_seen: 0, distance_trend: 'not hunting' },
     latest_action: null,
+    sightings: [],
+    recent: { moves: [], cells: [], back_and_forth: 0 },
+    landmarks: [],
+    lifetime: { hunts: 0, escapes: 0, hits: 0, last_hunt_end_tick: null },
   };
+}
+
+// --- smart memory (adversaryCharacters on); sizes come from the ghost's profile (character.js) --------
+
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+// Stores a frozen sighting unless the explorer is within SIGHTING_SPACING of the newest one (a long
+// chase is a trail, not spam). Newest first, at most `keep`. Returns true when stored.
+export function addSighting(memory, { cell, tick, heading, source, by }, keep) {
+  const newest = memory.sightings[0];
+  if (newest && dist(newest.cell, cell) < SIGHTING_SPACING) return false;
+  const s = { cell: [...cell], tick, heading: heading ?? null, source };
+  if (by) s.by = by;
+  memory.sightings = [s, ...memory.sightings].slice(0, keep);
+  return true;
+}
+
+// A located fact. Throws on a kind outside LANDMARK_KINDS (the chest in particular).
+export function addLandmark(memory, { kind, cell, tick, note }, cap) {
+  if (!LANDMARK_KINDS.includes(kind)) throw new Error(`adversary landmark kind '${kind}' is not allowed`);
+  memory.landmarks = addLandmarkTo(memory.landmarks, { kind, cell, tick, note }, { max: cap, noteMax: LIMITS.landmarkNote, pinnedKind: 'home' });
+}
+
+// One of the ghost's own steps: `dir` moved it to `pos`. Windows follow the character's memory size.
+// Returns true when the step returned to the cell it left two steps ago (a ping-pong).
+export function recordStep(memory, pos, dir, { moves, cells }) {
+  const r = memory.recent;
+  r.cells = pushRing(r.cells, [...pos], cells);
+  r.moves = pushRing(r.moves, dir, moves);
+  r.back_and_forth = backAndForth(r.cells, moves);
+  const c = r.cells;
+  const n = c.length;
+  return n >= 3 && c[n - 1][0] === c[n - 3][0] && c[n - 1][1] === c[n - 3][1] && (c[n - 1][0] !== c[n - 2][0] || c[n - 1][1] !== c[n - 2][1]);
+}
+
+// Drops what has outlived the character's ttl (the pinned home landmark never expires).
+export function ageMemory(memory, tick, p) {
+  memory.sightings = ageEntries(memory.sightings, tick, p.sightingTtl);
+  memory.landmarks = ageEntries(memory.landmarks, tick, p.landmarkTtl, { pinned: (l) => l.kind === 'home' });
+  memory.events = ageEntries(memory.events, tick, p.eventTtl);
+}
+
+// How old an entry is, in words chosen by code so Jev never does the arithmetic.
+export function freshness(age, ttl) {
+  return age < ttl / 3 ? 'fresh' : age < (2 * ttl) / 3 ? 'stale' : 'cold';
 }
 
 // A notable moment (at most LIMITS.events kept, oldest dropped; an identical repeat is ignored).
@@ -65,10 +125,11 @@ export function setApproach(memory, { id, text }, reason, tick) {
   a.since_step = tick;
 }
 
-export function brainOn(memory, tick, reason) {
+export function brainOn(memory, tick, reason, { keepEvents = false } = {}) {
   memory.brain = { on: true, since_tick: tick, last_reason: String(reason).slice(0, LIMITS.reason) };
-  memory.tally = newTally(); // counters and events describe the current hunt
-  memory.events = [];
+  memory.tally = newTally(); // counters describe the current hunt; events too, unless smart memory keeps them across hunts
+  if (!keepEvents) memory.events = [];
+  memory.lifetime.hunts += 1;
   memory.progress.ticks_hunting = 0;
   memory.progress.ticks_since_seen = 0;
 }
@@ -77,6 +138,8 @@ export function brainOff(memory, tick, reason) {
   memory.brain = { on: false, since_tick: tick, last_reason: String(reason).slice(0, LIMITS.reason) };
   setApproach(memory, { id: null, text: OFF_TEXT }, reason, tick);
   memory.progress.distance_trend = 'not hunting';
+  memory.lifetime.escapes += 1; // every give-up is a timeout or a keep_hunting verdict: the explorer got away
+  memory.lifetime.last_hunt_end_tick = tick;
 }
 
 export function recordAction(memory, { dir, decision, forced, fallback }) {
@@ -94,6 +157,7 @@ export function validateMemory(m) {
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   if (!m || typeof m !== 'object') fail('not an object');
   if (!isStr(m.id, 16)) fail('id');
+  if (!m.character || typeof m.character !== 'object' || Object.keys(m.character).join() !== 'id' || !isStr(m.character.id, 32)) fail('character');
   if (!isStr(m.objective, LIMITS.objective)) fail('objective');
   const b = m.brain;
   if (!b || typeof b.on !== 'boolean' || !isNum(b.since_tick) || (b.last_reason !== null && !isStr(b.last_reason, LIMITS.reason))) fail('brain');
@@ -116,6 +180,20 @@ export function validateMemory(m) {
   });
   const p = m.progress;
   if (!p || !Number.isInteger(p.ticks_hunting) || !Number.isInteger(p.ticks_since_seen) || !isStr(p.distance_trend, LIMITS.trend)) fail('progress');
+  if (!Array.isArray(m.sightings) || m.sightings.length > LIMITS.sightings) fail('sightings');
+  m.sightings.forEach((x, i) => {
+    const okCell = Array.isArray(x?.cell) && x.cell.length === 2 && x.cell.every(Number.isInteger);
+    if (!x || !okCell || !isNum(x.tick) || !SOURCES.includes(x.source) || (x.heading !== null && typeof x.heading !== 'string') || ('by' in x && !isStr(x.by, 16))) fail(`sightings[${i}]`);
+  });
+  const r = m.recent;
+  if (!r || !Array.isArray(r.moves) || r.moves.length > LIMITS.moves || !Array.isArray(r.cells) || r.cells.length > LIMITS.cells || !Number.isInteger(r.back_and_forth) || r.back_and_forth < 0) fail('recent');
+  if (!Array.isArray(m.landmarks) || m.landmarks.length > LIMITS.landmarks) fail('landmarks');
+  m.landmarks.forEach((x, i) => {
+    const okCell = Array.isArray(x?.cell) && x.cell.length === 2 && x.cell.every(Number.isInteger);
+    if (!x || !LANDMARK_KINDS.includes(x.kind) || !okCell || !isNum(x.tick) || !isStr(x.note, LIMITS.landmarkNote)) fail(`landmarks[${i}] (kind ${x?.kind})`);
+  });
+  const lt = m.lifetime;
+  if (!lt || !['hunts', 'escapes', 'hits'].every((k) => Number.isInteger(lt[k]) && lt[k] >= 0) || (lt.last_hunt_end_tick !== null && !isNum(lt.last_hunt_end_tick))) fail('lifetime');
   const l = m.latest_action;
   if (l !== null) {
     if (typeof l !== 'object' || typeof l.choice !== 'string' || typeof l.forced !== 'boolean' || typeof l.fallback !== 'boolean') fail('latest_action');

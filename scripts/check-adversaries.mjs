@@ -7,12 +7,13 @@ globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { DIRS, EXPLORER_LIVES, SIGHT_RANGE, Game, floorDistances, generateDungeon, hasLineOfSight, isFloor, rng } from '../src/dungeon.js';
 import {
-  Adversary, ADVERSARY_SPEED, ALERT_STEPS, CHASE_RANGE, GRACE_TICKS, HIT_DAMAGE, MAX_SEARCH_TICKS, graceLeft, seesExplorer, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
+  Adversary, ADVERSARY_SPEED, ALERT_STEPS, CHASE_RANGE, GRACE_TICKS, HIT_DAMAGE, MAX_SEARCH_TICKS, adversaryView, graceLeft, seesExplorer, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
 } from '../src/characters/adversary/adversary.js';
-import { addEvent, validateMemory } from '../src/characters/adversary/memory.js';
+import { addEvent, createMemory, validateMemory } from '../src/characters/adversary/memory.js';
 import { configureWorld } from '../src/dungeon.js';
 import { configureAdversaries } from '../src/characters/adversary/adversary.js';
 import { brainView, buildRequest } from '../src/characters/adversary/brain.js';
+import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
 
 let failures = 0;
 const fail = (msg) => {
@@ -474,7 +475,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   check(m.approach.tried.every((t) => t.id === 'cut_off' || t.id === 'sweep_last_seen'), `memory: tried holds a non-search approach ${JSON.stringify(m.approach.tried)}`);
   check(m.approach.tried.length === 0, `memory: ${m.approach.tried.length} flip-flop rows in tried after ${CYCLES} cycles`);
   check(m.events.length === 1 && /^First sighting/.test(m.events[0].text), `memory: events after repeated sightings ${JSON.stringify(m.events)}`);
-  check(!('findings' in m) && Object.keys(m).join() === 'id,objective,brain,approach,tally,events,progress,latest_action', `memory: keys ${Object.keys(m)}`);
+  check(!('findings' in m) && Object.keys(m).join() === 'id,character,objective,brain,approach,tally,events,progress,latest_action,sightings,recent,landmarks,lifetime', `memory: keys ${Object.keys(m)}`);
   // A search approach that is replaced by giving up is recorded once.
   game.pos = [14, 2];
   for (let i = 0; i < MAX_SEARCH_TICKS + 2 && a.memory.brain.on; i++) await step(game);
@@ -615,7 +616,7 @@ for (const policy of ['random', 'fresh', 'flee']) {
     resetStub(game);
     await step(game); // starts the chase (code policy)
     game.pos = [14, 2]; // out of sight: a search step, which asks Jev
-    const req = buildRequest(game, a, 2, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: HIT_DAMAGE, graceTicks: GRACE_TICKS });
+    const req = buildRequest(new AdversaryView(game, a), a, 2, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: HIT_DAMAGE, graceTicks: GRACE_TICKS });
     return req.state?.game ?? '';
   };
   const before = await rulesText();
@@ -633,6 +634,498 @@ for (const policy of ['random', 'fresh', 'flee']) {
   }
   check((await rulesText()) === before, 'rules: text not restored after the tunables were put back');
   console.log('rules: text follows sight range, grace ticks and hit damage');
+}
+
+// AdversaryView (full mode): the API brain and perception use, and the explorer-in-sight guard.
+{
+  const g = handMap([
+    '#########',
+    '#E......#',
+    '#.#####.#',
+    '#.......#',
+    '#########',
+  ]);
+  const a = adversary('a1', [7, 1]);
+  const b = adversary('a2', [1, 3]);
+  g.adversaries = [a, b];
+  const view = new AdversaryView(g, a);
+  check(view.mode === 'full', 'view: full mode');
+  check(same(view.pos, [7, 1]), 'view: pos follows the adversary live');
+  a.pos = [7, 2];
+  check(same(view.pos, [7, 2]), 'view: pos is live, not cached');
+  a.pos = [7, 1];
+  check(view.explorer() === null && view.heading() === null, 'view: no explorer position or heading out of sight');
+  a.hunt.inSight = true;
+  g.trail = [[1, 1], [2, 1]];
+  check(same(view.explorer(), g.pos) && view.explorer() !== g.pos, 'view: explorer() is a copy of the explorer cell while in sight');
+  check(view.heading() === 'right', `view: heading ${view.heading()}`);
+  a.hunt.inSight = false;
+  check(view.explorer() === null && view.heading() === null, 'view: out of sight again, nothing leaks');
+  check(view.legalMoves().join() === 'down,left', `view: legal moves ${view.legalMoves()}`);
+  check(view.distancesFrom([1, 1]).get('7,3') === 8 && !view.distancesFrom([1, 1]).has('2,2'), 'view: path distances over floor only');
+  check(view.kindOf([4, 1]).kind === 'corridor' || view.kindOf([4, 1]).kind === 'room', 'view: kindOf answers');
+  check(view.cellsInView().every((c) => isFloor(g.dungeon, c) && euclid(c, a.pos) <= SIGHT_RANGE), 'view: cellsInView is floor within sight range');
+  const mates = view.teammates();
+  check(mates.length === 1 && mates[0].id === 'a2' && mates[0].role === 'patrolling', `view: teammates ${JSON.stringify(mates)}`);
+  b.hunt.on = true;
+  check(view.teammates()[0].role === 'searching', 'view: teammate role follows its hunt');
+  // A view never keeps hold of another game: the same ghost in a twin game gets its own state.
+  console.log('view: full-mode API ok');
+}
+
+
+// 11. Characters (A2 wiring): per-trait behaviour with the stub decider. Standard ghosts keep today's numbers.
+{
+  // maxSearchTicks 10 / 18 / 32: ticks from lost_sight to brain_off.
+  const searchTicks = async (character) => {
+    const game = twoRooms();
+    game.pos = [6, 1];
+    const a = adversary('a1', [2, 1], { character });
+    game.adversaries = [a];
+    resetStub(game, { target: stayNearLastSeen });
+    const log = [];
+    for (const e of (await step(game)).events) log.push([1, e]);
+    game.pos = [14, 2];
+    for (let tick = 2; tick < 80 && !log.some(([, e]) => e.type === 'brain_off'); tick++) for (const e of (await step(game)).events) log.push([tick, e]);
+    const lost = log.find(([, e]) => e.type === 'lost_sight'), off = log.find(([, e]) => e.type === 'brain_off');
+    return off && lost ? off[0] - lost[0] : null;
+  };
+  for (const [character, want] of [['short_sighted', 10], ['standard', MAX_SEARCH_TICKS], ['pursuer', 32]]) {
+    const got = await searchTicks(character);
+    check(got === want, `character ${character}: brain_off ${got} ticks after lost_sight, want ${want}`);
+  }
+
+  // A calm ghost does not start a hunt at distance 6; a standard one does; both start at 5.
+  {
+    const game = twoRooms();
+    game.pos = [7, 1];
+    const calm = adversary('a1', [1, 1], { character: 'timid' }), std = adversary('a2', [1, 1]);
+    game.adversaries = [calm, std];
+    check(!startsChase(game, calm) && startsChase(game, std), 'timid does not start a chase at distance 6, standard does');
+    calm.pos = [2, 1];
+    check(startsChase(game, calm), 'timid starts a chase at distance 5');
+  }
+
+  // Rest after giving up: a calm ghost (aggression 1) waits restTicks before it hunts again; standard does not wait.
+  {
+    const game = twoRooms();
+    game.pos = [4, 1];
+    const a = adversary('a1', [2, 1], { character: 'timid' });
+    game.adversaries = [a];
+    resetStub(game, { target: stayNearLastSeen, keep: 0.1 });
+    const events = [...(await step(game)).events];
+    game.pos = [14, 2];
+    for (let tick = 0; tick < 6 && !events.some((e) => e.type === 'brain_off'); tick++) events.push(...(await step(game)).events);
+    check(events.some((e) => e.type === 'brain_off'), 'timid: gave up on a low keep_hunting');
+    const rest = a.hunt.restUntil - game.adversaryTicks;
+    check(rest >= 5 && rest <= 6, `timid rests ${rest} ticks after giving up, want 6`);
+    game.pos = [a.pos[0] + 1, a.pos[1]]; // right next to it, in sight
+    const again = [];
+    for (let i = 0; i < 4; i++) again.push(...(await step(game)).events);
+    check(!again.some((e) => e.type === 'brain_on'), 'timid hunts again while resting');
+    const std = adversary('s1', [2, 1]);
+    check(std.hunt.restUntil === 0, 'standard ghost has no rest');
+  }
+
+  // Loners neither call nor answer; hearing range follows the pack level.
+  {
+    const room = (rows) => handMap(rows, [{ x: 1, y: 1, w: rows[0].length - 2, h: rows.length - 2 }]);
+    const wide = (n) => ['#'.repeat(n), '#E' + '.'.repeat(n - 3) + '#', '#' + '.'.repeat(n - 2) + '#', '#' + '.'.repeat(n - 2) + '#', '#'.repeat(n)];
+    const alerted = async (spotterChar, recvChar, recvPos, n = 40) => {
+      const game = room(wide(n));
+      game.pos = [1, 1];
+      const spotter = adversary('a1', [6, 1], { character: spotterChar });
+      const recv = adversary('a2', recvPos, { character: recvChar });
+      game.adversaries = [spotter, recv];
+      resetStub(game);
+      const { events } = await step(game);
+      return events.some((e) => e.type === 'alerted' && e.id === 'a2');
+    };
+    check(await alerted('standard', 'standard', [14, 3]), 'standard receiver hears a standard spotter');
+    check(!(await alerted('territorial', 'standard', [14, 3])), 'a loner spotter does not call');
+    check(!(await alerted('standard', 'territorial', [14, 3])), 'a loner far from the explorer does not answer a call');
+    check(await alerted('standard', 'territorial', [4, 3]), 'a loner close to the explorer (<= 10 path steps) answers a call');
+    check(!(await alerted('standard', 'short_sighted', [34, 3], 60)), 'a team-level receiver hears within 24 path steps only');
+    check(await alerted('standard', 'patient_hunter', [34, 3], 60), 'a pack-level receiver hears within 40 path steps');
+  }
+
+  // Patrol territory: a homebody (roaming 1, 14 path steps) never leaves its room; a standard ghost roams everywhere.
+  {
+    const rows = ['#'.repeat(48), ...Array.from({ length: 5 }, (_, i) => '#' + '.'.repeat(7) + (i === 2 ? '.'.repeat(30) : '#'.repeat(30)) + '.'.repeat(7) + '#'), '#'.repeat(48)];
+    const game = handMap(rows.map((r, y) => (y === 5 ? r.slice(0, 45) + 'E' + r.slice(46) : r)), [{ x: 1, y: 1, w: 7, h: 5 }, { x: 40, y: 1, w: 7, h: 5 }]);
+    const home = adversary('a1', [3, 3], { character: 'territorial' }), roam = adversary('a2', [3, 3]);
+    game.adversaries = [home, roam];
+    resetStub(game);
+    let homeMax = 0, roamMax = 0;
+    for (let tick = 0; tick < 1500; tick++) {
+      await step(game);
+      homeMax = Math.max(homeMax, home.pos[0]);
+      roamMax = Math.max(roamMax, roam.pos[0]);
+      if (game.lost) break;
+    }
+    check(homeMax <= 8, `territorial ghost left its home room (x up to ${homeMax})`);
+    check(roamMax >= 40, `standard ghost never reached the far room (x up to ${roamMax})`);
+  }
+
+  // State: self.character only for a non-standard ghost, in words; the six-key shape and memory stay valid.
+  {
+    const game = twoRooms();
+    game.pos = [6, 1];
+    const a = adversary('a1', [2, 1], { character: 'ambusher' }), b = adversary('a2', [2, 3]);
+    game.adversaries = [a, b];
+    resetStub(game);
+    await step(game);
+    await step(game); // a step needs 2 ticks of budget
+    const call = (id) => stub.calls.find((c) => c.id === id);
+    const ch = call('a1')?.state.self.character;
+    check(ch && ch.id === 'ambusher' && typeof ch.style === 'string' && Object.values(ch.traits).every((w) => typeof w === 'string'), `self.character for ambusher: ${JSON.stringify(ch)}`);
+    check(call('a2') && !('character' in call('a2').state.self), 'a standard ghost sends no self.character');
+    check(JSON.stringify(Object.keys(a)) === '["id","pos","mode","budget","lastSeen","goal"]' && !JSON.stringify(a).includes('ambusher'), 'a character leaves the six-key shape alone');
+    check(a.character === 'ambusher' && a.memory.character.id === 'ambusher', 'character accessor and memory.character');
+    let threw = false;
+    try { adversary('x', [1, 1], { character: 'nope' }); } catch { threw = true; }
+    check(threw, 'unknown character id throws');
+    const mem = createMemory('a9', 'timid');
+    check(validateMemory(mem).character.id === 'timid', 'createMemory keeps the character');
+    delete mem.character;
+    let bad = false;
+    try { validateMemory(mem); } catch { bad = true; }
+    check(bad, 'validateMemory rejects a memory without a character');
+    const ret = JSON.parse(a.lastRequestBody).questions;
+    check(ret.next_move.instructions.priorities.length === 3 && ret.next_move.instructions.priorities[2].length <= 300, 'character priority line is the third next_move priority');
+  }
+
+  // The toggle: mixed characters at spawn, same dungeon and same ghost cells as with it off.
+  {
+    const d = generateDungeon(7);
+    const off = spawnAdversaries(d);
+    configureAdversaries({ adversaryCharacters: true });
+    const on = spawnAdversaries(d);
+    configureAdversaries({ adversaryCharacters: false });
+    check(off.map((a) => a.pos.join()).join(';') === on.map((a) => a.pos.join()).join(';'), 'characters on/off: same ghost cells');
+    check(off.every((a) => a.character === 'standard') && on.every((a) => a.character !== 'standard'), 'toggle: standard when off, mixed presets when on');
+  }
+  console.log('characters: per-trait behaviour ok');
+}
+
+// 12. Smart memory (A3, adversaryCharacters on): sightings, recent path, landmarks, lifetime counters, team
+//     reports. The helpers first, then a request through the stub, then the fog twin (full-map mode).
+{
+  const { addLandmark, addSighting, ageMemory, freshness, recordStep } = await import('../src/characters/adversary/memory.js');
+  const { brainOn: memBrainOn, brainOff: memBrainOff } = await import('../src/characters/adversary/memory.js');
+  const { profileOf, traitsOf } = await import('../src/characters/adversary/character.js');
+  const prof = (id) => profileOf(traitsOf(id));
+  const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+
+  // Validation and caps.
+  {
+    const m = createMemory('a1');
+    check(throws(() => addLandmark(m, { kind: 'chest', cell: [1, 1], tick: 1, note: 'x' }, 5)), 'landmark kind chest throws');
+    m.landmarks.push({ kind: 'chest', cell: [1, 1], tick: 1, note: 'x' });
+    check(throws(() => validateMemory(m)), 'validateMemory rejects a chest landmark');
+    const k = createMemory('a2');
+    addLandmark(k, { kind: 'home', cell: [1, 1], tick: 0, note: 'home' }, 3);
+    for (let i = 0; i < 6; i++) addLandmark(k, { kind: 'explorer_lost', cell: [2 + i, 1], tick: i, note: 'lost' }, 3);
+    check(k.landmarks.length === 3 && k.landmarks.some((l) => l.kind === 'home'), `landmark cap 3 keeps the pinned home (${k.landmarks.map((l) => l.kind)})`);
+    addLandmark(k, { kind: 'explorer_lost', cell: [7, 1], tick: 9, note: 'again' }, 3);
+    check(k.landmarks.filter((l) => l.kind === 'explorer_lost').length === 2, 'one landmark per kind + cell');
+    validateMemory(k);
+    const s = createMemory('a3');
+    check(addSighting(s, { cell: [5, 5], tick: 1, heading: 'up', source: 'seen' }, 3), 'first sighting stored');
+    check(!addSighting(s, { cell: [6, 5], tick: 2, heading: 'up', source: 'seen' }, 3), 'a sighting within 3 cells of the newest is not stored');
+    for (const x of [9, 13, 17]) addSighting(s, { cell: [x, 5], tick: x, heading: 'right', source: 'called', by: 'a2' }, 3);
+    check(s.sightings.length === 3 && s.sightings[0].cell[0] === 17 && s.sightings.at(-1).cell[0] === 9, 'sightings: newest first, capped at the character size');
+    validateMemory(s);
+    check(throws(() => { s.sightings[0].source = 'guessed'; validateMemory(s); }), 'validateMemory rejects an unknown sighting source');
+  }
+
+  // Decay: a short-term ghost forgets sooner; the pinned home never expires; words come from the age.
+  {
+    const short = prof('short_sighted'), long = prof('patient_hunter');
+    const make = () => {
+      const m = createMemory('a1');
+      addLandmark(m, { kind: 'home', cell: [1, 1], tick: 0, note: 'home' }, 8);
+      addLandmark(m, { kind: 'explorer_lost', cell: [4, 4], tick: 0, note: 'lost' }, 8);
+      addSighting(m, { cell: [5, 5], tick: 0, heading: null, source: 'seen' }, 5);
+      m.events.push({ tick: 0, text: 'First sighting' });
+      return m;
+    };
+    const a = make(), b = make();
+    ageMemory(a, 50, short);
+    ageMemory(b, 50, long);
+    check(a.sightings.length === 0 && a.landmarks.length === 1 && a.landmarks[0].kind === 'home' && a.events.length === 0, 'short-term ghost forgets sighting, landmark and event by tick 50 (home stays)');
+    check(b.sightings.length === 1 && b.landmarks.length === 2 && b.events.length === 1, 'long-term ghost still remembers at tick 50');
+    ageMemory(b, 400, long);
+    check(b.sightings.length === 0 && b.landmarks.length === 1, 'long-term ghost forgets by tick 400');
+    check(freshness(5, 30) === 'fresh' && freshness(15, 30) === 'stale' && freshness(25, 30) === 'cold', 'freshness words by fraction of ttl');
+  }
+
+  // Lifetime counters survive brainOn / brainOff; events survive when asked.
+  {
+    const m = createMemory('a1');
+    memBrainOn(m, 5, 'first', { keepEvents: true });
+    addEvent(m, 'First sighting', 5);
+    memBrainOff(m, 20, 'timeout');
+    memBrainOn(m, 30, 'second', { keepEvents: true });
+    check(m.lifetime.hunts === 2 && m.lifetime.escapes === 1 && m.lifetime.last_hunt_end_tick === 20, `lifetime ${JSON.stringify(m.lifetime)}`);
+    check(m.events.length === 1, 'events kept across hunts with smart memory');
+    memBrainOn(m, 40, 'third');
+    check(m.events.length === 0 && m.lifetime.hunts === 3, 'events cleared per hunt when smart memory is off');
+  }
+
+  // Ping-pong detection in the recent path.
+  {
+    const m = createMemory('a1');
+    const w = { moves: 6, cells: 8 };
+    recordStep(m, [1, 1], 'right', w);
+    recordStep(m, [2, 1], 'right', w);
+    check(recordStep(m, [1, 1], 'left', w) === true && m.recent.back_and_forth === 1, 'A -> B -> A counts as a ping-pong');
+    for (let i = 0; i < 12; i++) recordStep(m, [i + 5, 1], 'right', w);
+    check(m.recent.cells.length === 8 && m.recent.moves.length === 6, 'recent windows are capped');
+    validateMemory(m);
+  }
+
+  configureAdversaries({ adversaryCharacters: true });
+  try {
+    // A request with smart memory: landmarks, sightings, team report, recent path and lifetime.
+    {
+      const game = twoRooms();
+      game.pos = [6, 1];
+      const a = adversary('a1', [2, 1], { character: 'patient_hunter' });
+      const b = adversary('a2', [2, 5], { character: 'patient_hunter' });
+      game.adversaries = [a, b];
+      resetStub(game, { target: stayNearLastSeen });
+      await step(game);
+      game.pos = [14, 2];
+      for (let t = 0; t < 8; t++) await step(game);
+      const last = JSON.parse(a.lastRequestBody);
+      const st = last.state;
+      check(a.memory.sightings.length >= 1 && a.memory.sightings[0].source === 'seen', 'smart memory stored a sighting');
+      check(st.surroundings.landmarks.some((l) => l.kind === 'home') && st.surroundings.landmarks.some((l) => l.kind === 'explorer_lost'), `landmarks in state: ${JSON.stringify(st.surroundings.landmarks)}`);
+      check(st.explorer.in_sight === false && Array.isArray(st.explorer.sightings) && st.explorer.sightings[0].ticks_ago >= 1 && ['fresh', 'stale', 'cold'].includes(st.explorer.sightings[0].freshness), 'explorer.sightings with ticks_ago and a freshness word');
+      check(st.recent.path && Array.isArray(st.recent.path.moves) && st.recent.lifetime.hunts === 1, 'recent.path and recent.lifetime in state');
+      check(Array.isArray(st.team) && st.team.every((t) => t.id || t.others), 'team entries');
+      check(!/chest|treasure/i.test(JSON.stringify({ ...st, game: null })), 'no chest or treasure in smart state');
+      check(Buffer.byteLength(a.lastRequestBody) <= 8000, `smart request ${Buffer.byteLength(a.lastRequestBody)} bytes over the 8 KB budget`);
+      validateMemory(a.memory);
+      // A packmate's report reaches a ghost that can hear it.
+      const call = stub.calls.filter((c) => c.id === 'a2').at(-1);
+      const mate = call?.state.team.find((t) => t.id === 'a1');
+      check(mate && mate.report && mate.report.source === 'called by a1' && mate.report.ticks_ago >= 1, `team report from a1 reaches a2: ${JSON.stringify(mate)}`);
+    }
+
+    // Fog twin, full-map mode with memory on: scramble the chest, the explorer's hidden position and
+    // trail, its visit counts and a packmate out of hearing and out of view; requests stay identical.
+    {
+      async function run(hidden, trail, chest, visits, far) {
+        const saved = Math.random;
+        Math.random = rng(777);
+        try {
+          const game = twoRooms();
+          game.pos = [6, 1];
+          game.trail.push([5, 1], [6, 1]);
+          const a = adversary('a1', [2, 1], { character: 'timid' }); // pack 1: hears within 8 path steps
+          const far1 = adversary('a2', [15, 5]);
+          const a2 = adversary('a3', far);
+          game.adversaries = [a, far1, a2];
+          resetStub(game, { target: stayNearLastSeen });
+          await step(game);
+          game.pos = [...hidden];
+          game.trail.push(...trail);
+          game.dungeon.treasure = chest;
+          game.visits = visits;
+          const from = stub.calls.length;
+          for (let t = 0; t < 8; t++) await step(game);
+          return stub.calls.slice(from).filter((c) => c.id === 'a1').map((c) => JSON.stringify(JSON.parse(c.body).state)); // state only: the far ghost's own calls shift the shared option shuffle
+        } finally {
+          Math.random = saved;
+        }
+      }
+      const A = await run([14, 1], [[13, 1], [14, 1]], [15, 1], { '14,1': 9 }, [14, 5]);
+      const B = await run([15, 3], [[15, 4], [15, 3]], [10, 5], { '1,1': 4 }, [11, 5]);
+      check(A.length >= 2 && A.length === B.length, `memory twin: ${A.length} vs ${B.length} requests`);
+      const bad = A.findIndex((state, i) => state !== B[i]);
+      check(bad === -1, `memory twin: state ${bad} changed with the chest, hidden explorer, visits or a far packmate`);
+    }
+  } finally {
+    configureAdversaries({ adversaryCharacters: false });
+  }
+  console.log('memory: helpers, state and fog twin ok');
+}
+
+
+// 13. Limited map (A4, limitedMap + adversaryCharacters on): the view's known set K, fog twins, forgetting.
+//     A long corridor world; map B differs from map A only far from every ghost's K (a side room, a wall in
+//     the corridor, the chest), so a ghost that reads nothing outside K sends byte-identical requests.
+{
+  const throws = (fn) => { try { fn(); return false; } catch { return true; } };
+  const limitedOn = () => configureAdversaries({ adversaryCharacters: true, limitedMap: true });
+  const limitedOff = () => configureAdversaries({ adversaryCharacters: false, limitedMap: false });
+  const W = 64;
+  // x 1..62 corridor on y 1. A: side room x 50..60 (y 3..5) joined at x 52. B: another room x 54..60 joined at
+  // x 56, a wall at (47, 1). The ghosts never get within 14 steps of x 45 and never see it.
+  const worldRows = (variant, explorerAt) => {
+    const r = Array.from({ length: 7 }, () => Array(W).fill('#'));
+    for (let x = 1; x <= 62; x++) r[1][x] = '.';
+    if (variant === 'A') { r[2][52] = '.'; for (let y = 3; y <= 5; y++) for (let x = 50; x <= 60; x++) r[y][x] = '.'; r[4][58] = 'T'; }
+    else { r[1][47] = '#'; r[2][56] = '.'; for (let y = 3; y <= 5; y++) for (let x = 54; x <= 60; x++) r[y][x] = '.'; r[3][54] = 'T'; }
+    r[explorerAt[1]][explorerAt[0]] = 'E';
+    return r.map((row) => row.join(''));
+  };
+  const hiddenAt = { A: [45, 1], B: [43, 1] }; // corridor cells nobody sees
+  const farAt = { A: [57, 4], B: [53, 3] };
+  const pairs = (body) => [...body.matchAll(/\[(\d+),\s?(\d+)\]/g)].map((m) => `${m[1]},${m[2]}`);
+
+  // One run of a scenario in map `variant`. Returns what the ghosts sent and where they were.
+  async function limitedRun(variant, { ghosts, explorer, hideAt = null, ticks, far = true }) {
+    const saved = Math.random;
+    Math.random = rng(9191); // option shuffles: identical call order in both runs
+    try {
+      const game = handMap(worldRows(variant, explorer ?? hiddenAt[variant]), []);
+      game.pos = [...(explorer ?? hiddenAt[variant])];
+      game.adversaries = ghosts.map(([id, x, character]) => adversary(id, [x, 1], { character }));
+      if (far) game.adversaries.push(adversary('a9', farAt[variant], { character: 'ambusher' }));
+      resetStub(game, {});
+      const log = { bodies: [], pos: [], known: new Map(), calls: stub.calls };
+      for (let t = 0; t < ticks; t++) {
+        if (t === hideAt) { game.pos = [...hiddenAt[variant]]; game.trail.push([hiddenAt[variant][0] - 1, hiddenAt[variant][1]], [...hiddenAt[variant]]); game.visits = { [hiddenAt[variant].join()]: 3 }; }
+        await step(game);
+        const mine = game.adversaries.filter((a) => a.id !== 'a9'); // the far ghost differs between the maps on purpose
+        log.bodies.push(mine.map((a) => `${a.id}:${a.lastRequestBody}`).join('\n'));
+        log.pos.push(mine.map((a) => a.pos.join()).join(' '));
+        for (const a of mine) {
+          const set = log.known.get(a.id) ?? log.known.set(a.id, new Set()).get(a.id);
+          for (const k of adversaryView(game, a).knownKeys() ?? []) set.add(k);
+        }
+      }
+      log.game = game;
+      return log;
+    } finally {
+      Math.random = saved;
+    }
+  }
+
+  limitedOn();
+  try {
+    // View API: K, hearing, frontier, kinds.
+    {
+      const game = handMap(worldRows('A', [30, 1]), []);
+      const a1 = adversary('a1', [26, 1], { character: 'ambusher' }); // roaming 1: home radius 14
+      const a2 = adversary('a2', [4, 1], { character: 'ambusher' });
+      const a9 = adversary('a9', farAt.A, { character: 'ambusher' });
+      game.adversaries = [a1, a2, a9];
+      const v = adversaryView(game, a1), v2 = adversaryView(game, a2);
+      check(v.mode === 'limited', 'limited: view mode');
+      v.update(1);
+      check(v.isKnown([12, 1]) && v.isKnown([40, 1]) && !v.isKnown([41, 1]) && !v.isKnown([11, 1]), 'limited: home zone is the cells within 14 path steps of the spawn cell');
+      check(!v.isKnown([55, 4]) && v.distancesFrom([55, 4]).size === 0 && v.kindOf([55, 4]).kind === 'unknown', 'limited: a cell outside K reaches nothing and has no kind');
+      check(!v.distancesFrom([26, 1]).has('41,1') && v.distancesFrom([26, 1]).has('40,1'), 'limited: BFS stays inside K');
+      check(v.isKnownWall([30, 0]) && !v.isKnownWall([30, 3]) && !v.isKnownWall([45, 0]), 'limited: a wall is known only next to a known floor cell');
+      check(v.teammateCount() === 2, `limited: teammateCount ${v.teammateCount()}`);
+      check(!v.teammates().some((o) => o.id === 'a9'), 'limited: a packmate out of hearing and view is not listed');
+      check(v2.legalMoves().join() === 'left,right', `limited: legal moves are the known neighbours (${v2.legalMoves()})`);
+      v2.update(1);
+      const edge = v2.frontierToward([32, 1]);
+      check(edge && edge.cell.join() === '18,1' && edge.steps === 14, `limited: frontier toward an unknown target is the edge of the map (${JSON.stringify(edge)})`);
+      check(v2.frontierToward([32, 1], v2.distancesFrom([40, 1])) === null, 'limited: no frontier from a cell outside K');
+      // A call carries the caller's cells near the reported cell, not the real map.
+      v2.hear(v, [30, 1], 1);
+      check(v2.isKnown([30, 1]) && v2.isKnown([36, 1]) && v2.isKnown([24, 1]) && !v2.isKnown([37, 1]) && !v2.isKnown([20, 1]), 'limited: heard cells are the caller\'s cells within 6 steps of the reported cell');
+      check(v2.frontierToward([32, 1]).cell.join() === '18,1', 'limited: a heard region with no route leaves the frontier where it was');
+    }
+
+    // Fading and the cap (short_sighted: horizon 1 -> ttl 40, cap 120; roaming 2 -> home radius 24).
+    {
+      const rows = ['#'.repeat(202), '#E' + '.'.repeat(199) + '#', '#'.repeat(202)];
+      const game = handMap(rows, []);
+      const a = adversary('a1', [2, 1], { character: 'short_sighted' });
+      game.adversaries = [a];
+      const v = adversaryView(game, a);
+      v.update(1);
+      check(v.isKnown([26, 1]) && !v.isKnown([60, 1]), 'fade: home zone is 24 steps around the spawn cell');
+      a.pos = [60, 1];
+      v.update(100);
+      const nearby = v.knownCount();
+      check(v.isKnown([62, 1]) && v.isKnown([66, 1]) && !v.isKnown([100, 1]), 'fade: a cell in view is known');
+      a.pos = [2, 1];
+      let gone = null;
+      for (let t = 101; t <= 145; t++) {
+        v.update(t);
+        if (!v.isKnown([62, 1]) && gone === null) gone = t;
+      }
+      check(gone === 141, `fade: a cell stamped at tick 100 is forgotten after ttl 40, first missing at ${gone} (want 141)`);
+      check(v.distancesFrom([2, 1]).has('62,1') === false && v.knownCount() < nearby, 'fade: a forgotten cell is gone from BFS and from the count');
+      check(v.forgotten > 0, 'fade: forgotten counter');
+      // Walk 150 cells: the seen set never exceeds the cap, the oldest cells are evicted, and stay out.
+      const b = adversary('a2', [2, 1], { character: 'short_sighted' });
+      game.adversaries = [b];
+      const w = adversaryView(game, b);
+      for (let x = 40; x <= 190; x++) { b.pos = [x, 1]; w.update(200 + (x - 40)); }
+      const seenCount = w.knownKeys().filter((k) => Number(k.split(',')[0]) > 26).length;
+      check(seenCount <= 120, `evict: seen cells ${seenCount} over the cap 120`);
+      check(!w.isKnown([48, 1]), 'evict: an old cell was evicted');
+      for (let t = 360; t < 366; t++) w.update(t);
+      check(!w.isKnown([48, 1]), 'evict: an evicted cell stays out until it is seen again');
+    }
+
+    // Fog twins: map A vs map B, byte-identical requests, positions and nothing outside K mentioned.
+    const scenarios = {
+      patrol: { ghosts: [['a1', 26, 'ambusher'], ['a2', 4, 'ambusher']], ticks: 40 },
+      chase: { ghosts: [['a1', 26, 'ambusher']], explorer: [30, 1], ticks: 8 },
+      search: { ghosts: [['a1', 26, 'ambusher']], explorer: [30, 1], hideAt: 1, ticks: 14 },
+      'alerted from far': { ghosts: [['a1', 26, 'ambusher'], ['a2', 4, 'ambusher']], explorer: [30, 1], hideAt: 1, ticks: 16 },
+    };
+    const runs = {};
+    for (const [name, sc] of Object.entries(scenarios)) {
+      const A = await limitedRun('A', sc), B = await limitedRun('B', sc);
+      runs[name] = A;
+      const diff = A.bodies.findIndex((b, i) => b !== B.bodies[i] || A.pos[i] !== B.pos[i]);
+      check(diff === -1, `limited twin '${name}': requests or ghost positions changed with hidden state outside the known set (tick ${diff}: ${diff >= 0 ? A.pos[diff] + ' vs ' + B.pos[diff] : ''})`);
+      const asked = A.bodies.filter((b) => b.includes('"state"')).length;
+      if (name !== 'patrol') check(asked >= 2, `limited twin '${name}': only ${asked} ticks with a request`);
+      else check(A.bodies.every((b) => b.split('\n').every((l) => l.endsWith(':null'))), 'limited twin patrol: a patrolling ghost sent a request');
+      // No coordinate in any body names a cell outside the ghost's known set (the explorer's own cell excepted: it is in K when seen).
+      let leak = null;
+      for (const body of A.bodies) for (const line of body.split('\n')) {
+        const id = line.slice(0, line.indexOf(':'));
+        for (const c of pairs(line.slice(line.indexOf(':') + 1))) if (!A.known.get(id).has(c) && leak === null) leak = `${id} names ${c}`;
+      }
+      check(leak === null, `limited twin '${name}': ${leak} (outside its known set)`);
+      check(![...A.bodies, ...B.bodies].some((b) => b.includes('[58,4]') || b.includes('[54,3]') || b.includes('[45,1]') || b.includes('[43,1]')), `limited twin '${name}': hidden explorer or chest coordinates in a request`);
+    }
+    {
+      // The alerted ghost has no known route to the call: path_steps null, the edge of its map as the target.
+      const bodies = runs['alerted from far'].bodies.map((b) => b.split('\n').find((l) => l.startsWith('a2:'))).filter((l) => l && l.includes('"state"')).map((l) => JSON.parse(l.slice(3)).state);
+      check(bodies.some((s) => s.last_seen && s.last_seen.path_steps === null), 'alerted from far: last_seen has path_steps null (no known route)');
+      check(bodies.some((s) => s.approach_target?.what?.includes('edge of what you know')), 'alerted from far: approach_target is the edge of what it knows');
+      check(bodies.some((s) => /known: \d+ cells, home zone \+ seen/.test(s.surroundings.map_note ?? '')), 'alerted from far: map_note');
+      check(bodies.every((s) => !/whole map/.test(s.game)) && /edge of what you know/.test(bodies[0].game), 'limited: the rules text has the fog line, not "whole map"');
+      const last = runs['alerted from far'].game.adversaries.find((a) => a.id === 'a2');
+      check(last.pos[0] > 4 || last.mode === 'patrol', 'alerted from far: the far ghost headed for the call or gave up');
+    }
+    // Full map (limitedMap off, characters on): the same far ghost has a route straight away.
+    {
+      limitedOff();
+      configureAdversaries({ adversaryCharacters: true });
+      const full = await limitedRun('A', scenarios['alerted from far']);
+      const states = full.bodies.map((b) => b.split('\n').find((l) => l.startsWith('a2:'))).filter((l) => l && l.includes('"state"')).map((l) => JSON.parse(l.slice(3)).state);
+      check(states.length && states.some((s) => s.last_seen && s.last_seen.path_steps !== null) && !states.some((s) => s.approach_target?.what?.includes('edge')), 'full map: the far ghost has a known route and no edge target');
+      limitedOn();
+      check(adversaryView(full.game, full.game.adversaries[0]).mode === 'full', 'full map: view mode stays full while the toggle was off at construction');
+    }
+    // limitedMap without the characters toggle does nothing.
+    {
+      configureAdversaries({ adversaryCharacters: false, limitedMap: true });
+      const game = handMap(worldRows('A', [30, 1]), []);
+      const a = adversary('a1', [26, 1]);
+      game.adversaries = [a];
+      check(adversaryView(game, a).mode === 'full', 'limitedMap alone (characters off) leaves the view in full mode');
+      limitedOn();
+    }
+  } finally {
+    limitedOff();
+  }
+  console.log('limited map: view, fading, cap, fog twins (patrol, chase, search, alerted from far) ok');
 }
 
 console.log(`CHASE_RANGE ${CHASE_RANGE}, SIGHT_RANGE ${SIGHT_RANGE}`);

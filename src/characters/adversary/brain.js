@@ -3,7 +3,8 @@
 // on/off state machine and calls decide() for every brain-on adversary with a step this tick,
 // all in parallel.
 //
-// FOG: the explorer's position reaches Jev only while hunt.inSight (seesExplorer) is true.
+// FOG: everything is read through an AdversaryView (adversary-view.js), never a Game. The explorer's
+// position reaches Jev only while hunt.inSight (seesExplorer) is true.
 // Out of sight, Jev gets last_seen only. Never the treasure, never the explorer's light/visits.
 // Each Adversary keeps the exact body of its last request, for auditing.
 //
@@ -11,20 +12,41 @@
 // that catches the explorer, take the only legal move, switch off after MAX_SEARCH_TICKS.
 // Jev decides: every other move, cut_off vs sweep_last_seen on the first search step, and
 // keep_hunting on every search step.
-import { DIRS, SIGHT_RANGE, floorDistances } from '../../dungeon.js';
-import { APPROACHES, SEARCH_APPROACHES, adversaryMoves, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
-import { addEvent, brainOff, brainOn, count, createMemory, recordAction, setApproach } from './memory.js';
+import { SIGHT_RANGE } from '../../dungeon.js';
+import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
+import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach } from './memory.js';
 import { askJev, shuffle } from '../../jev.js';
+import { PRESETS, profileOf, traitsOf } from './character.js';
 
 export let KEEP_HUNTING_MIN = 0.5; // keep_hunting.noul below this switches the brain off (live: src/settings.js)
 export const setKeepHuntingMin = (v) => { KEEP_HUNTING_MIN = v; };
+// Smart memory (sightings, landmarks, recent path, lifetime counters, team reports) is active only with the
+// adversaryCharacters toggle (src/settings.js -> configureAdversaries). Off: memory and requests are as before.
+export let MEMORY_ON = false;
+export const setMemoryOn = (v) => { MEMORY_ON = Boolean(v); };
+const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+const PINGPONGS = 3; // back-and-forth steps while searching before the search approach is chosen again
 
+const PRESET_STYLE = (id) => PRESETS[id].style;
 const key = ([x, y]) => `${x},${y}`;
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 
 // The rules text, built from the live tunables: speed, search time, hit damage, grace ticks (cfg) and SIGHT_RANGE.
-function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4 }) {
+function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited = false }, smart = false) {
   const lives = hitDamage === 1 ? 'a life' : `${hitDamage} lives`;
+  if (smart) {
+    // Shorter text for ghosts with memory: the state carries the rest (landmarks, sightings, team reports).
+    return (
+      'A dungeon grid of walls and floor. You are one of several adversaries hunting an explorer who seeks a hidden treasure chest. ' +
+      `You move one cell per step (up, down, left, right) at ${Math.round(speed * 100)}% of the explorer's speed, so you cannot outrun it. ` +
+      (limited
+        ? 'You know only your home area and the cells you have seen lately; the rest is unknown and old cells fade. A spot with path_steps null has no known route: head for the edge of what you know. '
+        : 'You know the whole map. ') +
+      `You see the explorer only with a clear line of sight within ${SIGHT_RANGE} cells; out of sight you only have your remembered sightings (frozen, with their age) and landmarks. ` +
+      `Stepping onto the explorer hits it: it loses ${lives}, you are knocked back, and it cannot be hurt for ${graceTicks} tick${graceTicks === 1 ? '' : 's'} after. ` +
+      `Your objective: catch the explorer before it finds the treasure. After ${maxSearchTicks} ticks without sight, or if you stop hunting, you go back to patrolling.`
+    );
+  }
   return (
     'A dungeon on a grid of walls and floor. You are one of several adversaries hunting an explorer who is looking for a hidden treasure chest. ' +
     `You move one cell per step (up, down, left or right) at ${Math.round(speed * 100)}% of the explorer's speed, so you cannot outrun it in a straight race. ` +
@@ -41,21 +63,14 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4 }) {
 //   sight), ticksSinceSeen, swept (cells checked since sight was lost), cutOff (cached cut-off point),
 //   dists (recent path distances while in sight), trend (frozen distance trend), pickApproach,
 //   probabilities (of the last next_move answer: for the UI only, Jev never reads them), memory
-export function newHunt(id) {
-  return { on: false, inSight: false, heading: null, ticksSinceSeen: 0, swept: new Set(), cutOff: null, dists: [], trend: null, pickApproach: false, probabilities: null, memory: createMemory(id) };
+//   profile (the ghost's character numbers: sweepRadius, cutMax, preferredSearch, ...), restUntil (world tick before which a
+//   ghost that just gave up does not start a new hunt)
+export function newHunt(id, profile = profileOf(traitsOf('standard')), character = 'standard') {
+  return { on: false, inSight: false, heading: null, ticksSinceSeen: 0, swept: new Set(), cutOff: null, dists: [], trend: null, pickApproach: false, probabilities: null, profile, restUntil: 0, pingpongs: 0, lostNear: false, hidLogged: false, areaLogged: false, memory: createMemory(id, character) };
 }
 
 // Default Jev call, in the shape of an injected `ask`.
 const jevAsk = ({ state, questions, body }) => askJev(state, questions, body);
-
-// Direction of the explorer's latest move, read only while it is in sight.
-function explorerHeading(game) {
-  const t = game.trail ?? [];
-  if (t.length < 2) return null;
-  const [a, b] = t.slice(-2);
-  const dx = b[0] - a[0], dy = b[1] - a[1];
-  return Object.keys(DIRS).find((d) => DIRS[d][0] === dx && DIRS[d][1] === dy) ?? null;
-}
 
 function trendText(dists) {
   if (dists.length < 2) return `${dists[0] ?? '?'} path steps away`;
@@ -67,35 +82,49 @@ function trendText(dists) {
 // --- state transitions (called by adversary.js) -------------------------------------------
 
 // The explorer is in sight now (seesExplorer). Call once per sense.
-export function seen(game, a, tick, { startOfTick }) {
+export function seen(view, a, tick, { startOfTick, own = true }) {
   const h = a.hunt;
   const resighted = !h.inSight; // sight is called twice a tick: only the change counts
   h.inSight = true;
-  h.heading = explorerHeading(game) ?? h.heading;
+  h.heading = view.heading() ?? h.heading;
   h.ticksSinceSeen = 0;
   h.swept.clear();
   h.cutOff = null;
   h.pickApproach = false;
   if (startOfTick) {
-    const d = floorDistances(game.dungeon, a.pos).get(key(game.pos));
+    const d = view.distancesFrom(a.pos).get(key(view.explorer()));
     if (d !== undefined) h.dists = [...h.dists, d].slice(-4);
   }
   const m = h.memory;
   if (resighted && count(m, 'sightings') === 1) {
-    const n = Math.round(Math.hypot(game.pos[0] - a.pos[0], game.pos[1] - a.pos[1]));
-    addEvent(m, `First sighting: the explorer to the ${compass8(a.pos, game.pos)}, about ${n} cells away.`, tick);
+    const e = view.explorer();
+    const n = Math.round(Math.hypot(e[0] - a.pos[0], e[1] - a.pos[1]));
+    addEvent(m, `First sighting: the explorer to the ${compass8(a.pos, e)}, about ${n} cells away.`, tick);
+  }
+  if (MEMORY_ON) {
+    const e = view.explorer();
+    addSighting(m, { cell: e, tick, heading: h.heading, source: own ? 'seen' : 'called' }, h.profile.sightingsKept);
+    if (resighted && m.tally.sightings === 1) addLandmark(m, { kind: 'explorer_seen', cell: e, tick, note: 'where the explorer was first seen in this hunt' }, h.profile.landmarksCap);
+    h.pingpongs = 0;
+    h.lostNear = false;
   }
   m.progress.ticks_since_seen = 0;
   m.progress.distance_trend = trendText(h.dists);
   setApproach(m, { id: 'direct_pursuit', text: APPROACHES.direct_pursuit.text }, 'the explorer is in sight again', tick);
 }
 
-export function switchOn(game, a, tick) {
+export function switchOn(view, a, tick) {
   const h = a.hunt;
   h.on = true;
   h.dists = [];
-  brainOn(h.memory, tick, 'spotted the explorer');
-  seen(game, a, tick, { startOfTick: true });
+  brainOn(h.memory, tick, 'spotted the explorer', { keepEvents: MEMORY_ON });
+  if (MEMORY_ON) addHome(a, tick);
+  seen(view, a, tick, { startOfTick: true });
+}
+
+// The pinned landmark: the ghost's spawn cell (its home territory).
+function addHome(a, tick) {
+  addLandmark(a.hunt.memory, { kind: 'home', cell: a.home, tick, note: 'your home ground' }, a.hunt.profile.landmarksCap);
 }
 
 // A neighbour spotted the explorer and shouted: this adversary joins the hunt in search mode at the
@@ -111,30 +140,65 @@ export function switchOnAlerted(a, tick, at, heading, by) {
   h.cutOff = null;
   h.pickApproach = true;
   h.trend = null;
-  brainOn(h.memory, tick, `${by} spotted the explorer and called for help`);
+  brainOn(h.memory, tick, `${by} spotted the explorer and called for help`, { keepEvents: MEMORY_ON });
+  if (MEMORY_ON) {
+    addHome(a, tick);
+    addSighting(h.memory, { cell: at, tick, heading, source: 'called', by }, h.profile.sightingsKept);
+  }
   setApproach(h.memory, { id: 'sweep_last_seen', text: APPROACHES.sweep_last_seen.text }, `${by} called for help`, tick);
   count(h.memory, 'alerts_heard');
   addEvent(h.memory, `${by} spotted the explorer and called for help; last seen at [${at[0]}, ${at[1]}].`, tick);
 }
 
 // Sight lost: the next step picks a search approach.
-export function lostSight(game, a, tick) {
+export function lostSight(view, a, tick) {
   const h = a.hunt;
   h.inSight = false;
   h.trend = h.memory.progress.distance_trend;
   h.pickApproach = true;
   h.cutOff = null;
-  sweepFrom(game, a);
+  sweepFrom(view, a);
   count(h.memory, 'lost_sight');
+  if (MEMORY_ON && a.lastSeen) {
+    addLandmark(h.memory, { kind: 'explorer_lost', cell: a.lastSeen, tick, note: 'where sight of the explorer broke' }, h.profile.landmarksCap);
+    h.lostNear = dist(a.pos, a.lastSeen) <= 4;
+    h.hidLogged = false;
+    h.areaLogged = false;
+  }
 }
 
 // Once per tick while searching.
-export function searchTick(a) {
+export function searchTick(a, view = null, tick = 0) {
   const h = a.hunt;
   h.inSight = false;
   h.ticksSinceSeen += 1;
   h.memory.progress.ticks_since_seen = h.ticksSinceSeen;
   h.memory.progress.distance_trend = `out of sight for ${h.ticksSinceSeen} tick${h.ticksSinceSeen === 1 ? '' : 's'}; before that ${h.trend ?? 'unknown'}`.slice(0, 160);
+  if (MEMORY_ON && view && a.lastSeen && !(h.hidLogged && h.areaLogged)) noteSearchResults(view, a, tick);
+}
+
+// Two facts a search can establish, each logged once per loss of sight: the explorer lost within 4 cells
+// and everything near there now checked (it is in a pocket nearby), and the whole sweep area checked.
+function noteSearchResults(view, a, tick) {
+  const h = a.hunt;
+  const radius = h.profile.sweepRadius;
+  let nearAll = true, checked = 0, total = 0;
+  for (const [k, d] of view.distancesFrom(a.lastSeen)) {
+    if (d <= 4 && !h.swept.has(k)) nearAll = false;
+    if (d <= radius) {
+      total++;
+      if (h.swept.has(k)) checked++;
+    }
+  }
+  const cap = h.profile.landmarksCap;
+  if (!h.hidLogged && h.lostNear && h.ticksSinceSeen >= 1 && nearAll) {
+    h.hidLogged = true;
+    addLandmark(h.memory, { kind: 'explorer_hid', cell: a.lastSeen, tick, note: 'lost within 4 cells and everything in view since is checked: it is in a pocket nearby' }, cap);
+  }
+  if (!h.areaLogged && total > 0 && checked === total) {
+    h.areaLogged = true;
+    addLandmark(h.memory, { kind: 'area_checked', cell: a.lastSeen, tick, note: `everything within ${radius} steps of here is checked: nothing found` }, cap);
+  }
 }
 
 export function hunted(a) {
@@ -142,8 +206,8 @@ export function hunted(a) {
 }
 
 // Marks what this adversary sees from its cell as checked (search mode only).
-export function sweepFrom(game, a) {
-  sweep(game.dungeon, a.hunt, a.pos);
+export function sweepFrom(view, a) {
+  sweep(view, a.hunt);
 }
 
 export function switchOff(a, tick, reason) {
@@ -163,6 +227,31 @@ export function switchOff(a, tick, reason) {
 export function noteHit(a, tick) {
   const m = a.hunt.memory;
   addEvent(m, `Hit the explorer (hit ${count(m, 'hits')}).`, tick);
+  m.lifetime.hits += 1;
+  if (MEMORY_ON) addLandmark(m, { kind: 'hit_here', cell: a.pos, tick, note: 'where you hit the explorer' }, a.hunt.profile.landmarksCap);
+}
+
+// This ghost stepped `dir` from `from` (a brain-on step). Smart memory records its own path and, while
+// searching, forces a new search_approach choice after PINGPONGS steps that returned to the cell it left.
+export function noteStep(a, from, dir, tick) {
+  if (!MEMORY_ON) return;
+  const h = a.hunt;
+  const p = h.profile;
+  const m = h.memory;
+  if (!m.recent.cells.length) m.recent.cells = [[...from]];
+  const ping = recordStep(m, a.pos, dir, { moves: p.recentMoves, cells: p.recentCells });
+  if (!h.on || h.inSight) { h.pingpongs = 0; return; }
+  if (ping) h.pingpongs += 1;
+  if (h.pingpongs >= PINGPONGS) {
+    h.pingpongs = 0;
+    h.pickApproach = true;
+    addEvent(m, 'Kept stepping back and forth while searching: choosing a search approach again.', tick);
+  }
+}
+
+// Start of a world tick: drops what has outlived this ghost's character-sized memory.
+export function ageHunt(a, tick) {
+  if (MEMORY_ON) ageMemory(a.hunt.memory, tick, a.hunt.profile);
 }
 
 // --- the decision -------------------------------------------------------------------------
@@ -170,32 +259,41 @@ export function noteHit(a, tick) {
 // What Jev reads, grouped like the explorer's state. `recent` and `self.approach` are the persistent
 // memory (memory.js); the rest is recomputed from the real map each step (perception.js), and the
 // explorer block holds a position only while it is in sight.
-function jevState(game, a, h, tick, rulesText) {
+function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
   const m = h.memory;
-  const { position, surroundings, explorer, last_seen, team, ...search } = situation(game, a, h);
+  const { position, surroundings, explorer, last_seen, team, ...search } = situation(view, a, h, { smart, tick });
   return {
     game: rulesText,
     tick,
-    self: { id: a.id, position, mode: h.inSight ? 'chase' : 'search', approach: m.approach, latest_action: m.latest_action },
+    self: {
+      id: a.id,
+      ...(withCharacter ? { character: { id: a.character, traits: h.profile.words, style: PRESET_STYLE(a.character) } } : {}),
+      position, mode: h.inSight ? 'chase' : 'search', approach: m.approach, latest_action: m.latest_action,
+    },
     surroundings,
     explorer,
     last_seen,
     ...search,
     team,
-    recent: { tally: m.tally, events: m.events, progress: m.progress },
+    recent: smart
+      ? { path: { moves: m.recent.moves, back_and_forth: m.recent.back_and_forth }, tally: m.tally, lifetime: m.lifetime, events: m.events, progress: m.progress }
+      : { tally: m.tally, events: m.events, progress: m.progress },
   };
 }
 
 // Builds the request for one step. Pure: no state changes. Returns { legal, forced } when no
 // Jev call is needed (code policy), else { legal, state, questions, body, options }.
-export function buildRequest(game, a, tick, cfg) {
+export function buildRequest(view, a, tick, cfg) {
   const { speed, maxSearchTicks } = cfg;
   const h = a.hunt;
-  const legal = adversaryMoves(game.dungeon, a.pos);
+  const special = a.character !== 'standard'; // a standard ghost's request text stays exactly today's
+  const withCharacter = special || Boolean(cfg.characters);
+  const legal = view.legalMoves();
   if (!legal.length) return { legal, forced: null };
   // Code policy: a move onto the (visible) explorer is always taken.
   if (h.inSight) {
-    const catching = legal.find((d) => same(stepCell(a.pos, d), game.pos));
+    const explorer = view.explorer();
+    const catching = legal.find((d) => same(stepCell(a.pos, d), explorer));
     if (catching) return { legal, forced: catching };
   }
   const searching = !h.inSight;
@@ -203,7 +301,7 @@ export function buildRequest(game, a, tick, cfg) {
   const questions = {};
   let options = null;
   if (legal.length > 1) {
-    const moves = describeMoves(game, a, h, approachIds, speed);
+    const moves = describeMoves(view, a, h, approachIds, speed);
     options = Object.fromEntries(shuffle(legal).map((d) => [d, moves[d]]));
     const priorities = searching
       ? [
@@ -218,6 +316,7 @@ export function buildRequest(game, a, tick, cfg) {
           'You are slower than the explorer, so chasing from behind never catches it: the hit comes from cutting off its escape routes. Prefer the move that cuts off the most cells, especially cells no other adversary covers, so the explorer is boxed in between you and the others.',
           'Among moves that cut off about as much, prefer one that closes the path distance (`explorer.path_steps`), then one that keeps the explorer in sight, then one that blocks a corridor, doorway or junction ahead of it (`explorer.heading`).',
         ];
+    if (special) priorities.splice(2, 0, h.profile.priority); // third priority: this ghost's character
     questions.next_move = {
       type: 'choice',
       instructions: {
@@ -233,8 +332,9 @@ export function buildRequest(game, a, tick, cfg) {
     questions.search_approach = {
       type: 'choice',
       instructions:
-        'The explorer just went out of sight (`last_seen`). Which search approach gives this adversary the best chance to catch it? Use `last_seen.heading`, the map facts and how far each target is.',
-      criteria: Object.fromEntries(shuffle(SEARCH_APPROACHES).map((id) => [id, approachOption(game, a, h, id)])),
+        'The explorer just went out of sight (`last_seen`). Which search approach gives this adversary the best chance to catch it? Use `last_seen.heading`, the map facts and how far each target is.' +
+        (special && h.profile.preferredSearch ? ` Your nature favours ${h.profile.preferredSearch}, but pick the other if it is clearly better. ${h.profile.priority}` : special ? ` ${h.profile.priority}` : ''),
+      criteria: Object.fromEntries(shuffle(SEARCH_APPROACHES).map((id) => [id, approachOption(view, a, h, id)])),
     };
   }
   if (searching) {
@@ -242,7 +342,8 @@ export function buildRequest(game, a, tick, cfg) {
       type: 'noul',
       instructions:
         'Is it still worth hunting the explorer? Judge from `last_seen` (how long ago, how far), `checked_cells_near_last_seen`, `approach_target` and `recent.progress`. ' +
-        `Hunting stops anyway after ${maxSearchTicks} ticks without sight; giving up sends this adversary back to patrolling the dungeon, where it may run into the explorer again.`,
+        `Hunting stops anyway after ${maxSearchTicks} ticks without sight; giving up sends this adversary back to patrolling the dungeon, where it may run into the explorer again.` +
+        (special ? ` You are ${h.profile.words.persistence} (persistence).` : ''),
       criteria: {
         true: 'Keep hunting: the explorer was seen recently, and the approach still has a target worth reaching (unchecked space near the last-seen cell, or a cut-off point not reached yet).',
         false: 'Give up: the trail is cold. The explorer was seen long ago, the area around the last-seen cell is checked, or the cut-off point was reached and nothing came.',
@@ -250,7 +351,7 @@ export function buildRequest(game, a, tick, cfg) {
     };
   }
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
-  const state = jevState(game, a, h, tick, rules(cfg));
+  const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters)), withCharacter, Boolean(cfg.characters));
   const body = JSON.stringify({ model: 'jev-latest', state, questions });
   return { legal, state, questions, body, options };
 }
@@ -258,9 +359,9 @@ export function buildRequest(game, a, tick, cfg) {
 // One step's decision. Never throws: a failed call returns { error } and the caller falls back
 // to the code move. -> { dir|null, decision, keep_hunting, approach, forced, apiMs, error }
 // `ask` replaces the Jev call (the checks inject stubs); null = the real Jev.
-export async function decide(game, a, tick, cfg, ask = null) {
+export async function decide(view, a, tick, cfg, ask = null) {
   const h = a.hunt;
-  const req = buildRequest(game, a, tick, cfg);
+  const req = buildRequest(view, a, tick, cfg);
   if (!req.body) return { dir: req.forced, decision: null, keep_hunting: null, approach: null, forced: true, apiMs: 0, error: null };
   a.lastRequestBody = req.body;
   const started = performance.now();
@@ -289,8 +390,8 @@ export async function decide(game, a, tick, cfg, ask = null) {
 export function applyDecision(a, tick, res, { fallback = false } = {}) {
   const h = a.hunt;
   if (h.pickApproach && h.on && !h.inSight) {
-    const id = res.approach ?? 'sweep_last_seen';
-    const why = res.approach ? `lost sight of the explorer; Jev chose ${id}` : 'lost sight of the explorer; no Jev answer, sweeping by default';
+    const id = res.approach ?? h.profile.preferredSearch ?? 'sweep_last_seen';
+    const why = res.approach ? `lost sight of the explorer; Jev chose ${id}` : (id === 'sweep_last_seen' ? 'lost sight of the explorer; no Jev answer, sweeping by default' : `lost sight of the explorer; no Jev answer, ${id} by its nature`);
     setApproach(h.memory, { id, text: APPROACHES[id].text }, why, tick);
     h.pickApproach = false;
   }
