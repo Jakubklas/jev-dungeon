@@ -1785,12 +1785,13 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const row = ['#'.repeat(40), '#' + '.'.repeat(38) + '#', '#'.repeat(40)];
     const STAKES = 'A lone adversary you can strike first costs at most one claw';
     const DEFAULT_LINE = /^Default: engage a lone adversary while the sword is ready/;
-    const probe = async ({ ghosts, mood = 'steady', skills = 'explorer', stun = null, ghostHp = null }) => {
+    const probe = async ({ ghosts, mood = 'steady', skills = 'explorer', stun = null, ghostHp = null, hp = null, health = null }) => {
       const keep = skillConfig();
       if (stun !== null) configureSkills({ ...keep, stunTicks: stun });
       try {
         const g = handGame(row, [10, 1], 40);
-        g.adversaries = ghosts.map((x, i) => chaser([x, 1], 'chase', `a${i + 1}`));
+        g.adversaries = ghosts.map((x, i) => (hp ? new Adversary({ id: `a${i + 1}`, pos: [x, 1], mode: 'chase', hp }) : chaser([x, 1], 'chase', `a${i + 1}`)));
+        if (health) g.health = health;
         if (ghostHp) for (const a of g.adversaries) while (a.hp > ghostHp) a.takeHit(1, [0, 0]);
         const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
         const out = {};
@@ -1828,6 +1829,13 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const none = await probe({ ghosts: [17], skills: 'none' });
     if (none.sentiment.includes(STAKES)) fail('stakes sentence without a sword');
     if (none.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line without a sword');
+    // One claw must not be able to end the game, and the duels back at most 2 strikes (review of P6).
+    const last = await probe({ ghosts: [17], health: 1 });
+    if (last.sentiment.includes(STAKES)) fail('stakes sentence at 1 life');
+    if (last.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line at 1 life');
+    const tough = await probe({ ghosts: [17], hp: 3 });
+    if (tough.sentiment.includes(STAKES)) fail('stakes sentence for a 3-strike ghost');
+    if (tough.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line for a 3-strike ghost');
     const noEnc = await (async () => {
       const g = handGame(row, [10, 1], 40);
       const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
@@ -1841,7 +1849,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       return text;
     })();
     if (noEnc.includes(STAKES)) fail('stakes sentence with nothing in sight');
-    console.log('encounter sentence and default-engage line: only for one visible ghost, sword ready, stun holding; absent for two ghosts, stunTicks 1, no sword, nothing in sight');
+    console.log('encounter sentence and default-engage line: only for one visible ghost, sword ready, stun holding, 2 strikes, lives to spare; absent for two ghosts, stunTicks 1, no sword, 1 life, a 3-strike ghost, nothing in sight');
 
     // leave_now mid-encounter: a tactic is on (nearest_frontier parked), the portal comes into view, Jev says leave.
     {

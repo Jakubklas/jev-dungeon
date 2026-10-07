@@ -460,9 +460,9 @@ export class ExplorerBrain {
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
-    // A lone adversary, the sword ready and the stun holding (the engage fact's own gate): under steady or greedy
-    // engaging is the default, so the mood's caution does not talk the explorer out of the one fight it should take.
-    const loneEngage = tacticIds.includes('engage') && sit.threats.visible.length === 1 && Boolean(this.#fight()?.steady) &&
+    // A lone fight the duels back (#loneFight): under steady or greedy engaging is the default, so the mood's caution
+    // does not talk the explorer out of the one fight it should take.
+    const loneEngage = tacticIds.includes('engage') && this.#loneFight(sit) &&
       (memory.sentiment.id === 'steady' || memory.sentiment.id === 'greedy');
     if (tacticIds.length) {
       questions.tactic = {
@@ -707,15 +707,22 @@ export class ExplorerBrain {
     }
   }
 
-  // The encounter's stakes in one sentence, only where the duels bear it out (check-skills section 12): one adversary
-  // in sight and none remembered, the sword ready, the stun outlasting the sword's cooldown and at most 2 strikes
-  // to dispel it (then it costs at most one claw). Otherwise ''.
-  #stakes(sit, trigger) {
-    if (!['encounter', 'tactic_failed', 'hit'].includes(trigger)) return '';
+  // A fight the duels bear out (check-skills section 12): one adversary in sight and none remembered, the sword
+  // ready, the stun outlasting the sword's cooldown, at most 2 strikes to dispel it (then it costs at most one claw),
+  // and one claw cannot end the game: lives above the claw's damage and full lives or hit protection (bold's `when`).
+  // Reads only the explorer's own state, the visible adversary's hp and the sword.
+  #loneFight(sit) {
+    const world = this.#world;
     const fight = this.#fight();
-    const [v] = this.#world.visibleAdversaries();
-    if (!fight?.steady || !this.#armed() || sit.threats.visible.length !== 1 || sit.threats.remembered.length || !v) return '';
-    if (Math.ceil(v.hp / fight.damage) > 2) return '';
+    const [v] = world.visibleAdversaries();
+    if (!fight?.steady || !this.#armed() || sit.threats.visible.length !== 1 || sit.threats.remembered.length || !v) return false;
+    if (Math.ceil(v.hp / fight.damage) > 2) return false;
+    return world.health > skillConfig().clawDamage && (world.health >= world.maxHealth || world.graceLeft > 0);
+  }
+
+  // The encounter's stakes in one sentence, only for a #loneFight. Otherwise ''.
+  #stakes(sit, trigger) {
+    if (!['encounter', 'tactic_failed', 'hit'].includes(trigger) || !this.#loneFight(sit)) return '';
     return ' A lone adversary you can strike first costs at most one claw and a dispel removes it for good; running may leave it hunting you.';
   }
 

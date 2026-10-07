@@ -154,7 +154,7 @@ export function resumeApproach(memory, step, thoughtOf) {
 }
 
 // Replaces the parked approach, e.g. the portal was spotted mid-chase: after the chase the explorer
-// should head for the portal, not resume exploring. The dropped one goes into `tried` with `reason`.
+// should head for the portal, not resume exploring. The dropped one is replaced, not failed: no `tried` row.
 export function replaceInterrupted(memory, { id, text }, reason, step) {
   const a = memory.approach;
   const old = a.interrupted; // replaced, not failed: no `tried` row
