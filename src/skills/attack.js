@@ -27,8 +27,9 @@ export class AttackSkill extends Skill {
   }
 
   // Loose gate (PLAN D7): offered only when ready AND self.opponentsNear. Then one option per aim
-  // (DIRS order) whose cells hold a VISIBLE opponent (self.visibleOpponents: [{ id, pos }], supplied by
-  // the caller so fog holds). Choice: if opponents are near but none stands in a strike cell, the attack
+  // (DIRS order) whose cells hold a VISIBLE opponent (self.visibleOpponents: [{ id, pos, hp?, maxHp? }],
+  // supplied by the caller so fog holds). With the opponent's health bar (hp) the fact says what the strike
+  // does: dispel it, or knock it back and stun it self.stunTicks steps; self.coinChance > 0 adds the loot. Choice: if opponents are near but none stands in a strike cell, the attack
   // offers nothing; the aim-everywhere variant would only add noise next to `none`.
   options(view, self) {
     if (!this.ready || !self?.opponentsNear) return [];
@@ -39,17 +40,23 @@ export class AttackSkill extends Skill {
       const cells = this.cells(pos, dir);
       const held = seen.filter((o) => cells.some((c) => same(c, o.pos)));
       if (!held.length) continue;
-      const who = held.slice(0, 2).map((o) => {
-        const n = self.hitsLanded?.[o.id] ?? 0;
-        return n ? `${o.id} (you have hit it ${n === 1 ? 'once' : `${n} times`})` : o.id;
-      }).join(' and ');
       const wait = this.cooldown ? ` Ready again after ${this.cooldown} step${this.cooldown === 1 ? '' : 's'}.` : '';
+      const fact = held.every((o) => Number.isInteger(o.hp))
+        ? `Strike ${SIDE[dir]}: ${held.slice(0, 2).map((o) => `${o.id} (${o.hp} of ${o.maxHp} hp) ${this.#outcome(o, self)}`).join('; ')}.${wait}`
+        : `Strike the cell ${SIDE[dir]}: ${held.slice(0, 2).map((o) => o.id).join(' and ')} ${held.length > 1 ? 'are' : 'is'} there now.${wait}`;
       out.push({
         key: `${this.id}_${dir}`,
-        fact: clip(`Strike the cell ${SIDE[dir]}: ${who} ${held.length > 1 ? 'are' : 'is'} there now.${wait}`),
+        fact: clip(fact),
         target: { dir, cells },
       });
     }
     return out;
+  }
+
+  // What this strike does to an opponent with `o.hp` hit points.
+  #outcome(o, self) {
+    if (o.hp <= this.damage) return `is dispelled for good${self.coinChance > 0 ? ' (may drop a coin)' : ''}`;
+    const stun = self.stunTicks ?? 0;
+    return `is knocked back${stun ? ` and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}`;
   }
 }

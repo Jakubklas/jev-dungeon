@@ -1,7 +1,7 @@
-// The explorer's only window on the game. Fog-safe reads only: its own state, cells that are lit,
-// the adversaries it sees right now and the chest once it is lit. This is the single explorer
-// file allowed to hold a Game (the static guard in check-dungeon.mjs enforces it). Reads are
-// live, never cached: the game changes during a tick.
+// The explorer's only window on the game. Fog-safe reads only: its own state (purse included), cells
+// that are lit, the adversaries it sees right now (with the health bar over each), the chest and coins
+// once lit. This is the single explorer file allowed to hold a Game (the static guard in
+// check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
 import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
@@ -20,6 +20,7 @@ export class KnownWorld {
   get graceLeft() { return graceLeft(this.#game); }
   get won() { return this.#game.won; }
   get facing() { return this.#game.facing; }
+  get coins() { return this.#game.coins; } // the explorer's own purse
   // Grid size, only for sizing flat BFS arrays and bounds checks. Says nothing about the layout.
   get width() { return this.#game.dungeon.width; }
   get height() { return this.#game.dungeon.height; }
@@ -29,7 +30,12 @@ export class KnownWorld {
   knownFloorCount() { return this.#game.knownFloorCount(); }
   legalMoves() { return this.#game.legalMoves(); } // neighbours of the explorer are always lit
   availableMoves() { return this.#game.availableMoves(); }
-  visibleAdversaries() { return visibleAdversaries(this.#game); }
+  // Each adversary in sight with its health bar ({ hp, maxHp }): a bar the explorer can see, so fog-safe
+  // while in sight (user-approved amendment of rule 1). Out of sight nothing is read, hp included.
+  visibleAdversaries() {
+    const byId = new Map(this.#game.adversaries.map((a) => [a.id, a]));
+    return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp }));
+  }
 
   // The chest cell once it is lit, else null. A testbed arena may have no chest at all.
   seenTreasure() {

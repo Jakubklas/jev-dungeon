@@ -49,13 +49,22 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
           game.coinPiles = [...game.coinPiles, at];
           events.push({ id: a.id, type: 'coin_drop', at });
         }
+        // Dispelling the last adversary wins the game. Only a dispel can do it: an arena that starts with
+        // none (numAdversaries 0) is not won on tick 0.
+        if (!game.adversaries.length && !game.won && !game.lost) {
+          game.won = true;
+          game.winBy = 'cleared';
+          events.push({ id: 'explorer', type: 'cleared', at });
+        }
       } else {
         events.push({ id: a.id, type: 'struck', at, hp: out.hp });
       }
     }
   }
 
-  game.strikes.push({ by: attacker.id, cells: live.map((c) => [...c]), result });
+  // `from` is where the attacker stood when it struck (the explorer often steps on before the view is drawn): the UI aims the slash from it.
+  const from = [...(fromExplorer ? game.pos : attacker.pos)];
+  game.strikes.push({ by: attacker.id, from, cells: live.map((c) => [...c]), result });
   events.push({ id: attacker.id, type: 'strike', cells: live.map((c) => [...c]), result });
   return events;
 }

@@ -82,10 +82,14 @@ const quiet = { pos: [3, 3], opponentsNear: false, visibleOpponents: [], threatN
 check(Object.keys(set.options(view, quiet)).length === 0, 'no opponents: no options');
 check(skillQuestion(set.options(view, quiet)) === null, 'no options: no question');
 check(skillQuestion({}) === null && skillQuestion(null) === null, 'empty map: null question');
-const near = { pos: [3, 3], opponentsNear: true, visibleOpponents: [{ id: 'a1', pos: [2, 3] }], hitsLanded: { a1: 1 }, threatNear: { id: 'a1', steps: 1 } };
+const near = { pos: [3, 3], opponentsNear: true, visibleOpponents: [{ id: 'a1', pos: [2, 3], hp: 2, maxHp: 2 }], threatNear: { id: 'a1', steps: 1 }, stunTicks: 2, coinChance: 0.5 };
 const opts = set.options(view, near);
 check(eq(Object.keys(opts), ['sword_strike_left', 'shield_block']), `options keys ${Object.keys(opts)}`);
-check(opts.sword_strike_left.fact.includes('a1') && opts.sword_strike_left.fact.includes('once') && opts.sword_strike_left.fact.length <= 160, 'strike fact names the ghost and the earlier hit');
+check(opts.sword_strike_left.fact.includes('a1 (2 of 2 hp) is knocked back and stunned 2 steps') && opts.sword_strike_left.fact.length <= 160, `strike fact names the ghost, its health bar and the stun: ${opts.sword_strike_left.fact}`);
+const last = set.options(view, { ...near, visibleOpponents: [{ id: 'a1', pos: [2, 3], hp: 1, maxHp: 2 }] }).sword_strike_left?.fact ?? '';
+check(last.includes('a1 (1 of 2 hp) is dispelled for good (may drop a coin)'), `strike fact on the last hp says it dispels: ${last}`);
+const noBar = set.options(view, { ...near, visibleOpponents: [{ id: 'a1', pos: [2, 3] }] }).sword_strike_left?.fact ?? '';
+check(noBar.startsWith('Strike the cell to your left: a1 is there now.'), `strike fact without a health bar: ${noBar}`);
 check(opts.shield_block.fact.includes('60%') && opts.shield_block.fact.includes('a1 is adjacent'), 'block fact');
 check(eq(opts.sword_strike_left.target.dir, 'left') && set.get('sword_strike_left').skill.id === 'sword_strike', 'get(key) returns skill and target');
 check(set.get('nope') === null, 'get(unknown) is null');
@@ -158,7 +162,8 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
 
 // 7. Explorer strikes a ghost: knockback, stun, dispel; and KnownWorld.useSkill.
 {
-  const g = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######']);
+  // A spare ghost (a2) far away: dispelling the last one would win the game (section 11) and end the tick state.
+  const g = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#....A#', '#######']);
   const ghost = g.adversaries[0];
   const world = new KnownWorld(g);
   const exp = buildSkillSet('explorer');
@@ -177,7 +182,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   ghost.pos = [4, 3];
   exp.options(world, { ...seen, visibleOpponents: [{ id: 'a1', pos: ghost.pos }] });
   const ev2 = world.useSkill(exp, 'sword_strike_right');
-  check(ev2?.some((e) => e.type === 'dispelled') && g.adversaries.length === 0 && g.strikes.at(-1).result === 'dispelled', 'second hit dispels and removes the ghost');
+  check(ev2?.some((e) => e.type === 'dispelled') && g.adversaries.length === 1 && g.strikes.at(-1).result === 'dispelled' && !g.won, 'second hit dispels and removes the ghost');
   // Block through useSkill.
   g.block = null;
   exp.options(world, { pos: world.pos, opponentsNear: true, visibleOpponents: [], threatNear: true });
@@ -222,7 +227,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
 {
   const setChance = (p) => configureSkills({ ...skillConfig(), coinDropChance: p });
   check(skillConfig().coinDropChance === 0.5, 'coinDropChance defaults to 0.5');
-  const MAP = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######'];
+  const MAP = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#....A#', '#######']; // a2 keeps the game going after a1 is dispelled
   const dispel = (g) => { g.adversaries[0].takeHit(skillConfig().ghostHp - 1, [0, 0]); g.adversaries[0].pos = [4, 3]; return resolveAttack(g, EXPLORER, [[4, 3]], 1); };
   try {
     setChance(1);
@@ -309,6 +314,36 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     setChance(0.5);
   }
   check(skillConfig().coinDropChance === 0.5, 'coinDropChance restored');
+}
+
+// 11. Victory by clearing: dispelling the last adversary wins; one of two does not; an arena with none is not won.
+{
+  const MAP2 = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######'];
+  const kill = (g, a) => { a.takeHit(skillConfig().ghostHp - 1, [0, 0]); return resolveAttack(g, EXPLORER, [a.pos], 1); };
+  const g = arena(MAP2);
+  check(!g.won && g.winBy === null && g.publicView().won_by === null, 'a fresh game is not won');
+  const ev = kill(g, g.adversaries[0]);
+  check(g.won && g.winBy === 'cleared' && !g.lost, 'dispelling the only ghost wins');
+  check(ev.some((e) => e.type === 'cleared' && e.id === 'explorer') && g.publicView().won_by === 'cleared' && g.publicView().won === true, 'cleared event and won_by in the view');
+  const before = g.pos.join();
+  g.applyMove('left');
+  check(g.pos.join() === before, 'no moves once won');
+  // Two ghosts: the first dispel does not win, the second does.
+  const g2 = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#....A#', '#.....#', '#######']);
+  check(g2.adversaries.length === 2, 'two-ghost arena has two ghosts');
+  kill(g2, g2.adversaries[0]);
+  check(!g2.won && g2.adversaries.length === 1, 'one of two dispelled: not won');
+  kill(g2, g2.adversaries[0]);
+  check(g2.won && g2.winBy === 'cleared', 'the last of two wins');
+  // No ghosts at all: never an instant win, and walking onto the chest still says 'chest'.
+  const g0 = new Game(buildArena({ map: ['#######', '#.....#', '#.@.T.#', '#.....#', '#.....#', '#######'], numAdversaries: 0, seed: 7 }).dungeon);
+  check(!g0.won && g0.adversaries.length === 0, 'an arena with no ghosts is not won');
+  g0.applyMove('right'); g0.applyMove('right');
+  check(g0.won && g0.winBy === 'chest', 'chest win records winBy chest');
+  // A struck-but-alive ghost, and a miss, never win.
+  const g3 = arena(MAP2);
+  resolveAttack(g3, EXPLORER, [g3.adversaries[0].pos], 1);
+  check(!g3.won && g3.adversaries.length === 1, 'a strike that leaves the ghost alive does not win');
 }
 
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }

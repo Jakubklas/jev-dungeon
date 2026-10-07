@@ -84,8 +84,9 @@ export class Game {
   //   adversaryTicks /* world ticks the adversaries have run */, patrolRand /* patrol RNG, created lazily */,
   //   facing /* 'up'|'down'|'left'|'right', starts 'right': last step's direction or last strike's aim */,
   //   block /* null | { effectiveness, until_step }: the shield stance */,
-  //   strikes /* [{ by, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
+  //   strikes /* [{ by, from /* attacker's cell when it struck */, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
   //   skillRand /* block-roll RNG, null until the first roll */,
+  //   winBy /* null | 'chest' | 'cleared': how the game was won ('cleared' = the last adversary was dispelled, resolve.js) */,
   //   coinPiles /* [[x, y]] one entry per coin on the floor (duplicates = a bigger pile); replaced, never spliced */,
   //   coins /* the explorer's coin total */, coinRand /* coin-drop RNG, null until the first roll */
   // coinPiles starts as a copy of dungeon.coins (src/coins.js spawnCoins; [] when absent, e.g. hand-built maps).
@@ -101,7 +102,7 @@ export class Game {
   isKnown([x,y]), knownTile([x,y]) /* '#' | '.' | null */, knownFloorCount(), exploredPct()
   publicView()           // -> { seed, width, height, tiles, start, treasure, props, decor, pos, steps, won, lost, health, max_health,
                          //      light /* copy */, visits, trail, explored_pct, facing, strikes /* live array */,
-                         //      coin_piles /* copies */, coins }
+                         //      coin_piles /* copies */, coins, won_by }
   twin(overrides = {})   // shallow copy that keeps the prototype (for fog twin tests). `litOutside` must stay a Set.
 }
 ```
@@ -228,7 +229,7 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 
 `Turn = { ...ExplorerTurn, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns }`.
 
-`view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character, facing, hp, max_hp }], block /* null | { effectiveness, until_step }: the explorer's own shield stance */, grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. `publicView` also carries `facing` and `strikes` (`[{ by, cells, result }]` of this tick, from both sides). The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees now. `brain` is the adversary-brain view under "v3" below. `character`, `facing`, `hp` and `max_hp` are Reveal-only displays (the explorer never reads them); the UI hides strikes outside the explorer's sight unless Reveal is on.
+`view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character, facing, hp, max_hp }], block /* null | { effectiveness, until_step }: the explorer's own shield stance */, grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. `publicView` also carries `facing` and `strikes` (`[{ by, from, cells, result }]` of this tick, from both sides). The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees now. `brain` is the adversary-brain view under "v3" below. `character`, `facing`, `hp` and `max_hp` are Reveal-only displays (the explorer never reads them); the UI hides strikes outside the explorer's sight unless Reveal is on.
 
 ## `src/skills/*` (shared)
 
@@ -265,7 +266,7 @@ export const LOADOUTS                             // loadouts.js: sword_strike (
 export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block'], ghost: ['claw_strike'], none: [] }
 export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: loadout < skillConfig() (settings) < tuning
 export const SKILL_MIN = 0.5                      // question.js
-export function skillQuestion(options, priorityLine = '')         // -> a Choice question, `none` first (never shuffled), or null when options is empty
+export function skillQuestion(options, priorityLine = '', { neutral = false } = {}) // -> a Choice question, `none` first (never shuffled), or null when options is empty; neutral: the explorer's wording (no "choose none unless")
 export function pickSkill(answer, options)        // -> the chosen key, or 'none' (not an option, `none`, or probability < SKILL_MIN)
 export function configureSkills(values), skillConfig(), skillDefaults(), loadoutTuning()   // config.js: swordDamage 1, swordCooldown 1, shieldChance 0.6, shieldCooldown 2, clawDamage 1, clawCooldown 2, ghostHp 2, stunTicks 2, coinDropChance 0.5
 export const EXPLORER = { id: 'explorer' }        // resolve.js
@@ -283,10 +284,10 @@ The explorer's only window on a game (the one explorer file allowed to hold a `G
 
 ```js
 new KnownWorld(game)
-get pos, steps, visits, health, maxHealth, graceLeft, won, facing   // the explorer's own state
+get pos, steps, visits, health, maxHealth, graceLeft, won, facing, coins   // the explorer's own state (coins: its purse)
 get width, height                       // grid size, only for sizing arrays; says nothing about the layout
 isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()
-visibleAdversaries()                    // -> [{ id, pos, mode, distance }] the explorer sees now
+visibleAdversaries()                    // -> [{ id, pos, mode, distance, hp, maxHp }] the explorer sees now (hp: the health bar it sees)
 seenTreasure()                          // -> the chest cell once lit, else null (also null when there is no chest)
 seenCoins()                             // -> copies of the coin piles on known (lit) cells only
 move(dir)                               // the explorer's own step (Game.applyMove)
@@ -299,13 +300,13 @@ Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characte
 
 All take a `world` (a `KnownWorld`). Layering, acyclic: `known-map.js` ← `encounter.js` ← `perception.js`.
 - `known-map.js`: `key`, `sameCell`, `step`, `neighbours`, `knownFloor`, `plural`, `euclid`, `isFrontier`, `knownDistances` (BFS over known floor), `wouldReveal`, `compass`, `dirWord`, `compass8`, `reachableFrontier`, `pick`.
-- `encounter.js`: the encounter model over known floor and visible adversaries only: `threatsOf`, `threatDistance`, `safeDistances` (gap-limited BFS), `goalsAt`, `hiddenFromAll`, `escapeTarget`, `isRoomCell`, `openArea`, `faceOffTarget`, `encounterFacts` (the sentence set behind `threats.encounter`), `knownLineOfSight` (supercover over known tiles, **unknown cells block**), `speedPhrase` (derived from `ADVERSARY_SPEED`), `FACE_OFF_MIN_SIDE`.
+- `encounter.js`: the encounter model over known floor and visible adversaries only: `threatsOf`, `threatDistance`, `safeDistances` (gap-limited BFS), `goalsAt`, `hiddenFromAll`, `escapeTarget`, `isRoomCell`, `openArea`, `engageTarget(world, threats, { stunned })` (2 steps off a hunting adversary, next to one the explorer stunned; no gap), `hpText` (`'1 of 2 hp'`), `encounterFacts` (the sentence set behind `threats.encounter`), `knownLineOfSight` (supercover over known tiles, **unknown cells block**), `speedPhrase` (derived from `ADVERSARY_SPEED`).
 - `perception.js`: `APPROACHES`, `TACTICS`, `isTactic`, `DEFAULT_MIN_GAP`, `treasureSeen(world)`, `availableApproaches(world)`, `approachTarget(world, id, { minGap, goal, avoid, exclude, remembered })`, `tacticFeasibility(world, minGap, { exclude })`, `tacticOptions(world, minGap)`, `avoidZone(world, remembered)`, `situation(world, { remembered, landmarks })`, `describeMoves(world, approachId, opts)` and `describeMoveParts(world, approachId, { minGap, goal, avoid, remembered, prev, backAndForth })`. Tactic feasibility lives here, not in encounter.js, because it needs `approachTarget`.
-- Exploration approaches: `nearest_frontier` (default), `largest_unexplored`, `far_side`, `go_to_treasure` (only once the chest is known). Encounter tactics (`tactic: true`): `slip_past`, `run_away`, `face_off`, `hide`, `race_to_chest`, `carry_on` (see "v4: encounter tactics").
+- Exploration approaches: `nearest_frontier` (default), `largest_unexplored`, `far_side`, `go_to_treasure` (only once the chest is known). Encounter tactics (`tactic: true`): `slip_past`, `run_away`, `engage` (offered only while the sword is ready; ignores the minimum gap), `hide`, `race_to_chest`, `carry_on` (see "v4: encounter tactics").
 - `situation(world, { remembered = [], landmarks = [] })` returns `{ self, surroundings, threats }` (the brain adds `game`, `plan`, `recent` and `self.mind`):
-  - `self = { lives, max_lives, hit_protection_steps }`.
-  - `surroundings = { here ('room'|'junction'|'corridor'|'dead end'), steps, known_floor_cells /* a count, not a % */, chest /* sentence */, unexplored_by_direction /* none|little|some|a lot per side, fixed 12-cell window */, frontier_cells, landmarks[] }`. A landmark is `{ kind, note, direction, distance, steps_ago }`, `memory.landmarks` made relative to the explorer every tick.
-  - `threats = { visible[], remembered[], encounter }`. `visible` is `[]` or `{ id, direction: 'north-east', distance: 5, chasing: true }` per adversary in sight (8-point compass words). `remembered` is `{ id, last_seen_steps_ago, was_chasing, direction ('here' on the frozen cell), distance }` per frozen sighting not in sight now. `encounter` is `null` unless an adversary is visible.
+  - `self = { lives, max_lives, hit_protection_steps, coins }`.
+  - `surroundings = { here ('room'|'junction'|'corridor'|'dead end'), steps, known_floor_cells /* a count, not a % */, chest /* sentence */, unexplored_by_direction /* none|little|some|a lot per side, fixed 12-cell window */, frontier_cells, landmarks[], coins? }`. A landmark is `{ kind, note, direction, distance, steps_ago }`, `memory.landmarks` made relative to the explorer every tick. `coins` (only while a lit pile is seen) is up to 3 `{ direction, distance, count }`, nearest first.
+  - `threats = { visible[], remembered[], encounter }`. `visible` is `[]` or `{ id, direction: 'north-east', distance: 5, chasing: true, hp: '1 of 2 hp' }` per adversary in sight (8-point compass words; `hp` is its health bar). `remembered` is `{ id, last_seen_steps_ago, was_chasing, hp (as seen then), direction ('here' on the frozen cell), distance }` per frozen sighting not in sight now. `encounter` is `null` unless an adversary is visible.
 - `describeMoveParts` returns, per legal move, `{ shared, target }` (or `{ whole }` for a winning move and for `stay`). `shared` is approach-independent: threat sentences, a sentence about the nearest remembered sighting (also "Heads back toward where a chasing adversary was N steps ago (D steps from that spot after this)." for a chasing sighting up to 15 steps old, whatever the distance), chest, reveal estimate, visits, a "Goes back to the cell you left 2 steps ago" fact, dead-end warnings; `target` is progress toward the approach's target. `describeMoves` joins them into one sentence per move. Threat sentences, for example: "Moves toward an adversary", "Steps into the adversary: only bumps it back, no life lost.", "Leads into a known dead end: risk of being cornered", "Heads toward where an adversary was last seen N steps ago", and the gap warning "below your minimum gap of N". Distances to adversaries use BFS over known floor if the adversary's cell is known, else Euclidean. Only visible adversaries count as threats; remembered sightings only produce the "last seen" sentence.
 
 ### `memory.js` + `brain.js`: `ExplorerBrain` (brain agent)
@@ -328,10 +329,10 @@ Review info, encounter bookkeeping, the tactic goal, the remembered sightings an
 
 ```
 { approach { id, current, thought, since_step, tried[{ id, approach, steps, reason }], interrupted },
-  progress { steps, known_floor_cells, revealed_since_approach, steps_since_approach, revisits_last_10 },
+  progress { steps, known_floor_cells, revealed_since_approach, steps_since_approach, revisits_last_10, coins },
   sentiment { id, since_step }, sentiment_history[{ id, step }],
   recent { moves[], cells[], back_and_forth },
-  encounters { count, escaped, hits, last_at_step },
+  encounters { count, escaped, hits, dispelled, last_at_step },
   events[{ step, text }],
   landmarks[{ kind, cell, step, note }],
   skills[{ id, kind, name, text, ready, cooldown_left }] }   // <= 4 (LIMITS.skills), text <= 120; rewritten from the live SkillSet before every save, never read back
@@ -339,17 +340,17 @@ Review info, encounter bookkeeping, the tactic goal, the remembered sightings an
 `objective`, `findings`, `latest_action`, `danger` and `sentiment.profile_note` no longer exist. Limits (`LIMITS`): approach text 240, `tried` 5, thought 60, `sentiment_history` 5, `events` 6 (text 200, oldest dropped, the step never repeated in the text), `landmarks` 8 (note 120; kinds `chest`, `dead_end_explored`, `hit_here`, `hiding_spot_used`; one per kind + cell, the chest is never evicted), `recent.moves` 6, `recent.cells` 8. `recent.back_and_forth` counts moves that returned to the cell two positions back. `encounters.count` / `escaped` / `hits` count encounters begun, ended unhurt, and hits taken. The remembered sightings are **not** in memory: they are a private field of the brain.
 
 **Jev state (explorer).** Memory is not sent verbatim. Every explorer request carries `state = { game, self, surroundings, threats, plan, recent }`:
-- `game`: `rules()`, a sentence block saying that adversaries roam, move slower (derived from `ADVERSARY_SPEED`), chase on sight, that a touch only bumps and an adjacent adversary's claw costs one life (`EXPLORER_LIVES`, `GRACE_TICKS` of protection afterwards), and, when it has skills, "You have up to 4 skills (`self.skills`). Besides moving you may use at most one per step; most steps need none.", and what `threats.visible` / `threats.remembered` mean. The objective is folded in.
-- `self`: `situation().self` plus `skills` (the memory mirror **without `text`**, to stay inside the size bounds) plus `mind: { id, since_step, recent }` (`recent` = the last 5 picks as runs, "cautious×3 → scared").
+- `game`: `rules()`, a sentence block saying that adversaries roam, move slower (derived from `ADVERSARY_SPEED`), chase on sight, that a touch only bumps and an adjacent adversary's claw costs one life (`EXPLORER_LIVES`, `GRACE_TICKS` of protection afterwards), what `threats.visible` / `threats.remembered` mean (with each health bar), and, with an attack skill, what it does (always hits an adjacent adversary, its damage, knockback and the `stunTicks` stun, gone at 0 hp, a coin dropped with `coinDropChance`), then "Besides moving you may use one skill (`self.skills`) per step." The objective is folded in: reach the chest alive, collecting as many coins as is worth the risk (they count only if it reaches the chest), in few steps.
+- `self`: `situation().self` plus `skills` (a compact map `{ id: 'ready' | 'ready in N' }`, to stay inside the size bounds) plus `mind: { id, since_step, recent }` (`recent` = the last 5 picks as runs, "cautious×3 → scared").
 - `surroundings`: `situation().surroundings`, plus `moves` (`{ dir: shared facts }`, sent once) on a decision tick that asks tactic questions.
-- `threats`: `situation().threats`. `plan`: `{ approach { id, current, since_step, interrupted | null }, tried[{ id, steps, reason }] }`.
+- `threats`: `situation().threats` (on the request with the `tactic` question, `encounter` leaves out `slip_past`, `hide`, `run_away` and `chest`: the tactic options state them). `plan`: `{ approach { id, current, since_step, interrupted | null }, tried[{ id, steps, reason }] }`.
 - `recent`: `{ path /* compass words */, back_and_forth, revealed_since_approach, steps_since_approach, revisits_last_10, encounters, events }`.
 - Request size: the largest explorer decision tick is about 9-10 KB (9436 / 10389 B measured with skills); `check-dungeon.mjs` asserts ≤ 9500 bytes (a chasing adversary, 5 tactics) and ≤ 10500 (a patrolling one, 6 tactics). About 60-110 B of headroom.
 
 **Minds.** `SENTIMENTS` has `scared` (min_gap 5, end_ticks 6), `risk_averse` (4, 5), `cautious` (3, 4; the default before the first pick), `curious` (3, 2; the opposite of cautious; replaced `calculated`, which is gone), `courageous` (2, 2) and `aggressive` (2, 1). Each also has `priority` (a line in `next_move` and `tactic`), `move_priority` (the same rule, short, for the speculative `move_if_<tactic>` questions), `when` (the circumstances that call for it, shown in the sentiment question) and `note`. `profileOf(memory)` returns the current profile.
 
 - `next_move` priorities: (1) step onto the chest, else head for the seen chest; (2) while threats are visible, never step into one, avoid moves below the sentiment's `min_gap`, plus the current tactic's hint; (3) do not head toward where an adversary was last seen (when `threats.remembered` is non-empty); (4) the sentiment's priority line; (5) avoid `stay`, follow the approach, reveal new cells, avoid backtracking. The speculative per-tactic questions keep only the chest line, the safety line and the mind's `move_priority`.
-- **Remembered sightings.** The brain freezes each adversary in `visibleAdversaries()` as `{ id, cell, step, chasing }` and drops it after `REMEMBER_STEPS` (30) steps or when the explorer sees the frozen cell empty. The ones not in sight form `threats.remembered`, a per-move "last seen" fact, and an avoid zone (`avoidZone`) that exploration targets steer around: known cells within 10 known-path steps of a sighting under 10 steps old, or 6 of one up to 15 steps old, plus a sector for the 3 latest chasing sightings (known cells nearer the sighting than the explorer, and cells whose shortest route from the explorer runs through the frozen cell). `approachTarget`'s `exclude` (cell keys not to pick) and `remembered` (the sightings) feed `run_away`.
+- **Remembered sightings.** The brain freezes each adversary in `visibleAdversaries()` as `{ id, cell, step, chasing, hp, maxHp }` and drops it after `REMEMBER_STEPS` (30) steps or when the explorer sees the frozen cell empty. The ones not in sight form `threats.remembered`, a per-move "last seen" fact, and an avoid zone (`avoidZone`) that exploration targets steer around: known cells within 10 known-path steps of a sighting under 10 steps old, or 6 of one up to 15 steps old, plus a sector for the 3 latest chasing sightings (known cells nearer the sighting than the explorer, and cells whose shortest route from the explorer runs through the frozen cell). `approachTarget`'s `exclude` (cell keys not to pick) and `remembered` (the sightings) feed `run_away`.
 - **Triggers** of a decision tick (`turn.decision.trigger`): `start`, `encounter`, `tactic_failed`, `chase_over`, `chest`, `review`. A pending `start` / `chest` / `review` decision and an `encounter` on the same tick share **one** sentiment call (the encounter wins). `tactic_failed` fires when the tactic's target is gone, when the gap fell below `min_gap` (not for `run_away`), or on **back-and-forth** (`PINGPONG_FAILS` = 3 moves since the last decision returning to the cell just left; the bounce cells and the old target are then excluded from the re-decision's targets, until the encounter starts or ends); at most once per `REDECIDE_COOLDOWN` (3) ticks.
 - Approach reviews (every `REVIEW_EVERY` = 8 steps; `approach_working` below 0.5 switches) do not run during `go_to_treasure` or any tactic.
 - `ExplorerTurn = { step, dir, forced, revealed, won, move_decision, decision, review, policy, skill_decision, apiMs }`. `policy: { from, to, reason } | null` is for code-driven approach switches, separate from `review`. `skill_decision = null | { choice, probabilities, used: key | null }`: set when a `skill` question was asked; `used` is the key that was applied (`null` for `none`, below `SKILL_MIN`, or refused by the world).
@@ -404,7 +405,7 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `cleared` (the dispelled ghost was the last one: the game is won; `id` 'explorer', `at`), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 
@@ -413,8 +414,8 @@ Read `AGENTS.md` first; it is the current guide.
 ## Behaviour
 - **Encounter decision replaces the reflex.** When an encounter starts (an adversary becomes visible, or a visible one switches patrol→chase), and when the current tactic stops being viable (e.g. its target is unreachable or the gap fell below the sentiment's minimum), the explorer runs a **decision step**: Jev picks a **tactic** (a new approach). Tactics (ids, each with a short first-person `thought`):
   - `slip_past` "I can slip past!": a known route past/around the adversary toward the frontier/chest that never comes closer than the sentiment's minimum gap, using the speed edge.
-  - `run_away` "Run away!": get away, keep escape routes open, avoid dead ends. The escape spot is sticky: kept until reached or no route keeps a gap of 2. A new one is picked among cells reachable at the mood's min gap (then 2, then any) at least 4 steps away, preferring the edge of the known map and corridor/junction cells beyond a room exit. It keeps its goal when the adversary is out of sight, then continues from the frozen chasing sighting, so it can have a target with no adversary visible. Known issue: in a closed room with a close ghost it can still shuttle corner to corner; the answer there is `slip_past` / `face_off`, which `run_away` doesn't decide.
-  - `face_off` "Face off.": hold ground in open space, keep a safe gap, and dodge around it as it commits (2× speed), then continue.
+  - `run_away` "Run away!": get away, keep escape routes open, avoid dead ends. The escape spot is sticky: kept until reached or no route keeps a gap of 2. A new one is picked among cells reachable at the mood's min gap (then 2, then any) at least 4 steps away, preferring the edge of the known map and corridor/junction cells beyond a room exit. It keeps its goal when the adversary is out of sight, then continues from the frozen chasing sighting, so it can have a target with no adversary visible. Known issue: in a closed room with a close ghost it can still shuttle corner to corner; the answer there is `slip_past` / `engage`, which `run_away` doesn't decide.
+  - `engage` "Have at you!": fight with the sword. Against a hunting adversary it holds 2 steps off so the adversary steps in and the sword strikes first; against one the explorer's own strike stunned, it closes in next to it; next to one, it strikes now. Offered only while the sword is ready; no minimum gap (moves are described with gap 1 and never fail by gap). A life lost while a tactic is on triggers a `hit` re-decision next tick.
   - `hide` "Duck out of sight.": reach a known cell outside the adversary's line of sight before it arrives (LOS over known tiles only).
   - `race_to_chest` "Go for the chest!": only when the chest is seen.
   - `carry_on` "It hasn't seen me, keep going.": only while every visible adversary is patrolling; keep exploring but avoid its sight.

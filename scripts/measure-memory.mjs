@@ -1,5 +1,6 @@
 // Measures how the explorer's memory and requests behave over N ticks on each fixture arena
-// (scripts/arenas/*.json): request size, decisions, re-encounters, ping-pong, outcome, hits.
+// (scripts/arenas/*.json): request size, decisions, re-encounters, ping-pong, outcome, hits, and combat:
+// strike offers, strikes, dispels, coins, and the moods and tactics picked (`duel` is one ghost in an open room).
 // Default is a dry run with stub answers (free). --live calls the real Jev and COSTS MONEY.
 // Run from the dungeon-game directory:
 //   node scripts/measure-memory.mjs                      all fixtures, 60 ticks, stubbed
@@ -247,6 +248,8 @@ for (const name of names) {
   const chest = game.dungeon.treasure;
   const trail = [[...game.pos]];
   let decisions = 0, hits = 0, backForth = 0, chestStep = null, lostStep = null, ticks = 0;
+  let offers = 0, strikes = 0, dispels = 0;
+  const picks = { mind: {}, tactic: {} }; // what the decision ticks chose, counted
   const chaseOvers = []; // steps of 'chase_over' decisions
   let reEncounters = 0;
   const pending = new Set(); // chase_over steps not yet followed by a sighting
@@ -255,9 +258,13 @@ for (const name of names) {
     const step = game.steps;
     if (turn.decision) {
       decisions++;
+      for (const [k, v] of [['mind', turn.decision.sentiment?.choice], ['tactic', turn.decision.tactic?.choice]]) if (v) picks[k][v] = (picks[k][v] ?? 0) + 1;
       if (turn.decision.trigger === 'chase_over') { chaseOvers.push(step); pending.add(step); }
     }
     hits += (turn.events ?? []).filter((e) => e.type === 'hit').length;
+    if (run.explorer.lastRequests().some((r) => r.questions?.skill)) offers++;
+    strikes += (turn.events ?? []).filter((e) => e.type === 'strike' && e.id === 'explorer').length;
+    dispels += (turn.events ?? []).filter((e) => e.type === 'dispelled').length;
     const seen = game.adversaries.some((a) => seesExplorer(game, a));
     for (const s of [...pending]) {
       if (step - s > REENCOUNTER_WINDOW) pending.delete(s);
@@ -270,7 +277,7 @@ for (const name of names) {
     if (game.lost && lostStep === null) lostStep = step;
   }
   const outcome = game.won ? `won@${game.steps}` : game.lost ? `lost@${lostStep ?? game.steps}` : 'running';
-  rows.push({ name, ticks, sizes, decisions, chaseOvers: chaseOvers.length, reEncounters, backForth, chest: chestStep ?? '-', outcome, hits });
+  rows.push({ name, ticks, sizes, decisions, chaseOvers: chaseOvers.length, reEncounters, backForth, chest: chestStep ?? '-', outcome, hits, offers, strikes, dispels, coins: game.coins, picks });
 }
 
 const stat = (a) => (a.length ? `${Math.round(a.reduce((s, n) => s + n, 0) / a.length)}/${Math.max(...a)} (n=${a.length})` : '-');
@@ -280,8 +287,10 @@ for (const r of rows) {
   console.log(`${r.name}: ${r.ticks} ticks, ${r.outcome}, chest ${r.chest}, hits ${r.hits}`);
   console.log(`  bytes sentiment ${stat(r.sizes['explorer sentiment'])} | tick ${stat(r.sizes['explorer tick'])} | adversary ${stat(r.sizes.adversary)}`);
   console.log(`  decisions ${r.decisions} (chase_over ${r.chaseOvers}) | re-encounters ${r.reEncounters} | back-and-forth ${r.backForth}`);
+  const counts = (o) => Object.entries(o).map(([k, n]) => `${k}×${n}`).join(', ') || '-';
+  console.log(`  combat: skill offered on ${r.offers} ticks, strikes ${r.strikes}, dispels ${r.dispels}, coins ${r.coins} | minds ${counts(r.picks.mind)} | tactics ${counts(r.picks.tactic)}`);
 }
-const cols = ['arena', 'ticks', 'decisions', 're-enc', 'ping-pong', 'chest', 'outcome', 'hits'];
+const cols = ['arena', 'ticks', 'decisions', 're-enc', 'ping-pong', 'chest', 'outcome', 'hits', 'offers', 'strikes', 'dispels', 'coins'];
 console.log(`\n${cols.join('\t')}`);
-for (const r of rows) console.log([r.name, r.ticks, r.decisions, r.reEncounters, r.backForth, r.chest, r.outcome, r.hits].join('\t'));
+for (const r of rows) console.log([r.name, r.ticks, r.decisions, r.reEncounters, r.backForth, r.chest, r.outcome, r.hits, r.offers, r.strikes, r.dispels, r.coins].join('\t'));
 rmSync(dir, { recursive: true, force: true });

@@ -6,14 +6,14 @@
 //
 //   approach          - how it is currently exploring, plus approaches tried and dropped
 //                       (Jev reviews it every few steps)
-//   progress          - counters the approach review is judged from
+//   progress          - counters the approach review is judged from, plus the coins carried
 //   sentiment         - the mind Jev picked at the latest approach decision ({ id, since_step }); its code profile changes behaviour (see brain.js)
 //   sentiment_history - the last few picks, [{ id, step }]
 //   recent            - the last 6 moves and 8 positions (a ping-pong shows as back_and_forth)
-//   encounters        - counters: { count, escaped, hits, last_at_step }
+//   encounters        - counters: { count, escaped, hits, dispelled, last_at_step }
 //   events            - up to 6 short milestones [{ step, text }] (chest seen, hit, switch, win)
 //   skills            - a plain-JSON mirror of the skill set, up to 4: [{ id, kind, name, text, ready, cooldown_left }]
-//                       (brain.js rewrites it every turn from the live skills; Jev's state carries it without `text`)
+//                       (brain.js rewrites it every turn from the live skills; Jev's state carries id -> readiness only)
 //   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the chest is
 //                       pinned, the oldest of the rest is evicted. Perception turns them into
 //                       relative direction/distance each tick.
@@ -54,11 +54,11 @@ export function createMemory({ approachId, approachText, thought, sentiment, sta
     approach: {
       id: approachId, current: approachText.slice(0, LIMITS.approach), thought: thought.slice(0, LIMITS.thought), since_step: 1, tried: [], interrupted: null,
     },
-    progress: { steps: 0, known_floor_cells: 0, revealed_since_approach: 0, steps_since_approach: 0, revisits_last_10: 0 },
+    progress: { steps: 0, known_floor_cells: 0, revealed_since_approach: 0, steps_since_approach: 0, revisits_last_10: 0, coins: 0 },
     sentiment: { id: sentiment.id, since_step: 0 },
     sentiment_history: [],
     recent: { moves: [], cells: [[...start]], back_and_forth: 0 },
-    encounters: { count: 0, escaped: 0, hits: 0, last_at_step: 0 },
+    encounters: { count: 0, escaped: 0, hits: 0, dispelled: 0, last_at_step: 0 },
     events: [],
     skills: [],
     landmarks: [],
@@ -70,10 +70,11 @@ export function createMemory({ approachId, approachText, thought, sentiment, sta
 export { backAndForth };
 
 // Called once per step, after the move was applied. `pos` is where the explorer stands now.
-export function recordStep(memory, { step, dir, pos, revealed, revisit, known_floor_cells }) {
+export function recordStep(memory, { step, dir, pos, revealed, revisit, known_floor_cells, coins = memory.progress.coins }) {
   const p = memory.progress;
   p.steps = step;
   p.known_floor_cells = known_floor_cells;
+  p.coins = coins;
   p.revealed_since_approach += revealed;
   p.steps_since_approach += 1;
   const window = revisitWindows.get(memory) ?? [];
@@ -96,7 +97,7 @@ export function addEvent(memory, step, text) {
   memory.events = memory.events.slice(-LIMITS.events);
 }
 
-// encounters counters: 'count' (a new encounter began), 'escaped' (it ended unhurt) or 'hits'.
+// encounters counters: 'count' (a new encounter began), 'escaped' (it ended unhurt), 'hits' or 'dispelled'.
 export function countEncounter(memory, field, step) {
   memory.encounters[field] += 1;
   memory.encounters.last_at_step = step;
@@ -207,7 +208,7 @@ export function validateMemory(m) {
   }
   const p = m.progress;
   if (!p || typeof p !== 'object') fail('progress');
-  for (const k of ['steps', 'known_floor_cells', 'revealed_since_approach', 'steps_since_approach', 'revisits_last_10']) {
+  for (const k of ['steps', 'known_floor_cells', 'revealed_since_approach', 'steps_since_approach', 'revisits_last_10', 'coins']) {
     if (!isNum(p[k])) fail(`progress.${k}`);
   }
   const s = m.sentiment;
@@ -223,7 +224,7 @@ export function validateMemory(m) {
   if (!Number.isInteger(r.back_and_forth) || r.back_and_forth < 0 || r.back_and_forth > LIMITS.recentMoves) fail('recent.back_and_forth');
   const e = m.encounters;
   if (!e || typeof e !== 'object') fail('encounters');
-  for (const k of ['count', 'escaped', 'hits', 'last_at_step']) {
+  for (const k of ['count', 'escaped', 'hits', 'dispelled', 'last_at_step']) {
     if (!Number.isInteger(e[k]) || e[k] < 0) fail(`encounters.${k}`);
   }
   if (!Array.isArray(m.events) || m.events.length > LIMITS.events) fail('events');
@@ -259,7 +260,7 @@ export function renderMarkdown(m) {
   lines.push('', '## Mind', `**${s.id}**${s.since_step ? ` since step ${s.since_step}` : ' (default, not yet picked)'}`);
   if (m.sentiment_history.length) lines.push(`- Recent picks: ${m.sentiment_history.map((h) => `${h.id} (step ${h.step})`).join(', ')}`);
   const e = m.encounters;
-  lines.push('', '## Encounters', `- ${e.count} met, ${e.escaped} escaped, ${e.hits} hit${e.hits === 1 ? '' : 's'}${e.last_at_step ? `, last at step ${e.last_at_step}` : ''}`);
+  lines.push('', '## Encounters', `- ${e.count} met, ${e.escaped} escaped, ${e.hits} hit${e.hits === 1 ? '' : 's'}, ${e.dispelled} dispelled${e.last_at_step ? `, last at step ${e.last_at_step}` : ''}`);
   lines.push('', '## Skills');
   if (!m.skills.length) lines.push('_None._');
   for (const k of m.skills) lines.push(`- **${k.name}** (${k.kind}): ${k.ready ? 'ready' : `ready again in ${k.cooldown_left} step${k.cooldown_left === 1 ? '' : 's'}`}${k.text ? ` — ${k.text}` : ''}`);
@@ -273,6 +274,7 @@ export function renderMarkdown(m) {
     '',
     '## Progress',
     `- Steps: ${p.steps}`,
+    `- Coins: ${p.coins}`,
     `- Known floor cells: ${p.known_floor_cells}`,
     `- Since this approach: ${p.steps_since_approach} steps, ${p.revealed_since_approach} cells revealed`,
     `- Revisits in the last 10 steps: ${p.revisits_last_10}`,

@@ -23,7 +23,7 @@ import {
   compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, reachableFrontier, sameCell, step, wouldReveal,
 } from './known-map.js';
 import {
-  FACE_OFF_MIN_SIDE, encounterFacts, escapeTarget, faceOffTarget, goalsAt, hiddenFromAll, isRoomCell, openArea, safeDistances,
+  encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, hpText, isRoomCell, safeDistances,
   threatDistance, threatsOf,
 } from './encounter.js';
 
@@ -40,9 +40,9 @@ export const APPROACHES = {
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
   },
   run_away: { text: 'Run away from the adversary: get away from it, keep escape routes open, and avoid dead ends.', thought: 'Run away!', tactic: true, brief: 'Run away: get clear and keep escape routes open.' },
-  face_off: {
-    text: 'Face off: hold ground in the open space, keep a safe gap, and dodge around the adversary as it commits (it is slower), then continue.',
-    thought: 'Face off.', tactic: true, brief: 'Hold ground in the open and dodge around it as it commits (it is slower).',
+  engage: {
+    text: 'Engage: fight the adversary with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
+    thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
   },
   hide: { text: "Duck out of sight: reach a known cell outside the adversary's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
   race_to_chest: { text: 'Race the adversary to the seen chest along the known path, staying out of its reach.', thought: 'Go for the chest!', tactic: true, needsTreasure: true, brief: 'Race it to the seen chest along the known path.' },
@@ -147,7 +147,8 @@ function frozenThreats(world, remembered) {
 // around as the explorer moves (the "past the adversary" test depends on where the explorer is).
 // `avoid` (optional Set from avoidZone): the exploration approaches skip frontier cells in it
 // while any other frontier cell exists.
-export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [] } = {}) {
+// `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage.
+export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null } = {}) {
   const dist = knownDistances(world, world.pos);
 
   if (approachId === 'run_away') {
@@ -173,7 +174,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
       return { cell: [...chest], steps: safe.get(chest), why: `The chest is ${plural(safe.get(chest), 'step')} away by a known path that keeps the adversary at least ${plural(minGap, 'step')} off.` };
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
-    if (approachId === 'face_off') return faceOffTarget(world, threats, minGap, openArea(world));
+    if (approachId === 'engage') return engageTarget(world, threats, { stunned });
     const safe = safeDistances(world, threats, minGap);
     const goals = goalsAt(world, threats, safe);
     if (goal && !sameCell(goal, world.pos) && safe.has(goal)) {
@@ -250,8 +251,9 @@ function hereKind(world) {
 
 // Feasible tactics for a minimum gap, from known cells and visible adversaries only.
 // -> { [id]: { target, fact } } (infeasible tactics are left out); empty while nothing is in sight.
-// `armed`: the explorer holds a ready attack skill, so face_off says it can strike if the adversary comes adjacent.
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false } = {}) {
+// `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
+// closing in is the point).
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -259,16 +261,16 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   const s = enc.survey;
   const add = (id, ok) => {
     if (!ok) return;
-    const target = approachTarget(world, id, { minGap, exclude });
+    const target = approachTarget(world, id, { minGap, exclude, stunned });
     // `exclude` (cells a ping-pong bounced between, and the target that led there) rules a tactic out
     // when its only target is one of them; run_away picks another cell by itself.
     if (target && !exclude?.has(key(target.cell))) {
-      out[id] = { target, fact: armed && id === 'face_off' ? `${target.why} You can strike it if it comes adjacent.` : target.why };
+      out[id] = { target, fact: target.why };
     }
   };
   add('slip_past', s.slip && s.slip.gap >= minGap);
   add('run_away', true);
-  add('face_off', enc.area && Math.min(enc.area.w, enc.area.h) >= FACE_OFF_MIN_SIDE && enc.facts.gap_now >= minGap);
+  add('engage', armed);
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_chest', treasureSeen(world) && s.chest && s.chest.gap >= minGap);
   add('carry_on', threats.every((th) => !th.chasing) && s.frontier && s.frontier.gap >= minGap);
@@ -288,9 +290,27 @@ function rememberedView(world, dist, remembered) {
     id: r.id,
     last_seen_steps_ago: world.steps - r.step,
     was_chasing: r.chasing,
+    ...(r.hp ? { hp: hpText(r) } : {}), // the health bar as it was at the sighting, frozen like the cell
     direction: sameCell(world.pos, r.cell) ? 'here' : compass8(world.pos, r.cell),
     distance: dist.get(r.cell) ?? Math.round(euclid(world.pos, r.cell)),
   }));
+}
+
+// Seen coin piles (lit cells only, via KnownWorld.seenCoins), nearest first, at most COIN_PILES of them:
+// { coins: [{ direction, distance, count }] }, or {} when none is seen (the key is then left out).
+const COIN_PILES = 3;
+function coinView(world, dist) {
+  const piles = new Map();
+  for (const c of world.seenCoins()) {
+    const k = key(c);
+    piles.set(k, { cell: c, count: (piles.get(k)?.count ?? 0) + 1 });
+  }
+  const list = [...piles.values()]
+    .map((p) => ({ ...p, distance: dist.get(p.cell) ?? Math.round(euclid(world.pos, p.cell)) }))
+    .sort((a, b) => a.distance - b.distance || a.cell[1] - b.cell[1] || a.cell[0] - b.cell[0])
+    .slice(0, COIN_PILES)
+    .map((p) => ({ direction: sameCell(world.pos, p.cell) ? 'here' : compass8(world.pos, p.cell), distance: p.distance, count: p.count }));
+  return list.length ? { coins: list } : {};
 }
 
 // Landmarks (memory.landmarks) made relative to the explorer's position, recomputed every tick.
@@ -323,6 +343,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
       lives: world.health, // the explorer's own state: fog-safe
       max_lives: world.maxHealth,
       hit_protection_steps: world.graceLeft, // steps left in which no adversary can hurt it (0 = none)
+      coins: world.coins, // its own purse: fog-safe
     },
     surroundings: {
       here: hereKind(world),
@@ -337,6 +358,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
       },
       frontier_cells: reachableFrontier(world, dist).length,
       landmarks: landmarkView(world, dist, landmarks),
+      ...coinView(world, dist),
     },
     threats: {
       visible: threats.map((th) => ({
@@ -344,6 +366,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
         direction: compass8(world.pos, th.pos),
         distance: threatDistance(th, world.pos),
         chasing: th.chasing,
+        hp: hpText(th),
       })),
       remembered: rememberedView(world, dist, remembered),
       encounter: encounterFacts(world, threats)?.facts ?? null,
@@ -442,8 +465,8 @@ export function describeMoves(world, approachId, opts = {}) {
 // The same facts split in two: `shared` (threats, sightings, chest, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
-export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0 } = {}) {
-  const target = approachId === 'go_to_treasure' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered });
+export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null } = {}) {
+  const target = approachId === 'go_to_treasure' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned });
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();
   const toTreasure = t ? knownDistances(world, t) : null;

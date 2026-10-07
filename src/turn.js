@@ -67,7 +67,7 @@ export class Run {
     return {
       ...game.publicView(),
       adversaries: game.adversaries.map((a) => ({
-        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, // character, facing, hp: Reveal-only display, the explorer never reads them
+        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, // character, facing: Reveal-only display; hp is drawn over ghosts in sight (the explorer reads the same bar)
         facing: a.facing, hp: a.hp, max_hp: a.maxHp,
       })),
       block: game.block, // the explorer's shield stance: null | { effectiveness, until_step } (its own state)

@@ -294,6 +294,7 @@ export class Game {
     this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
     this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
     this.coins = 0; // the explorer's total
+    this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
     lightAround(this, this.pos);
   }
@@ -373,6 +374,7 @@ export class Game {
       this.coins += here;
     }
     this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
+    if (this.won) this.winBy = 'chest';
     return { moved: true, revealed, revisit, won: this.won, coins: here };
   }
 
@@ -408,6 +410,7 @@ export class Game {
       pos: this.pos,
       steps: this.steps,
       won: this.won,
+      won_by: this.winBy,
       lost: this.lost,
       health: this.health,
       facing: this.facing,

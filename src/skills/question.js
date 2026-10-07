@@ -1,19 +1,27 @@
 // The `skill` Choice question and the confidence floor. `none` is listed first and never shuffled
-// (Jev leans toward the first option; here that bias is wanted: most steps need no skill).
+// (Jev leans toward the first option: for ghosts that bias is wanted; the explorer's neutral wording
+// and its mood's skill line decide when it strikes).
 
 export const SKILL_MIN = 0.5; // a skill is used only when its probability reaches this
 
 // options: { key: { fact } } from SkillSet.options. null when empty (nothing is asked).
-export function skillQuestion(options, priorityLine = '') {
+// neutral: the explorer's wording, which states the choice without steering toward `none` (its mood's
+// priority line says when to strike). Ghosts keep the original wording (their requests stay byte-identical).
+const LEAD = {
+  default: { question: 'Besides the move, use at most one skill this step. Choose `none` unless a skill clearly helps right now.', none: 'Use no skill this step (the usual choice).' },
+  neutral: { question: 'Use at most one skill this step, besides the move.', none: 'No skill this step.' },
+};
+export function skillQuestion(options, priorityLine = '', { neutral = false } = {}) {
   const keys = Object.keys(options ?? {});
   if (!keys.length) return null;
+  const lead = neutral ? LEAD.neutral : LEAD.default;
   return {
     type: 'choice',
     instructions: {
-      question: `Besides the move, use at most one skill this step. Choose \`none\` unless a skill clearly helps right now.${priorityLine ? ` ${priorityLine}` : ''}`,
+      question: `${lead.question}${priorityLine ? ` ${priorityLine}` : ''}`,
     },
     criteria: {
-      none: 'Use no skill this step (the usual choice).',
+      none: lead.none,
       ...Object.fromEntries(keys.map((k) => [k, options[k].fact])),
     },
   };

@@ -74,6 +74,12 @@ const ANIM_MS = 260;              // idle animation frame time
 const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
+const SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
+// Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
+const SLASH_COLORS = {
+  sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
+  claw: ['#6b0f12', '#c22a2a', '#ff8f80', '#fff1ea'],
+};
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
 
@@ -92,7 +98,7 @@ const PALETTE = {
   wallMortar: ['#080e21', '#191527', '#3b210b'],
   fog:        ['#0e1937', '#0b142c', '#090f22', '#060a19', '#050710'], // distance 1..5
   trail: '#ffd98c',
-  explorer: '#ffe7b0', chest: '#ffc633', enemy: '#ff4a3a', shadow: 'rgba(0, 0, 0, .45)',
+  explorer: '#ffe7b0', chest: '#ff9a1c', enemy: '#ff4a3a', shadow: 'rgba(0, 0, 0, .45)',
   brain: '#7ee8ff', brainEdge: '#082c36',   // "Jev brain on" marker above a ghost
 };
 
@@ -531,6 +537,58 @@ function blitSprite(spr, x, y, face, alpha = 1) {
   b.restore();
 }
 
+// The goal portal (replaces the chest sprite): a flat, spinning, glowing swirl lying on the
+// floor, 2x2 cells wide (a 64x32 art-px diamond) and centred on the goal cell. Drawn per pixel
+// from a rotating spiral so the art stays crisp; the win cell is still the single goal cell.
+const PORTAL_COLS = ['#2a0c02', '#7a2306', '#c2480e', '#f08a1c', '#ffc933', '#fff1a8'];
+function drawPortal(px, py, now, alpha) {
+  const rx = 30, ry = 15, t = Math.floor(now / 70) * .22;
+  b.save();
+  b.globalCompositeOperation = 'lighter';
+  b.fillStyle = '#ff8a1c';
+  for (const [k, a] of [[1.25, .07], [1.1, .09], [.95, .12]]) {
+    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 240));
+    pixelEllipse(px, py, Math.round(rx * k), Math.round(ry * k));
+  }
+  b.restore();
+  b.globalAlpha = alpha;
+  for (let dy = -ry; dy <= ry; dy++) {
+    const v = dy / (ry + .5), half = Math.round(rx * Math.sqrt(Math.max(0, 1 - v * v)));
+    for (let dx = -half; dx < half; dx++) {
+      const u = (dx + .5) / (rx + .5), r = Math.hypot(u, v);
+      if (r > 1) continue;
+      const arm = Math.sin(3 * Math.atan2(v, u) + r * 7 - t); // three spiral arms, turning
+      let i = Math.floor((1 - r) * 3.2) + (arm > .35 ? 2 : arm > -.2 ? 1 : 0);
+      if (r > .9) i = Math.max(i, 3);           // bright rim
+      b.fillStyle = PORTAL_COLS[Math.max(0, Math.min(PORTAL_COLS.length - 1, i))];
+      b.fillRect(px + dx, py + dy, 1, 1);
+    }
+  }
+  b.globalAlpha = 1;
+}
+
+// A short golden glow around the knight when a coin is picked up: rings that swell and fade,
+// plus four sparkles drifting up. Visual only.
+function drawCoinGlow(px, py, now) {
+  const t = (now - coinGlowAt) / COIN_GLOW_MS;
+  if (t < 0 || t >= 1) return;
+  const fade = 1 - t;
+  b.save();
+  b.globalCompositeOperation = 'lighter';
+  b.fillStyle = '#ffc633';
+  for (const [k, a] of [[1, .12], [.7, .16], [.4, .22]]) {
+    b.globalAlpha = a * fade;
+    pixelEllipse(px, py - 10, Math.round((8 + 14 * t) * k), Math.round((10 + 12 * t) * k));
+  }
+  b.globalAlpha = .9 * fade;
+  b.fillStyle = '#fff1a8';
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.6 + 5 * t;
+    b.fillRect(Math.round(px + Math.cos(a) * (6 + 10 * t)), Math.round(py - 10 - 8 * t + Math.sin(a) * 6), 1, 1);
+  }
+  b.restore();
+}
+
 function draw(now) {
   b.fillStyle = PALETTE.void;
   b.fillRect(0, 0, buf.width, buf.height);
@@ -621,7 +679,7 @@ function drawScene(now) {
     const [gx, gy] = actorPos(a, now);
     ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', face: a.face,
       id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
-      maxHp: reveal && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
+      maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
   const me = actors.get('@');
   const [mx, my] = actorPos(me, now);
@@ -767,6 +825,54 @@ function diamondTile(color, edge = false) {
   }
   return c;
 }
+// Sword slash (every attack): a pixel crescent that sweeps around the attacker through the struck cells,
+// drawn per pixel in a handful of frames (no rotation, so the art stays crisp). Shape: the arc's width swells
+// from a thin tail to a fat head that leads the sweep (the smear frames of a sword swing), the rim is dark
+// blue, the core white. Aimed from the attacker's cell (strike.from) through the centroid of its cells;
+// cells outside the light are skipped unless Reveal is on, like the diamonds.
+const SLASH_FRAMES = 6;
+function drawSlash(st, t, cx, cy, known, reveal) {
+  if (!Array.isArray(st.cells) || !st.cells.length) return;
+  const cells = st.cells.filter((c) => Array.isArray(c) && Number.isInteger(c[0]) && Number.isInteger(c[1]) && (reveal || known(c[0], c[1])));
+  if (!cells.length) return; // fog: a strike nobody can see draws no slash
+  const mx = cells.reduce((s, c) => s + c[0], 0) / cells.length, my = cells.reduce((s, c) => s + c[1], 0) / cells.length;
+  const from = Array.isArray(st.from) ? st.from : [mx, my];
+  const scr = (x, y) => [(x - y) * HW - cx, (x + y) * HH + HH - cy]; // cell centre, as the trail
+  const [ox, oy] = scr(from[0], from[1]), [tx, ty] = scr(mx, my);
+  let dx = tx - ox, dy = ty - oy;
+  if (Math.hypot(dx, dy) < 2) { dx = FACE_X[game.facing] ?? 1; dy = 0; } // no aim known: slash across the cell
+  const aim = Math.atan2(dy, dx);
+  const reach = Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
+  const flip = dx >= 0 ? 1 : -1; // the swing is mirrored for a cut toward the left of the screen
+  const frame = Math.min(SLASH_FRAMES - 1, Math.floor(t * SLASH_FRAMES));
+  const sweepFull = 2.3; // radians covered by a finished slash
+  const p = (frame + 1) / SLASH_FRAMES;                   // how far the head has swept
+  const tail = Math.max(0, p * 1.35 - 1) * sweepFull;       // the tail catches up late: the crescent thins out
+  const head = p * sweepFull;
+  const fade = frame >= SLASH_FRAMES - 2 ? .55 : 1;
+  const pal = SLASH_COLORS[st.by === 'explorer' ? 'sword' : 'claw'];
+  const lead = flip > 0 ? aim - sweepFull / 2 : aim + sweepFull / 2; // where the sweep starts
+  b.globalAlpha = (st.result === 'miss' ? .6 : 1) * fade;
+  const R = Math.ceil(reach + 6);
+  for (let y = -R; y <= R; y++) {
+    for (let x = -R; x <= R; x++) {
+      const r = Math.hypot(x, y);
+      let ang = Math.atan2(y, x) - lead;
+      ang = Math.atan2(Math.sin(ang), Math.cos(ang)) * flip; // signed angle along the sweep, 0 at its start
+      if (ang < tail || ang > head) continue;
+      const u = (ang - tail) / Math.max(.001, head - tail);    // 0 at the tail, 1 at the head
+      const w = 1.5 + 6 * Math.sin(Math.min(1, u * .9 + .1) * Math.PI * .5) * (1 - .35 * (1 - u) * (1 - u)); // half-width
+      const off = r - reach + (u - .5) * 1.5;                 // the arc bows: the head sits a touch further out
+      if (Math.abs(off) > w) continue;
+      const f = 1 - Math.abs(off) / w;                        // 0 at the rim, 1 on the centre line
+      const tone = f > .72 && u > .25 ? 3 : f > .45 ? 2 : f > .2 ? 1 : 0;
+      b.fillStyle = pal[tone];
+      b.fillRect(Math.round(ox + x), Math.round(oy + y), 1, 1);
+    }
+  }
+  b.globalAlpha = 1;
+}
+
 // pass 'fill' runs in the flats pass, 'edge' after the entities; only 'edge' retires strikeFx.
 function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   if (!strikeFx) return;
@@ -790,6 +896,11 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
     }
   }
   b.globalAlpha = 1;
+  // The slash rides on the 'edge' pass (after the entities, so nothing hides it) for its own shorter time.
+  if (pass === 'edge') {
+    const t = (now - strikeFx.t0) / SLASH_MS;
+    if (t < 1) for (const st of strikeFx.strikes) drawSlash(st, t, cx, cy, known, reveal);
+  }
 }
 
 // Shield glyph beside the knight while game.block is active (5x6 art px).
@@ -887,11 +998,7 @@ function drawEntity(en, now, cx, cy) {
     return;
   }
   if (en.kind === 'chest') {
-    b.globalAlpha = en.alpha * .8;
-    b.fillStyle = PALETTE.shadow;
-    pixelEllipse(px, py + 1, 7, 2);
-    b.globalAlpha = 1;
-    blitSprite(frameOf(sprites.chest, now), px, py, 1, en.alpha);
+    drawPortal(px, py, now, en.alpha);
     return;
   }
   if (en.kind === 'knight') {
@@ -901,6 +1008,7 @@ function drawEntity(en, now, cx, cy) {
     // Hit protection (grace after a hit): the knight blinks.
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
+    drawCoinGlow(px, py, now);
     if (game?.block) drawShield(px + (en.face < 0 ? -12 : 8), py - 16);
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
@@ -924,7 +1032,8 @@ function drawEntity(en, now, cx, cy) {
   blitSprite(spr, px, py - 2 + bob, en.face, en.alpha);
   const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
   heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
-  // Hit points (Reveal map only, never a tell in normal play): one pip per point.
+  // Health bar: one pip per hit point, over every ghost in sight (the explorer sees it too: threats.visible hp);
+  // an unseen ghost's shows only with Reveal on.
   if (en.maxHp) {
     const x0 = px - Math.floor((en.maxHp * 4 - 1) / 2);
     b.globalAlpha = en.alpha;
@@ -1418,6 +1527,7 @@ const EVENT_TEXT = {
   caught: (id) => `${id} caught Jev`,
   blocked: (id) => `Shield blocked ${id}'s claw`,
   dispelled: (id) => `Jev dispelled ${id}`,
+  cleared: () => 'Every adversary is gone: Jev wins',
   struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
   bump: (id) => `${id} bumped Jev`,
   coin_drop: (id) => `${id} dropped a coin`,
@@ -1517,9 +1627,13 @@ function logEvents(turn) {
   }
   eventLog.length = Math.min(eventLog.length, LOG_MAX);
   if ((turn.events ?? []).some((e) => e.type === 'hit')) flashHit();
+  if ((turn.events ?? []).some((e) => e.type === 'coin')) coinGlowAt = performance.now();
 }
 
 // Brief red flash over the board when Jev loses a life (restarts the CSS animation).
+let coinGlowAt = -1e9; // when the knight last picked up a coin (drives the golden glow)
+const COIN_GLOW_MS = 700;
+
 function flashHit() {
   const wrap = $('board-wrap');
   wrap.classList.remove('hit');
@@ -1711,10 +1825,12 @@ function endGame() {
   running = false;
   renderButtons();
   const lost = !!game.lost;
+  const cleared = !lost && game.won_by === 'cleared';
   setStatus(lost
     ? `Jev lost all lives after ${game.steps} steps.`
-    : `Jev found the treasure in ${game.steps} steps.`);
-  $('over-title').textContent = lost ? 'Jev lost all lives' : 'Treasure found';
+    : cleared ? `Jev dispelled every adversary in ${game.steps} steps.`
+      : `Jev found the treasure in ${game.steps} steps.`);
+  $('over-title').textContent = lost ? 'Jev lost all lives' : cleared ? 'Dungeon cleared' : 'Treasure found';
   $('overlay').querySelector('.modal').classList.toggle('lost', lost);
   const stats = {
     Steps: game.steps,

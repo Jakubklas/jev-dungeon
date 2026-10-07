@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Adversary, visibleAdversaries, spawnAdversaries } from '../src/characters/adversary/adversary.js';
+import { configureSkills, skillConfig } from '../src/skills/loadouts.js';
 
 // Tripwire: the brain checks inject stubs; a missed one would call the paid Jev API.
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
@@ -49,7 +50,8 @@ const ALLOWED_IMPORTS = {
   '../shared/memory-kit.js': null,
   // Skills (PLAN-skills.md): the brain builds its skill set and asks the `skill` question through these two
   // modules only. They hold no game state; src/skills/ is guarded below (section 0c). resolve.js is not allowed.
-  '../../skills/loadouts.js': ['buildSkillSet'],
+  // skillConfig returns the settings numbers (stun ticks, coin drop chance) for the rules sentence: no game state.
+  '../../skills/loadouts.js': ['buildSkillSet', 'skillConfig'],
   '../../skills/question.js': ['skillQuestion', 'pickSkill'],
 };
 function fogViolations(name, source, allowedImports = ALLOWED_IMPORTS) {
@@ -513,7 +515,19 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   const aggro = tacticFeasibility(new KnownWorld(g), AGGRO), scared = tacticFeasibility(new KnownWorld(g), SCARED);
   if (!aggro.slip_past) fail(`room: slip_past not feasible for aggressive: ${JSON.stringify(Object.keys(aggro))}`);
   if (scared.slip_past) fail(`room: slip_past feasible for scared (min gap ${SCARED}): ${scared.slip_past.fact}`);
-  if (!aggro.face_off) fail('room: face_off not feasible in a 14x9 room');
+  // engage (close in and fight) needs a ready sword: offered only when armed, for any minimum gap.
+  if (aggro.engage) fail('room: engage offered while unarmed');
+  const armedAggro = tacticFeasibility(new KnownWorld(g), AGGRO, { armed: true }), armedScared = tacticFeasibility(new KnownWorld(g), SCARED, { armed: true });
+  if (!armedAggro.engage || !armedScared.engage) fail('room: engage not offered while armed');
+  else {
+    // A hunting ghost is met 2 steps off (it steps in, the explorer strikes first); one the explorer just
+    // stunned is closed in on.
+    const t = armedAggro.engage.target;
+    if (Math.abs(t.cell[0] - 5) + Math.abs(t.cell[1] - 8) !== 2) fail(`room: engage target ${t.cell} is not 2 steps from the chasing adversary at 5,8`);
+    if (!/puts you 2 steps from a1 \(2 of 2 hp\): wait there/.test(armedAggro.engage.fact)) fail(`room: engage fact ${armedAggro.engage.fact}`);
+    const st = tacticFeasibility(new KnownWorld(g), AGGRO, { armed: true, stunned: new Set(['a1']) }).engage;
+    if (!st || Math.abs(st.target.cell[0] - 5) + Math.abs(st.target.cell[1] - 8) !== 1 || !/still stunned by your strike/.test(st.fact)) fail(`room: engage on a stunned ghost ${JSON.stringify(st)}`);
+  }
   if (!aggro.run_away || !scared.run_away) fail('room: run_away missing');
   if (aggro.carry_on) fail('room: carry_on offered while chased');
   const enc = situation(new KnownWorld(g)).threats.encounter;
@@ -524,7 +538,8 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   if (!Object.values(movesScared).some((m) => m.includes('below your minimum gap of 9'))) fail('min gap warning missing in move facts');
   g.adversaries = [chaser([5, 8], 'patrol')];
   if (!tacticFeasibility(new KnownWorld(g), AGGRO).carry_on) fail('room: carry_on not offered for a patroller');
-  console.log('encounter (room): slip_past feasible for aggressive, not for scared; face_off, run_away, carry_on ok');
+  console.log('encounter (room): slip_past feasible for aggressive, not for scared; engage only when armed; run_away, carry_on ok');
+  console.log('  engage (armed):', armedAggro.engage?.fact);
   console.log('  encounter facts:', JSON.stringify(enc));
   console.log('  slip_past (aggressive):', aggro.slip_past.fact);
   console.log('  move facts slip_past:', JSON.stringify(moves));
@@ -534,7 +549,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   const c = handGame(corridor, [2, 1], 8);
   c.adversaries = [chaser([6, 1])];
   const cf = tacticFeasibility(new KnownWorld(c), AGGRO);
-  if (cf.slip_past || cf.face_off || cf.hide) fail(`corridor: ${Object.keys(cf)} offered`);
+  if (cf.slip_past || cf.engage || cf.hide) fail(`corridor: ${Object.keys(cf)} offered`);
   if (!cf.run_away) fail('corridor: run_away missing');
   if (!/Narrow corridor/.test(situation(new KnownWorld(c)).threats.encounter?.space)) fail(`corridor space ${situation(new KnownWorld(c)).threats.encounter?.space}`);
 
@@ -918,9 +933,10 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   }
 }
 
-// 4e-skills. Fog of skill facts: a VISIBLE ghost's private hit points, stun and cooldown never reach Jev, so
-//     scrambling them leaves every request byte-identical (the `skill` question included); after a dispel the
-//     ghost is not in threats.remembered. Stub Jev, no network, temp memory dir.
+// 4e-skills. Fog of skill facts: a VISIBLE ghost's stun and cooldowns never reach Jev, so scrambling them
+//     leaves every request byte-identical (the `skill` question included). Its health bar (hp) is seen
+//     (user-approved amendment of rule 1), so a different hp must change the request; an UNSEEN ghost's hp
+//     must not. After a dispel the ghost is not in threats.remembered. Stub Jev, no network, temp memory dir.
 {
   const room = [
     '###########',
@@ -948,27 +964,31 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   };
   // Scrambles the private state of a ghost without moving it: hit points and stun (and its skill cooldowns,
   // when the ghost exposes a skill set), then puts it back where it stood.
-  const scramble = (g, a) => {
+  // A 3-hp ghost hit once (2 of 3 hp, put back where it stood). `stunned`: the stun and its skill
+  // cooldowns stay on (the private state); otherwise the stun is ticked away first.
+  const hurt = (a, stunned) => {
     const at = [...a.pos];
     a.takeHit(1, [at[0] - 1, at[1]]);
     a.pos = at;
+    if (!stunned) { while (a.tickStun()); return; }
     const ks = a.skills?.skills ?? a.skillSet?.skills;
     if (Array.isArray(ks)) for (const k of ks) k.markUsed?.(0);
   };
-  // Adjacent ghost: the gate opens and the attack is offered, whatever the ghost's private state.
-  const adj = async (scrambled) => {
+  // Adjacent ghost: the gate opens and the attack is offered. variant: 'calm' (2 of 3 hp), 'stunned' (2 of 3 hp,
+  // stunned, claw on cooldown) or 'fresh' (3 of 3 hp).
+  const adj = async (variant) => {
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     bodies = [];
     const g = handGame(room, [2, 3]);
-    g.adversaries = [chaser([3, 3])];
-    if (scrambled) scramble(g, g.adversaries[0]);
+    g.adversaries = [new Adversary({ id: 'a1', pos: [3, 3], mode: 'chase', hp: 3 })];
+    if (variant !== 'fresh') hurt(g.adversaries[0], variant === 'stunned');
     const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), memoryDir: pathToFileURL(dir + '/') });
     await seeded(1, () => brain.takeTurn());
     const out = { bodies: [...bodies], reqs: brain.lastRequests() };
     rmSync(dir, { recursive: true, force: true });
     return out;
   };
-  const A = await adj(false), B = await adj(true);
+  const A = await adj('calm'), B = await adj('stunned'), F = await adj('fresh');
   const skillQ = (r) => r.reqs.map((x) => x.questions?.skill).find(Boolean);
   if (!skillQ(A)) fail('skill twin: no skill question with a visible adjacent ghost');
   else {
@@ -976,30 +996,101 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     if (JSON.stringify(skillQ(A)) !== JSON.stringify(skillQ(B))) fail(`skill twin: skill question depends on a visible ghost's private state: ${firstDiff(skillQ(A), skillQ(B))}`);
   }
   if (A.bodies.join('|') !== B.bodies.join('|')) fail(`skill twin: requests depend on a visible ghost's private state: ${firstDiff(A.bodies.map((b) => JSON.parse(b)), B.bodies.map((b) => JSON.parse(b)))}`);
+  // The health bar is seen: 2 of 3 hp and 3 of 3 hp must read differently, in threats.visible and the strike option.
+  {
+    const hpOf = (r) => r.reqs[0]?.state?.threats?.visible?.[0]?.hp;
+    if (hpOf(A) !== '2 of 3 hp' || hpOf(F) !== '3 of 3 hp') fail(`health bar: threats.visible hp ${hpOf(A)} / ${hpOf(F)}`);
+    const strike = (r) => Object.entries(skillQ(r)?.criteria ?? {}).find(([k]) => k.startsWith('sword_strike_'))?.[1] ?? '';
+    if (!/a1 \(2 of 3 hp\) is knocked back and stunned/.test(strike(A))) fail(`health bar: strike fact ${strike(A)}`);
+  }
+  // An UNSEEN ghost's hp never reaches Jev: behind a wall, 1 hp vs 3 hp, byte-identical requests.
+  {
+    const walled = ['###########', '#....#....#', '#....#....#', '#....#....#', '###########'];
+    const unseen = async (hp) => {
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      bodies = [];
+      const g = handGame(walled, [2, 2]);
+      g.adversaries = [new Adversary({ id: 'a1', pos: [8, 2], mode: 'patrol', hp })];
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), memoryDir: pathToFileURL(dir + '/') });
+      await seeded(1, () => brain.takeTurn());
+      rmSync(dir, { recursive: true, force: true });
+      return [...bodies];
+    };
+    const u1 = await unseen(1), u3 = await unseen(3);
+    if (u1.join('|') !== u3.join('|')) fail(`health bar: an unseen ghost's hp reaches Jev: ${firstDiff(u1.map((b) => JSON.parse(b)), u3.map((b) => JSON.parse(b)))}`);
+    if (u1.some((b) => /\bhp\b/.test(JSON.parse(b).state.threats ? JSON.stringify(JSON.parse(b).state.threats) : ''))) fail('health bar: hp in threats with nothing in sight');
+  }
   const maxAdj = Math.max(...A.bodies.map((b) => Buffer.byteLength(b, 'utf8')));
   if (maxAdj > 9500) fail(`adjacent-ghost request is ${maxAdj} bytes (> 9500)`);
   console.log(`  adjacent ghost + skill question: ${A.bodies.length} requests, largest ${maxAdj} bytes (skill question ${JSON.stringify(skillQ(A) ?? {}).length} bytes)`);
+
+  // A life lost during a tactic asks again next tick (engage never fails by gap on its own): trigger 'hit'.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = handGame(room, [2, 3]);
+    g.adversaries = [new Adversary({ id: 'a1', pos: [7, 3], mode: 'chase' })];
+    const pickAsk = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+      if (q.type === 'noul') return [k, { noul: 0.9 }];
+      const keys = Object.keys(q.criteria);
+      const c = k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
+      return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+    }));
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: pickAsk, memoryDir: pathToFileURL(dir + '/') });
+    await seeded(3, () => brain.takeTurn());
+    if (brain.memory.approach.id !== 'engage') fail(`hit re-decision: engage not taken (${brain.memory.approach.id})`);
+    else {
+      await brain.noteHit('a1');
+      const t2 = await seeded(4, () => brain.takeTurn());
+      if (t2.decision?.trigger !== 'hit') fail(`hit re-decision: next tick's trigger is ${t2.decision?.trigger ?? 'none'}`);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 
   // Dispel: one strike on a 1-hp ghost removes it; the next request lists it neither as visible nor remembered.
   {
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     bodies = [];
     const g = handGame(room, [2, 3]);
-    g.adversaries = [chaser([3, 3])];
+    // A spare patrolling ghost out of sight (7.3 cells away): dispelling the LAST ghost wins the game, which would end the test.
+    g.adversaries = [chaser([3, 3]), chaser([9, 5], 'patrol', 'a2')];
     const ghost = g.adversaries[0];
     // Bring it to 1 hp, then stand it next to the explorer again (a hit knocks it back).
     while (ghost.hp > 1) ghost.takeHit(1, [2, 3]);
     ghost.pos = [3, 3];
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(true), memoryDir: pathToFileURL(dir + '/') });
+    // The strike's own step stays put (`stay`), so the coin it drops (chance 1 here) lies next to the explorer;
+    // the next step goes right, onto the pile.
+    const step = (dir) => async ({ body, questions }) => {
+      bodies.push(body);
+      return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.9 }];
+        const keys = Object.keys(q.criteria);
+        const c = k === 'skill' ? (keys.find((x) => x !== 'none') ?? 'none') : keys.includes(dir) ? dir : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+    };
+    const chance = skillConfig().coinDropChance;
+    configureSkills({ ...skillConfig(), coinDropChance: 1 });
+    let next = 'stay';
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: (x) => step(next)(x), memoryDir: pathToFileURL(dir + '/') });
     const t1 = await seeded(1, () => brain.takeTurn());
-    if (g.adversaries.length) fail(`dispel: the ghost is still in the game after a strike (skill_decision ${JSON.stringify(t1.skill_decision)})`);
+    const sq = brain.lastRequests().map((r) => r.questions?.skill).find(Boolean);
+    if (!sq || /Choose `none` unless/.test(sq.instructions.question)) fail(`skill question: not the neutral explorer wording: ${sq?.instructions?.question}`);
+    if (g.adversaries.some((a) => a.id === 'a1')) fail(`dispel: the ghost is still in the game after a strike (skill_decision ${JSON.stringify(t1.skill_decision)})`);
     else {
+      next = 'right';
       await seeded(2, () => brain.takeTurn());
-      const th = brain.lastRequest().state.threats;
+      const st = brain.lastRequest().state;
+      const th = st.threats;
       if (th.remembered.length || th.visible.length) fail(`dispel: the dispelled ghost is still listed: ${JSON.stringify(th)}`);
-      if (!brain.memory.events.some((e) => /Dispelled a1/.test(e.text))) fail('dispel: no dispel event in memory');
-      console.log('skill fog twin: skill question and requests byte-identical with a visible ghost scrambled; dispelled ghost not remembered');
+      if (!brain.memory.events.some((e) => e.text === 'Dispelled a1; it dropped a coin.')) fail(`dispel: no dispel event with the coin in memory: ${JSON.stringify(brain.memory.events)}`);
+      if (brain.memory.encounters.dispelled !== 1) fail(`dispel: encounters.dispelled ${brain.memory.encounters.dispelled}`);
+      if (st.self.coins !== 0 || JSON.stringify(st.surroundings.coins) !== '[{"direction":"east","distance":1,"count":1}]') fail(`coins: self ${st.self.coins}, surroundings ${JSON.stringify(st.surroundings.coins)}`);
+      if (!/drops a coin every time/.test(st.game)) fail(`coins: rules sentence lacks the drop chance: ${st.game}`);
+      if (g.coins !== 1 || brain.memory.progress.coins !== 1 || !brain.memory.events.some((e) => e.text === 'Picked up a coin: 1 in all.')) fail(`coins: pickup not recorded (game ${g.coins}, memory ${brain.memory.progress.coins}, events ${JSON.stringify(brain.memory.events)})`);
+      validateMemory(brain.memory);
+      console.log('skill fog twin: requests byte-identical with a visible ghost\'s stun and cooldowns scrambled; its health bar read, an unseen one\'s not; dispel counted, its coin seen and picked up');
     }
+    configureSkills({ ...skillConfig(), coinDropChance: chance });
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -1011,7 +1102,10 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 //     chase_over the explorer must not walk back toward the frozen sighting while another frontier exists.
 {
   const BAD = /Moves toward|below your minimum|Steps into/;
-  const smartAsk = (mood) => async ({ questions }) => {
+  // Like Jev, it reads a speculative move_if_<tactic> option together with that move's shared facts
+  // (`surroundings.moves`, sent once beside the per-tactic questions).
+  const smartAsk = (mood) => async ({ questions, state }) => {
+    const shared = state?.surroundings?.moves ?? {};
     const answers = {};
     for (const [k, q] of Object.entries(questions)) {
       if (q.type === 'noul') { answers[k] = { noul: 0.9 }; continue; }
@@ -1028,7 +1122,8 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
             (/Closer to the target|Reaches the target/.test(t) ? 100 : 0) + (away ? +away[1] : same ? +same[1] - 0.5 : 0) - (/Goes back/.test(t) ? 1 : 0);
         };
         const moves = ids.filter((d) => d !== STAY);
-        c = moves.reduce((best, d) => (score(q.criteria[d]) > score(q.criteria[best]) ? d : best), moves[0]);
+        const text = (d) => (k.startsWith('move_if_') ? `${shared[d] ?? ''} ${q.criteria[d]}` : q.criteria[d]);
+        c = moves.reduce((best, d) => (score(text(d)) > score(text(best)) ? d : best), moves[0]);
       }
       answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
     }

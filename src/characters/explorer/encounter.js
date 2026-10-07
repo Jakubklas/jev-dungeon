@@ -1,6 +1,6 @@
 // The encounter model: what the explorer can work out about visible adversaries from known
 // cells alone. Gap-limited BFS ("safe distances"), route survey (closest approach per goal
-// type), hiding cells (line of sight over known tiles, unknown blocks), slip/escape/face-off
+// type), hiding cells (line of sight over known tiles, unknown blocks), slip/escape/engage
 // targets, dead ends, and the sentiment-free `threats.encounter` facts (who and where is in
 // `threats.visible`). Tactic feasibility
 // and options stay in perception.js because they need approachTarget, which needs this model.
@@ -11,9 +11,7 @@ import { compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor,
 
 const MAX_GAP = 6; // the route survey looks for closest approaches up to this many steps
 const HIDE_MAX_STEPS = 10; // a hiding cell farther than this is not "ducking"
-const FACE_OFF_REACH = 6; // face_off stays within this many steps of where it stood
 const AREA_CAP = 600; // flood-fill cap for the open area around the explorer
-export const FACE_OFF_MIN_SIDE = 5; // an open area narrower than this is no place to dodge
 
 // Most steps an adversary can have taken by the time the explorer has taken `i` (rounded up: conservative).
 const advSteps = (i) => Math.ceil(i * ADVERSARY_SPEED - 1e-9);
@@ -60,6 +58,8 @@ export function threatsOf(world) {
     id: a.id,
     pos: a.pos,
     chasing: a.mode === 'chase',
+    hp: a.hp, // the health bar over it (KnownWorld: seen, so fog-safe)
+    maxHp: a.maxHp,
     dist: knownFloor(world, a.pos) ? knownDistances(world, a.pos) : null,
   }));
 }
@@ -222,22 +222,46 @@ export function openArea(world) {
   return { cells, set, w: x1 - x0 + 1, h: y1 - y0 + 1, exits: mouths.size, unexplored };
 }
 
-export function faceOffTarget(world, threats, minGap, area) {
-  if (!threats.length || !area || Math.min(area.w, area.h) < FACE_OFF_MIN_SIDE) return null;
-  if (Math.min(...threats.map((t) => threatDistance(t, world.pos))) < minGap) return null;
-  const dist = safeDistances(world, threats, minGap);
-  const cands = area.cells
-    .filter((c) => !sameCell(c, world.pos) && dist.has(c) && dist.get(c) <= FACE_OFF_REACH)
-    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
-    .map((c) => ({ cell: c, steps: dist.get(c), theirs: Math.min(...threats.map((t) => threatDistance(t, c))) }));
-  // Hold the room: the nearby cell that gains the most gap, not the farthest bolt-hole.
-  const best = pick(cands, (f) => (f.theirs - advSteps(f.steps)) * 10 - f.steps);
+// "1 of 2 hp": the health bar the explorer sees over a visible adversary.
+export const hpText = (th) => `${th.hp} of ${th.maxHp} hp`;
+
+// engage: where to stand to fight. The explorer acts first in a tick (its strike lands before the ghosts
+// move) and a hit stuns, so the safe way in is to let a ghost step next to you and strike first: walking up
+// to a hunting ghost hands it the first claw. So, per visible adversary: one the explorer stunned with its
+// own strike (`stunned`, ids from the brain's own strike record: fog-safe) is closed in on (target: a cell
+// next to it); any other is met HOLD_GAP known-path steps off (target: the nearest such cell, or the
+// explorer's own cell when it is already there). Already next to one: the own cell (strike now). The
+// cheapest target wins (the weaker adversary on a tie). No minimum gap: closing in is the point.
+const HOLD_GAP = 2;
+export function engageTarget(world, threats, { stunned = null } = {}) {
+  if (!threats.length) return null;
+  const here = world.pos;
+  const dist = knownDistances(world, here);
+  const cands = [];
+  for (const th of threats) {
+    const now = threatDistance(th, here);
+    const close = stunned?.has(th.id);
+    if (now <= 1) { cands.push({ cell: [...here], steps: 0, th, kind: 'adjacent' }); continue; }
+    if (!close && now === HOLD_GAP) { cands.push({ cell: [...here], steps: 0, th, kind: 'hold' }); continue; }
+    const want = close ? 1 : HOLD_GAP;
+    for (const c of dist.order) {
+      if (threats.some((o) => sameCell(o.pos, c)) || threatDistance(th, c) !== want) continue;
+      cands.push({ cell: c, steps: dist.get(c), th, kind: close ? 'close' : 'approach' });
+    }
+  }
+  cands.sort((a, b) => a.cell[1] - b.cell[1] || a.cell[0] - b.cell[0]);
+  const best = pick(cands, (f) => -f.steps * 10 - f.th.hp);
   if (!best) return null;
-  return {
-    cell: best.cell,
-    steps: best.steps,
-    why: `Dodge spot in this ${area.w}×${area.h} room, ${plural(best.steps, 'step')} to the ${compass(world.pos, best.cell)}; the adversary is about ${plural(best.theirs, 'step')} from it.`,
-  };
+  const { th } = best;
+  const who = `${th.id} (${hpText(th)})`;
+  const where = `${plural(best.steps, 'step')} to the ${compass(here, best.cell)}`;
+  const why = {
+    adjacent: `${who} is next to you: strike it now.`,
+    hold: `Hold here, 2 steps from ${who}: let it step next to you, then strike first.`,
+    approach: `${where} puts you 2 steps from ${who}: wait there for it to step in, then strike first.`,
+    close: `${where} puts you next to ${who}, still stunned by your strike.`,
+  }[best.kind];
+  return { cell: [...best.cell], steps: best.steps, why };
 }
 
 // Per legal move: does it lead into a known dead end (nothing unexplored past it, no loop back)?
