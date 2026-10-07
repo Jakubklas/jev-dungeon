@@ -537,61 +537,73 @@ function blitSprite(spr, x, y, face, alpha = 1) {
   b.restore();
 }
 
-// The goal portal (replaces the chest sprite): a flat, spinning fire ball lying on the floor,
-// 2x2 cells wide (a 64x32 art-px diamond) and centred on the goal cell. Off-white in the
-// middle, through yellow and orange to light red at the rim, with flame tongues and sparks
-// flung off the edge as it spins. Drawn per pixel so the art stays crisp; the win cell is
-// still the single goal cell. Visual only: no rng, no game state.
-const FIRE_COLS = ['#fffdf0', '#fff6c2', '#ffe971', '#ffd23a', '#ffae3a', '#ff8d4a', '#ff7a6e'];
-const FLAME_COLS = ['#ffe971', '#ffc23a', '#ff9a4a', '#ff7a6e'];
+// The goal portal (replaces the chest sprite): an upright ring of swirling fire standing on the
+// goal cell, with a dark hollow centre. The ring is a bright yellow-white band that cools to
+// orange and red toward its edges, cut by spiral streaks that turn around it; flame wisps curl
+// off the outside, embers rise, and a glow pools on the floor. Drawn per pixel so the art stays
+// crisp; the win cell is still the single goal cell. Visual only: no rng, no game state.
+const FIRE_COLS = ['#6e1409', '#b82d14', '#ff5a1c', '#ff8d1c', '#ffbb2e', '#ffe46a', '#fffbe0'];
+const FLAME_COLS = ['#ffe46a', '#ffbb2e', '#ff8d1c', '#d9401a'];
 const fireHash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 function drawPortal(px, py, now, alpha) {
-  const rx = 26, ry = 13, spin = now / 420;
-  // Soft warm halo.
+  const rx = 17, ry = 21, cy = py - ry + 2, t = now / 380;   // ring centre sits above the cell
+  // Floor glow under the ring.
   b.save();
   b.globalCompositeOperation = 'lighter';
-  b.fillStyle = '#ff9a4a';
-  for (const [k, a] of [[1.35, .06], [1.2, .08], [1.05, .1]]) {
-    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 200));
-    pixelEllipse(px, py, Math.round(rx * k), Math.round(ry * k));
+  b.fillStyle = '#ff7a2a';
+  for (const [k, a] of [[1.7, .05], [1.35, .08], [1, .1]]) {
+    b.globalAlpha = alpha * a * (.85 + .15 * Math.sin(now / 210));
+    pixelEllipse(px, py, Math.round(rx * k), Math.round(5 * k));
   }
   b.restore();
-  b.globalAlpha = alpha;
-  // Flame tongues: leaning along the spin, each flickering in length, fading yellow -> light red.
-  const TONGUES = 20;
-  for (let k = 0; k < TONGUES; k++) {
-    const ang = (k / TONGUES) * Math.PI * 2 + spin;
-    const flick = .5 + .5 * Math.sin(now / 130 + k * 2.3 + fireHash(k) * 6);
-    const len = 5 + Math.round(flick * 9 + fireHash(k + 40) * 4);
-    for (let j = 0; j < len; j++) {
-      const f = j / len, a = ang - f * .55;       // curl backwards against the spin
-      const x = Math.round(Math.cos(a) * (rx - 1 + j)), y = Math.round(Math.sin(a) * (ry - 1 + j * ry / rx));
-      b.fillStyle = FLAME_COLS[Math.min(FLAME_COLS.length - 1, Math.floor(f * FLAME_COLS.length))];
-      b.fillRect(px + x, py + y, f < .6 ? 2 : 1, f < .6 ? 2 : 1);
-    }
-  }
-  // Fire ball body.
-  const t = spin * 1.6;
-  for (let dy = -ry; dy <= ry; dy++) {
-    const v = dy / (ry + .5), half = Math.round(rx * Math.sqrt(Math.max(0, 1 - v * v)));
-    for (let dx = -half; dx < half; dx++) {
+  // Ring body: bright band at r ~ .68, spiral streaks modulate its heat, a dark hole inside.
+  for (let dy = -ry; dy < ry; dy++) {
+    const v = (dy + .5) / (ry + .5);
+    for (let dx = -rx; dx < rx; dx++) {
       const u = (dx + .5) / (rx + .5), r = Math.hypot(u, v);
       if (r > 1) continue;
-      const arm = Math.sin(3 * Math.atan2(v, u) + r * 6 - t);   // three turning swirls
-      let i = Math.floor(Math.pow(r, 1.3) * 7.2 +(arm > .4 ? -1 : arm < -.4 ? 1 : 0) * .9);
-      b.fillStyle = FIRE_COLS[Math.max(0, Math.min(FIRE_COLS.length - 1, i))];
-      b.fillRect(px + dx, py + dy, 1, 1);
+      const ang = Math.atan2(v, u);
+      const s = Math.sin(5 * ang + r * 8 - t * 1.6) * .5 + Math.sin(9 * ang - r * 12 + t * 2) * .3 +
+        Math.sin(3 * ang + r * 4 - t) * .2;                       // -1..1, spirals with the spin
+      const d = (r - .66) / (.22 + .05 * s), band = Math.exp(-d * d);
+      const x = px + dx, y = cy + dy;
+      if (r < .62 && band < .35) {                              // hollow centre: dark, with ember wisps
+        b.globalAlpha = alpha * (.78 - .25 * Math.max(0, r - .4) / .26);
+        b.fillStyle = s > .55 && r > .45 ? '#3a0a06' : '#12040a';
+        b.fillRect(x, y, 1, 1);
+        continue;
+      }
+      const heat = band * (.8 + .3 * s);
+      if (heat < .1) continue;
+      if (heat < .35 && fireHash(dx * 31 + dy * 17) > heat * 3) continue;   // ragged edge
+      b.globalAlpha = alpha;
+      b.fillStyle = FIRE_COLS[Math.max(0, Math.min(FIRE_COLS.length - 1, Math.floor(heat * 6.99)))];
+      b.fillRect(x, y, 1, 1);
     }
   }
-  // Sparks: leave the rim on a curved path, brightest at birth, cooling to red as they die.
-  for (let k = 0; k < 22; k++) {
-    const life = ((now / 900 + fireHash(k + 7)) % 1);
-    const ang = fireHash(k) * Math.PI * 2 + spin * 1.3 - life * .9;
-    const d = 1 + life * .55;                      // rim -> a little over half a radius out
-    const x = Math.round(Math.cos(ang) * rx * d), y = Math.round(Math.sin(ang) * ry * d);
+  // Wisps: tongues curl off the outer edge against the spin, flickering, yellow -> red.
+  const TONGUES = 26;
+  for (let k = 0; k < TONGUES; k++) {
+    const ang = (k / TONGUES) * Math.PI * 2 + t * .5 + fireHash(k) * .3;
+    const flick = .5 + .5 * Math.sin(now / 150 + k * 2.3 + fireHash(k) * 6);
+    const len = 4 + Math.round(flick * 8 + fireHash(k + 40) * 6);
+    for (let j = 0; j < len; j++) {
+      const f = j / len, a = ang - f * .7;
+      const x = Math.round(Math.cos(a) * (rx * .92 + j)), y = Math.round(Math.sin(a) * (ry * .92 + j * ry / rx));
+      b.fillStyle = FLAME_COLS[Math.min(FLAME_COLS.length - 1, Math.floor(f * FLAME_COLS.length))];
+      b.globalAlpha = alpha * (1 - f * .5);
+      b.fillRect(px + x, cy + y, f < .5 ? 2 : 1, f < .5 ? 2 : 1);
+    }
+  }
+  // Embers: leave the ring and drift upward, bright at birth, cooling as they fade.
+  for (let k = 0; k < 24; k++) {
+    const life = (now / 1100 + fireHash(k + 7)) % 1;
+    const ang = fireHash(k) * Math.PI * 2;
+    const x = Math.round(Math.cos(ang) * rx * (.85 + life * .35) + Math.sin(now / 300 + k) * 2);
+    const y = Math.round(Math.sin(ang) * ry * .9 - life * 12);
     b.globalAlpha = alpha * (1 - life * life);
-    b.fillStyle = life < .3 ? '#fffdf0' : life < .6 ? '#ffe971' : '#ff8d4a';
-    b.fillRect(px + x, py + y, 1, 1);
+    b.fillStyle = life < .3 ? '#fffbe0' : life < .6 ? '#ffe46a' : '#ff8d1c';
+    b.fillRect(px + x, cy + y, 1, 1);
   }
   b.globalAlpha = 1;
 }
