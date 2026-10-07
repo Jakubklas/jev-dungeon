@@ -500,7 +500,9 @@ function sightingSentence(world, sightings, here, dest) {
 
 // Facts about standing still: nothing is revealed and the position (and every distance) stays put,
 // so with an adversary in sight it only lets the gap shrink as the adversary moves.
-function stayFacts(world, approachId, threats, minGap) {
+function stayFacts(world, approachId, threats, minGap, holding = false) {
+  // engage, standing 2 steps from the one hunting adversary it holds against: staying IS the plan (P7a).
+  if (holding) return 'Holds this cell, 2 steps from it: it steps next to you and you can strike first.';
   const facts = ['Stands still: reveals nothing.'];
   for (const th of threats) {
     const d = threatDistance(th, world.pos);
@@ -602,6 +604,12 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
       }
     }
 
+    // engage: a step that ends next to a hunting adversary the explorer has not stunned hands it the first claw.
+    if (approachId === 'engage') {
+      const first = threats.find((th) => th.chasing && !stunned?.has(th.id) && !sameCell(dest, th.pos) && threatDistance(th, here) > 1 && threatDistance(th, dest) <= 1);
+      if (first) targetFacts.push(`Steps next to ${threats.length > 1 ? first.id : 'it'}: it can claw before you strike.`);
+    }
+
     // Is there anything left past this cell without coming back this way?
     if (!reveal || threats.length) {
       const beyond = knownDistances(world, dest, here);
@@ -617,6 +625,10 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     }
     out[dir] = { shared: facts.join(' '), target: targetFacts.join(' ') };
   }
-  if (world.legalMoves().length) out[STAY] = { whole: stayFacts(world, approachId, threats, minGap) };
+  if (world.legalMoves().length) {
+    const holding = approachId === 'engage' && target?.steps === 0 && threats.length === 1 && threats[0].chasing &&
+      !stunned?.has(threats[0].id) && threatDistance(threats[0], here) === 2;
+    out[STAY] = { whole: stayFacts(world, approachId, threats, minGap, holding), ...(holding ? { holding } : {}) };
+  }
   return out;
 }
