@@ -185,7 +185,7 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   check(EXPLORER_LIVES === 2, `damage checks assume 2 lives, EXPLORER_LIVES is ${EXPLORER_LIVES}`);
   check(startsChase(game, a), 'chase: trigger not met within CHASE_RANGE');
   resetStub(game, { strike: true });
-  const events = [];
+  const events = [], allTurns = [];
   const startD = pathSteps(game.dungeon, a.pos, game.pos);
   let prev = startD, ticks = 0, hitTick = 0;
   while (ticks < 40 && !hitTick) {
@@ -193,6 +193,7 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
     const before = [...a.pos];
     const res = await step(game);
     events.push(...res.events);
+    allTurns.push(res.turns[0]);
     if (ticks === 1) {
       const types = res.events.map((e) => e.type).join();
       check(types === 'spotted,brain_on', `brain_on: first chase tick events ${types}, want spotted,brain_on`);
@@ -226,6 +227,12 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   check(stub.calls.slice(0, -1).every((c) => c.state.explorer.in_sight && c.questions.join() === 'next_move'), 'chase: far requests should ask next_move only, explorer in sight');
   check(stub.calls.at(-1).questions.join() === 'next_move,skill', `chase: adjacent request asks ${stub.calls.at(-1).questions}, want next_move,skill in one request`);
   check(JSON.parse(stub.calls.at(-1).body).questions.skill.criteria.none !== undefined && Object.keys(JSON.parse(stub.calls.at(-1).body).questions.skill.criteria)[0] === 'none', 'chase: none is not the first skill option');
+
+  // Turn data: skill_decision is null when no skill question was asked, and { choice, probabilities, used } when it was.
+  const lastTurn = allTurns.at(-1);
+  const clawKey = Object.keys(JSON.parse(stub.calls.at(-1).body).questions.skill.criteria).find((k) => k !== 'none');
+  check(allTurns.slice(0, -1).every((t) => t.skill_decision === null), 'turn: skill_decision not null without a skill question');
+  check(lastTurn.skill_decision?.choice === clawKey && lastTurn.skill_decision.used === clawKey && lastTurn.skill_decision.probabilities?.[clawKey] === 1, `turn: claw skill_decision ${JSON.stringify(lastTurn.skill_decision)}, want choice and used ${clawKey}`);
 
   // Grace: the adjacent ghost keeps going but its claw is blocked by hit protection ('protected'), then the first
   // strike after grace is the lethal one. The default claw has cooldown 2, so strikes are every third step.

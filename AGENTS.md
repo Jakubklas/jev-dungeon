@@ -250,7 +250,7 @@ Code: `bumpCheck`, `knockBack`, `strikeWith`, `graceLeft` in adversary.js; `reso
 4. Add `ADVERSARY_SPEED` to every budget, except a stunned ghost's (it gains none). An adversary moves at most one step per tick.
 5. Adversaries with `budget >= 1`, the brain on and no stun call Jev **in parallel**, all from the same post-explorer snapshot. A stunned ghost makes no call.
 6. In id order, for each ghost that acts: **skill, then step, then bump check.** A hunting ghost whose answer is a `skill` key (at or above `SKILL_MIN`) runs `strikeWith` first; a lethal strike returns at once. Then the step (a failed Jev call falls back to a code BFS move with `console.warn`; brain-off ghosts take a patrol step and never strike), then the bump check (knockback to the previous cell), then `skills.turnPassed()`. Two adversaries may share a cell, but never the living explorer's.
-7. Return `{ events, turns }`. A turn may carry `skill_decision` and `stunned`.
+7. Return `{ events, turns }`. Every turn has `skill_decision` (`null` or `{ choice, probabilities, used }`, API/browser only) and may carry `stunned`.
 
 **`src/turn.js`** (`Run`):
 - `newGame(seed?, opts)` generates, spawns and returns a `Run`; `newTestGame(config, opts)` does the same for a testbed arena. Constructing one costs no Jev calls.
