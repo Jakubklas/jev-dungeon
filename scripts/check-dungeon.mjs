@@ -957,7 +957,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
       // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
       // neutral zone and close tactics, so this is the worst case inside the zone.
-      for (const conf of [false, true]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      for (const conf of [false, true, 'caps']) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -993,7 +993,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
         if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
         if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
-        console.log(`  worst-case decision tick (${mode}${conf ? ', confidence ON' : ''}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        console.log(`  worst-case decision tick (${mode}${conf === 'caps' ? ', confidence CAPS' : conf ? ', confidence ON' : ''}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
     }

@@ -534,3 +534,7 @@ export const WALL_ART  = { torch: { palette, frames: [grid, ...], frameMs, glow,
 - Drawing: prop cells are drawn as **floor** (not wall blocks) and do not hide neighbouring wall faces. Floor props are depth-sorted entities (at the same depth they draw before the characters). Decor is drawn right after its wall block. Glow is a flickering additive warm glow, purely visual: it never changes `game.light` or fog.
 - **Fog:** a prop or decor item is drawn only when its cell is known (or Reveal map is on, dimmed like the rest), in the light band of its cell. No glow from unknown cells.
 - If `public/props/*` fails to load, the game still runs without props (stand-in shapes or nothing).
+
+## Confidence caps (PLAN-confidence-mood)
+
+`new ExplorerBrain(world, { ..., confidence: 'caps' })` (also `{ caps: true, start?, wPerExtra? }`): C = capability + history decides which moods the `sentiment` question offers (`allowedMoods` in confidence.js); trigger `confidence`; turn `policy` `{ from, to: 'steady', reason: 'confidence <C>' }` for the silent swap; `turn.confidence = { value, band, delta, reason, capability, history }`; `self.confidence` = `"<C> <band>"` on every request. Setting `confidenceCaps`.

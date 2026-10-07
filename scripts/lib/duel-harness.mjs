@@ -25,6 +25,8 @@
 //               or 'walk-in' (same, but the move that closes the gap to the nearest ghost, whatever the facts say).
 //               With no ghost in sight both wait (stay). Default 'follow'.
 //   mood        the sentiment pick, default 'bold'.
+//   confidence  false (default), true, 'display', an arm object ({ start: 80 } forces the history score) or 'caps' (PLAN-confidence-mood: C caps
+//               the moods; implies hold 'multi'). Passed to ExplorerBrain `confidence` through newTestGame.
 //   skills      'sword' (default: sword only, like check-skills section 12), 'default' (sword and shield), or a loadout list.
 //   health      lives (default 9, so a claw never ends a duel early; hits are counted, not survived). Death at L lives =
 //               hitsTaken >= L (the stub ghosts ignore lives, so a run is identical up to the L-th hit); health 2 plays
@@ -160,7 +162,7 @@ export async function playDuel(opts = {}) {
     const holder = {};
     const run = newTestGame(
       { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills },
-      { ask: (req) => { opts.onAsk?.(req); return holder.ask(req); }, decide, dir: url, memoryDir: url, hold: opts.hold ?? true },
+      { ask: (req) => { opts.onAsk?.(req); return holder.ask(req); }, decide, dir: url, memoryDir: url, hold: opts.hold ?? true, confidence: opts.confidence ?? false },
     );
     const game = run.game;
     holder.ask = makeAsk(game, { policy: opts.policy ?? 'follow', mood: opts.mood ?? 'bold' });
