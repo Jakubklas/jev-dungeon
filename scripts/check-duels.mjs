@@ -2,8 +2,10 @@
 // harness (scripts/lib/duel-harness.mjs). The hold buys zero claws against a lone hunting ghost; the walk-in
 // variant with the hold off takes claws (so the hold matters); the sword strikes the very tick the ghost steps
 // adjacent; the hold releases after 5 ticks when the ghost does not come, and never applies to a stunned or patrolling
-// ghost, or with a second ghost in sight. No Jev, no network. Run from dungeon-game: node scripts/check-duels.mjs
-import { PLACEMENTS, man, playDuel } from './lib/duel-harness.mjs';
+// ghost, or with a second ghost in sight. Sections 9-11 (PLAN-confidence-mood phase 2): the multi hold (`hold: 'multi'`)
+// against 2-3 ghosts, the health-2 spot check and 4 ghosts (no hold). No Jev, no network. Run from dungeon-game: node scripts/check-duels.mjs
+import { PLACEMENTS, man, openGroups, playDuel } from './lib/duel-harness.mjs';
+import { multiGrid } from './measure-outnumbered.mjs';
 
 let failures = 0;
 const check = (ok, msg) => { if (!ok) { failures++; console.error('FAIL:', msg); } };
@@ -126,6 +128,83 @@ for (const room of ['corridor', 'deadend']) {
     check(!/Stay makes no progress|new cells|moving toward|is fine/.test(text), `ordinary engage move question drops the generic lines (${text})`);
   }
 }
+
+// 9. PLAN-confidence-mood phase 2: hold: 'multi'. The walk-in Jev (the worst case: it steps toward the nearest ghost
+// whatever the facts say) against 2-3 hunting ghosts, ghost hp 1-3, default settings, the open room and the 1-wide
+// corridor, offsets 0..6 (open) / 1..5 (corridor), every `stride`-th open placement. Health 9, so a run is never cut
+// short; death at L lives = hits >= L. With 'multi' no run takes 2 hits (death at 2 lives) and every ghost is dispelled;
+// today's hold (true) takes 2+ hits against 3 ghosts, so the multi hold is what matters.
+const STRIDE = 3;
+const multi = await multiGrid({ hold: 'multi', stride: STRIDE });
+for (const r of multi) {
+  const tag = `multi hold, walk-in, ${r.count} ghosts, hp ${r.hp} (${r.runs} runs)`;
+  check(r.d2 === 0, `${tag}: no run with 2 or more hits (got ${r.d2}, max claws ${r.maxClaws})`);
+  check(r.notCleared === 0, `${tag}: every ghost dispelled in every run (got ${r.notCleared} runs short)`);
+  check(r.held > 0, `${tag}: the brain held`);
+}
+const today = await multiGrid({ hold: true, counts: [3], hps: [2, 3], stride: STRIDE });
+for (const r of today) {
+  check(r.d2 > 0, `today's hold, walk-in, 3 ghosts, hp ${r.hp}: some run takes 2 or more hits (got ${r.d2} of ${r.runs}); else the grid proves nothing`);
+  const m = multi.find((x) => x.count === 3 && x.hp === r.hp);
+  check(m.d2 < r.d2 && m.claws < r.claws, `3 ghosts, hp ${r.hp}: the multi hold takes fewer claws (${m.claws} vs ${r.claws}) and deaths (${m.d2} vs ${r.d2}) than today's hold`);
+}
+{
+  // The hold mode only matters with 2+ ghosts: one ghost plays the same under true and 'multi'.
+  const a = await playDuel({ ghostHp: 2, policy: 'walk-in', hold: true });
+  const b = await playDuel({ ghostHp: 2, policy: 'walk-in', hold: 'multi' });
+  check(JSON.stringify(a.trace) === JSON.stringify(b.trace), "one ghost: hold true and 'multi' play the identical duel");
+  // The stay fact: today's text for one ghost, "the nearest" with several.
+  const one = [], two = [];
+  await playDuel({ ghosts: [[5, 3]], settings: { speed: 0 }, hold: 'multi', maxTicks: 9, onAsk: (q) => one.push(q) });
+  await playDuel({ ghosts: [[5, 3], [5, 5]], settings: { speed: 0 }, hold: 'multi', maxTicks: 9, onAsk: (q) => two.push(q) });
+  const stay = (qs) => qs.map((q) => q.questions.move_if_engage?.criteria?.stay ?? q.questions.next_move?.criteria?.stay).find((t) => /Holds this cell/.test(t ?? ''));
+  check(stay(one) === 'Holds this cell, 2 steps from it: it steps next to you and you can strike first.', `one ghost keeps today's stay fact (${stay(one)})`);
+  check(/^Holds this cell, 2 steps from the nearest: /.test(stay(two) ?? ''), `two ghosts: the stay fact names the nearest (${stay(two)})`);
+}
+
+// 10. The health 2 spot check: the death derived from the health-9 runs (hits >= 2) equals the real loss when the
+// explorer really has 2 lives. 20 runs of today's hold against 3 ghosts, hp 3 (where deaths happen), plus 10 multi runs.
+{
+  const groups = [];
+  for (const n of [0, 1, 2, 3]) for (const [i, g] of openGroups(3, n, 'pairfront').entries()) if (i % 2 === 0) groups.push(g);
+  let n = 0, derivedDeaths = 0;
+  for (const g of groups) {
+    if (n >= 20) break;
+    const nine = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: true, health: 9, maxTicks: 90 });
+    const two = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: true, health: 2, maxTicks: 90 });
+    const derived = nine.hitsTaken >= 2;
+    check(derived === two.lost, `health 2 spot check ${JSON.stringify(g)}: derived death ${derived} equals the real loss ${two.lost} (hits at health 9: ${nine.hitsTaken})`);
+    check(two.hitsTaken === Math.min(2, nine.hitsTaken), `health 2 spot check ${JSON.stringify(g)}: the real hits (${two.hitsTaken}) are the first ${Math.min(2, nine.hitsTaken)} of the ${nine.hitsTaken}`);
+    n++; if (derived) derivedDeaths++;
+  }
+  check(n === 20, `health 2 spot check: 20 runs (got ${n})`);
+  check(derivedDeaths >= 1, `health 2 spot check: at least one run really dies, so the check can fail (got ${derivedDeaths})`);
+  for (const g of groups.slice(0, 10)) {
+    const r = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: 'multi', health: 2, maxTicks: 90 });
+    check(!r.lost && r.dispelled === 3, `multi hold, really at 2 lives, ${JSON.stringify(g)}: alive and all dispelled (lost ${r.lost}, dispelled ${r.dispelled})`);
+  }
+}
+
+// 11. Four ghosts in sight: no hold, even with 'multi'. Ticks with 4 ghosts alive and all within 7 are never held.
+{
+  let four = 0, heldWithFour = 0, alive3 = 0, heldWith3 = 0;
+  for (const set of [[[6, 2], [6, 4], [7, 3], [8, 2]], [[5, 2], [5, 4], [8, 1], [8, 5]]]) {
+    const d = await playDuel({ ghosts: set, hold: 'multi', policy: 'walk-in', maxTicks: 40 });
+    let prev = d.start;
+    for (const t of d.trace) {
+      const near = prev.ghosts.filter((c) => Math.hypot(c[0] - prev.pos[0], c[1] - prev.pos[1]) <= 7).length;
+      if (prev.ghosts.length >= 4 && near >= 4) { four++; if (t.held) heldWithFour++; }
+      if (near === 3) { alive3++; if (t.held) heldWith3++; }
+      prev = { pos: t.pos, ghosts: t.ghosts.map((g) => g.pos) };
+    }
+  }
+  check(four > 0 && heldWithFour === 0, `4 ghosts in sight: ${four} such ticks, none held (got ${heldWithFour})`);
+  check(alive3 > 0, `setup: ticks with exactly 3 in sight happen once a ghost is dispelled (${alive3}, ${heldWith3} held)`);
+}
+
+console.log('multi hold, walk-in (runs / claws / max claws / runs with >=2 hits / >=3 hits / runs with >=4 hits):');
+for (const r of multi) console.log(`  ${r.count} ghosts, hp ${r.hp}: ${r.runs} / ${r.claws} / ${r.maxClaws} / ${r.d2} / ${r.d3} / ${r.d4}`);
+for (const r of today) console.log(`  today's hold, 3 ghosts, hp ${r.hp}: ${r.runs} / ${r.claws} / ${r.maxClaws} / ${r.d2} / ${r.d3} / ${r.d4}`);
 
 console.log('hold on, 24 placements (claws / dispelled / strikes / held ticks):');
 for (const [k, t] of Object.entries(table)) console.log(`  ${k}: ${t.claws} / ${t.dispelled} / ${t.strikes} / ${t.held}`);

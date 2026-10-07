@@ -22,7 +22,7 @@ import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
-import { knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
+import { holdGhost, knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
@@ -258,7 +258,7 @@ export class ExplorerBrain {
   #csWhy = [];
 
   constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
-    this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a)
+    this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a); 'multi' also holds against 2-3 ghosts (confidence caps)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#ask = ask ?? askReal;
@@ -480,7 +480,8 @@ export class ExplorerBrain {
   // (stubbed duels: check-skills section 12, check-duels), and the live runs lost 3 of 8 fights to exactly that step.
   // The skill question still goes out whenever the sword has an option, so the strike lands the tick the ghost steps
   // adjacent. Released (the normal question) after HOLD_MAX ticks without it coming, or HOLD_ADJACENT_MAX ticks beside
-  // it without a strike; a stunned or patrolling ghost, a second adversary in sight or no sword keep the normal path.
+  // it without a strike; a stunned or patrolling ghost, a second adversary in sight (unless hold is 'multi': then 2-3 in
+  // sight and the nearest hunting unstunned one counts; 4 or more never hold) or no sword keep the normal path.
   // Fog-safe: visible adversaries, the explorer's own strike record and its own sword only.
   #holding() {
     const world = this.#world;
@@ -488,10 +489,9 @@ export class ExplorerBrain {
     const stop = () => { this.#hold = { cell: null, n: 0, adj: 0 }; return false; };
     if (!this.#holdOn || this.#memory.approach.id !== 'engage' || !this.#armed()) return stop();
     const threats = threatsOf(world);
-    if (threats.length !== 1) return stop();
-    const [th] = threats;
     const stunned = this.#stunnedIds();
-    if (!th.chasing || stunned.has(th.id)) return stop();
+    const th = holdGhost(threats, stunned, world.pos, this.#holdOn === 'multi');
+    if (!th) return stop();
     if (approachTarget(world, 'engage', { stunned })?.steps !== 0) return stop();
     const here = world.pos;
     const same = h.cell && sameCell(h.cell, here);
@@ -922,6 +922,7 @@ export class ExplorerBrain {
       prev: cells.length > 1 ? cells.at(-2) : null,
       backAndForth: memory.recent.back_and_forth,
       stunned: this.#stunnedIds(),
+      multiHold: this.#holdOn === 'multi',
     });
     // Option order is shuffled every tick because Jev leans toward the first option.
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`

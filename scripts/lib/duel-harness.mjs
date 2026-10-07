@@ -11,21 +11,24 @@
 //   room        'open' (15x7, explorer at [3,3]), 'corridor' (1 wide, 17x5, explorer mid-way), 'deadend' (1 wide, explorer at
 //               its closed end). Default 'open'. Ghost cells are map coordinates (wall ring included, y down).
 //   map         ASCII rows with '@' and 'A' cells instead of a room; `ghosts` then only sets per-ghost mode by index.
-//   ghosts      [[x, y] | { cell: [x, y], offset?: [dx, dy], mode?: 'chase' | 'patrol' }]; 1 or 2 (up to the testbed cap).
+//   ghosts      [[x, y] | { cell: [x, y], offset?: [dx, dy], mode?: 'chase' | 'patrol' }]; 1, 2 or 3 (4 works too; the testbed cap is 8).
 //               `offset` is added to `cell`, so a pair can be "N steps apart" from one base cell. Default: the room's cell.
 //   ghostMode   'chase' (default: the ghost hunts from tick 0) or 'patrol'; a per-ghost `mode` wins.
 //   ghostHp     hp per ghost (the ghostHp setting otherwise).
 //   settings    overrides of the skill and ghost tunables for this duel: stunTicks, swordCooldown, swordDamage,
 //               clawCooldown, clawDamage, shieldChance, coinDropChance, ghostHp, graceTicks (alias grace), speed, chaseRange.
 //               Applied through configureSkills / configureAdversaries (as check-skills section 12 does), restored after.
-//   hold        true (default) keeps the engage hold of PLAN-motivation P7a; false turns it off (ExplorerBrain `hold`).
+//   hold        true (default) keeps the engage hold of PLAN-motivation P7a; false turns it off; 'multi' also holds against
+//               2-3 ghosts (PLAN-confidence-mood phase 2). Passed to ExplorerBrain `hold` through newTestGame.
 //   policy      the scripted Jev: 'follow' (sentiment `mood`, tactic engage when offered, the move whose fact says it is
 //               the target, else stay when nothing is closer, else the first non-stay move; skill = first non-none key)
 //               or 'walk-in' (same, but the move that closes the gap to the nearest ghost, whatever the facts say).
 //               With no ghost in sight both wait (stay). Default 'follow'.
 //   mood        the sentiment pick, default 'bold'.
 //   skills      'sword' (default: sword only, like check-skills section 12), 'default' (sword and shield), or a loadout list.
-//   health      lives (default 9, so a claw never ends a duel early; hits are counted, not survived).
+//   health      lives (default 9, so a claw never ends a duel early; hits are counted, not survived). Death at L lives =
+//               hitsTaken >= L (the stub ghosts ignore lives, so a run is identical up to the L-th hit); health 2 plays
+//               the real thing (r.lost), used by the spot check. maxHealth = health, so lives 2, 3, 4 are real settings.
 //   seed        seeds the arena AND the duel's own PRNG (default 1).
 //   maxTicks    default 60.
 //   onAsk(req)  called with every request the scripted Jev gets ({ kind, state, questions, body }), for text assertions.
@@ -201,3 +204,32 @@ export async function playDuel(opts = {}) {
   }
 }
 export { decide as clawDecide, mulberry32 };
+
+// Ghost layouts for 2 and 3 ghosts, shared by check-duels and measure-outnumbered (PLAN-confidence-mood table 3).
+// Open room (explorer [3,3], floor x 1..13, y 1..5): the first ghost is one of PLACEMENTS; n is the offset N.
+//   2 ghosts: the second is N cells further along the row (N 0 = the cell below, above for a ghost on row 4).
+//   'pairfront' (3): the first two are N 0, the third N cells behind the first.   'line' (3): spaced N apart (N >= 1).
+const OPEN_FLOOR = (c) => c[0] >= 1 && c[0] <= 13 && c[1] >= 1 && c[1] <= 5;
+export function openGroups(count, n, kind = 'pairfront') {
+  const out = [];
+  for (const g of PLACEMENTS) {
+    const below = [g[0], g[1] === 4 ? 3 : g[1] + 1];
+    const group = count === 2 ? [g, n === 0 ? below : [g[0] + n, g[1]]]
+      : count === 4 ? [g, below, [g[0] + n, g[1]], [g[0] + n, below[1]]] // two pairs, the second N behind the first
+        : kind === 'line' ? [g, [g[0] + n, g[1]], [g[0] + 2 * n, g[1]]]
+        : [g, below, [g[0] + n, g[1]]];
+    const keys = new Set(group.map((c) => c.join(',')));
+    if (group.every((c) => OPEN_FLOOR(c) && !(c[0] === 3 && c[1] === 3)) && keys.size === group.length) out.push(group);
+  }
+  return out;
+}
+// 1-wide corridor (explorer [6,2], floor x 1..15): the first ghost [10,2]. 2 ghosts: the second N behind. 3: 'line'
+// (spaced N), 'pairfront' (a pair, then one N behind), 'pincers' (one ghost on each side of the explorer, a third N
+// behind the east one).
+export function corridorGroup(count, n, kind = 'line') {
+  if (count === 2) return [[10, 2], [10 + n, 2]];
+  if (count === 4) return [[10, 2], [11, 2], [11 + n, 2], [12 + n, 2]];
+  if (kind === 'pairfront') return [[10, 2], [11, 2], [11 + n, 2]];
+  if (kind === 'pincers') return [[10, 2], [2, 2], [10 + n, 2]];
+  return [[10, 2], [10 + n, 2], [10 + 2 * n, 2]];
+}

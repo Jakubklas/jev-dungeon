@@ -234,7 +234,7 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 
 ## `src/skills/*` (shared)
 
-Skills are an attack and a block for the explorer, and a claw strike for each ghost. All free to check (`scripts/check-skills.mjs`; the engage hold and its duels: `scripts/check-duels.mjs`, harness `scripts/lib/duel-harness.mjs`, API in its header: `playDuel(opts)` returns `{ strikes, claws, dispelled, ticks, hitsTaken, held, trace }`). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
+Skills are an attack and a block for the explorer, and a claw strike for each ghost. All free to check (`scripts/check-skills.mjs`; the engage hold and its duels: `scripts/check-duels.mjs`, harness `scripts/lib/duel-harness.mjs`, API in its header: `playDuel(opts)` returns `{ strikes, claws, dispelled, ticks, hitsTaken, held, trace }`; `hold` is true | false | 'multi'; also exports `openGroups(count, n, kind)` and `corridorGroup(count, n, kind)` for 2-4 ghost layouts, and `health` sets the real lives). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
 
 ```js
 export class Skill {                              // skill.js. One stateful instance per character per skill.
@@ -324,7 +324,7 @@ The brain's `confidence` option may be `true` (default weights) or such an objec
 
 ```js
 export class ExplorerBrain {
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {})  // confidence: false | true | { weights?, model? } (PLAN-confidence, below); hold: the engage hold (AGENTS.md, P7a), false only in the duel checks; builds the initial memory (runs approachTarget); null ask = real Jev; skills: a SkillSet, a loadout-id list or 'explorer' | 'none'
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {})  // confidence: false | true | { weights?, model? } (PLAN-confidence, below); hold: the engage hold (AGENTS.md, P7a), true | false | 'multi' (also holds against 2-3 ghosts in sight, PLAN-confidence-mood phase 2; false only in the duel checks); builds the initial memory (runs approachTarget); null ask = real Jev; skills: a SkillSet, a loadout-id list or 'explorer' | 'none'
   get memory()                                 // plain JSON object, saved as memory.json; Jev reads a regrouped state built from it (below)
   async takeTurn()                             // -> ExplorerTurn
   async noteCaught(adversaryId)                // event "Caught by a2: the last life is gone.", encounters.hits + 1, a hit_here landmark, save
