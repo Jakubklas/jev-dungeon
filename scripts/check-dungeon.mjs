@@ -14,7 +14,7 @@ import {
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
-import { LIMITS, addEvent, addLandmark, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
+import { LIMITS, MOOD_IDS, addEvent, addLandmark, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -224,8 +224,8 @@ console.log(`generation: ${SEEDS} seeds checked; widths ${minW}-${maxW}, heights
 const MODES = ['patrol', 'chase', 'search'];
 
 // Encounter facts and tactic options are checked for the two extreme minimum gaps
-// (aggressive and scared), so sentiment-dependent output is covered too.
-const GAPS = [...new Set([SENTIMENTS.aggressive.min_gap, SENTIMENTS.scared.min_gap])];
+// (bold and wary), so sentiment-dependent output is covered too.
+const GAPS = [...new Set([SENTIMENTS.bold.min_gap, SENTIMENTS.wary.min_gap])];
 function perceive(world) {
   const out = { seen: exitSeen(world), available: availableApproaches(world), situation: situation(world) };
   for (const id of Object.keys(APPROACHES)) {
@@ -494,7 +494,7 @@ const handGame = (tiles, pos, litCols = Infinity) => {
   return g;
 };
 const chaser = (pos, mode = 'chase', id = 'a1') => new Adversary({ id, pos, mode });
-const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
+const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
 {
   // (a) Big room, adversary off to the side, unexplored corridor on the far side: a route past exists.
   const room = [
@@ -512,12 +512,12 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const g = handGame(room, [2, 2], 16); // the corridor beyond x = 16 is dark
   g.adversaries = [chaser([5, 8])];
-  const aggro = tacticFeasibility(new KnownWorld(g), AGGRO), scared = tacticFeasibility(new KnownWorld(g), SCARED);
-  if (!aggro.slip_past) fail(`room: slip_past not feasible for aggressive: ${JSON.stringify(Object.keys(aggro))}`);
-  if (scared.slip_past) fail(`room: slip_past feasible for scared (min gap ${SCARED}): ${scared.slip_past.fact}`);
+  const aggro = tacticFeasibility(new KnownWorld(g), AGGRO), wary = tacticFeasibility(new KnownWorld(g), WARY);
+  if (!aggro.slip_past) fail(`room: slip_past not feasible for bold: ${JSON.stringify(Object.keys(aggro))}`);
+  if (wary.slip_past) fail(`room: slip_past feasible for wary (min gap ${WARY}): ${wary.slip_past.fact}`);
   // engage (close in and fight) needs a ready sword: offered only when armed, for any minimum gap.
   if (aggro.engage) fail('room: engage offered while unarmed');
-  const armedAggro = tacticFeasibility(new KnownWorld(g), AGGRO, { armed: true }), armedScared = tacticFeasibility(new KnownWorld(g), SCARED, { armed: true });
+  const armedAggro = tacticFeasibility(new KnownWorld(g), AGGRO, { armed: true }), armedScared = tacticFeasibility(new KnownWorld(g), WARY, { armed: true });
   if (!armedAggro.engage || !armedScared.engage) fail('room: engage not offered while armed');
   else {
     // A hunting ghost is met 2 steps off (it steps in, the explorer strikes first); one the explorer just
@@ -528,7 +528,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const st = tacticFeasibility(new KnownWorld(g), AGGRO, { armed: true, stunned: new Set(['a1']) }).engage;
     if (!st || Math.abs(st.target.cell[0] - 5) + Math.abs(st.target.cell[1] - 8) !== 1 || !/still stunned by your strike/.test(st.fact)) fail(`room: engage on a stunned ghost ${JSON.stringify(st)}`);
   }
-  if (!aggro.run_away || !scared.run_away) fail('room: run_away missing');
+  if (!aggro.run_away || !wary.run_away) fail('room: run_away missing');
   if (aggro.carry_on) fail('room: carry_on offered while chased');
   const enc = situation(new KnownWorld(g)).threats.encounter;
   if (!/Open room, about 14×9/.test(enc?.space)) fail(`room: space fact ${enc?.space}`);
@@ -538,10 +538,10 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   if (!Object.values(movesScared).some((m) => m.includes('below your minimum gap of 9'))) fail('min gap warning missing in move facts');
   g.adversaries = [chaser([5, 8], 'patrol')];
   if (!tacticFeasibility(new KnownWorld(g), AGGRO).carry_on) fail('room: carry_on not offered for a patroller');
-  console.log('encounter (room): slip_past feasible for aggressive, not for scared; engage only when armed; run_away, carry_on ok');
+  console.log('encounter (room): slip_past feasible for bold, not for wary; engage only when armed; run_away, carry_on ok');
   console.log('  engage (armed):', armedAggro.engage?.fact);
   console.log('  encounter facts:', JSON.stringify(enc));
-  console.log('  slip_past (aggressive):', aggro.slip_past.fact);
+  console.log('  slip_past (bold):', aggro.slip_past.fact);
   console.log('  move facts slip_past:', JSON.stringify(moves));
 
   // (b) Corridor with the adversary between the explorer and the dark end: no way past.
@@ -581,7 +581,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const h = handGame(alcove, [5, 2]);
   h.adversaries = [chaser([1, 6])];
-  const hf = tacticFeasibility(new KnownWorld(h), SCARED);
+  const hf = tacticFeasibility(new KnownWorld(h), WARY);
   if (!hf.hide) fail(`hide not feasible: ${JSON.stringify(Object.keys(hf))}`);
   else if (knownLineOfSight(new KnownWorld(h), [1, 6], hf.hide.target.cell)) fail(`hide cell ${hf.hide.target.cell} is in sight`);
   // Unknown cells block known-tile LOS: darken the passage and the same pair is "out of sight".
@@ -597,7 +597,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 {
   const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
   const asked = [];
-  let mood = 'curious';
+  let mood = 'greedy';
   const ask = async ({ kind, questions }) => {
     asked.push({ kind, questions: Object.keys(questions) });
     const first = (q) => Object.keys(q.criteria)[0];
@@ -644,19 +644,19 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   };
   g.adversaries = [chaser(inSightOf(5)[0])];
   asked.length = 0;
-  mood = 'aggressive';
+  mood = 'bold';
   const t2 = await brain.takeTurn();
   if (t2.decision?.trigger !== 'encounter' || !t2.decision.tactic?.choice) fail(`encounter decision ${JSON.stringify(t2.decision)?.slice(0, 300)}`);
   if (asked.map((a) => a.kind).join() !== 'sentiment,tick') fail(`decision tick requests ${JSON.stringify(asked)}`);
   if (!isTactic(memory.approach.id) || memory.approach.interrupted?.id !== 'nearest_frontier') fail(`tactic not parked properly: ${JSON.stringify(memory.approach)}`);
-  if (memory.sentiment.id !== 'aggressive' || memory.sentiment_history.at(-1)?.id !== 'aggressive') fail('sentiment not recorded');
+  if (memory.sentiment.id !== 'bold' || memory.sentiment_history.at(-1)?.id !== 'bold') fail('sentiment not recorded');
   if (!t2.move_decision || !asked[1].questions.includes(`move_if_${t2.decision.tactic.choice}`)) fail('speculative move question missing');
   // An ordinary tick in the encounter (same adversary, in sight): one request, no decision.
   g.adversaries = [chaser(inSightOf(5)[0])];
   asked.length = 0;
   const t3 = await brain.takeTurn();
   if (t3.decision !== null || asked.length !== 1) fail(`ordinary encounter tick made a decision: ${JSON.stringify(t3.decision)} ${asked.length}`);
-  // Out of sight long enough for the aggressive profile (end_ticks 1): encounter over, approach resumes.
+  // Out of sight long enough for the bold profile (end_ticks 1): encounter over, approach resumes.
   g.adversaries = [];
   let over = null;
   for (let i = 0; i < 6 && !over; i++) {
@@ -664,12 +664,12 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     if (t.decision?.trigger === 'chase_over') over = t;
   }
   if (!over) fail('encounter never ended');
-  else if (over.step !== t3.step + SENTIMENTS.aggressive.end_ticks) fail(`aggressive encounter ended at step ${over.step}, expected ${t3.step + SENTIMENTS.aggressive.end_ticks}`);
+  else if (over.step !== t3.step + SENTIMENTS.bold.end_ticks) fail(`bold encounter ended at step ${over.step}, expected ${t3.step + SENTIMENTS.bold.end_ticks}`);
   if (memory.approach.id !== 'nearest_frontier' || memory.approach.interrupted) fail(`approach not resumed: ${JSON.stringify(memory.approach)}`);
   if (memory.approach.tried.some((t) => isTactic(t.id))) fail(`tactic in tried: ${JSON.stringify(memory.approach.tried)}`);
   if (memory.approach.thought !== APPROACHES.nearest_frontier.thought) fail(`thought ${memory.approach.thought}`);
   validateMemory(memory);
-  console.log(`brain (stub Jev): start -> encounter (${t2.decision.tactic.choice}, aggressive) -> chase_over at step ${over?.step}; tried has no tactics`);
+  console.log(`brain (stub Jev): start -> encounter (${t2.decision.tactic.choice}, bold) -> chase_over at step ${over?.step}; tried has no tactics`);
   rmSync(dir, { recursive: true, force: true });
 }
 
@@ -818,7 +818,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const g = makeRoom();
     let turnNo = 0;
     const ask = answerWith((k, ds) => {
-      if (k === 'sentiment') return 'courageous';
+      if (k === 'sentiment') return 'bold';
       if (k === 'tactic') return ds.find((d) => d !== 'run_away') ?? ds[0];
       const want = turnNo % 2 === 1 ? 'right' : 'left';
       return ds.includes(want) ? want : ds[0];
@@ -851,7 +851,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 
   // (d) Landmarks: dedupe by kind + cell, exit pinned, oldest other evicted; events and counters.
   {
-    const mem = createMemory({ approachId: 'nearest_frontier', approachText: 'x', thought: 'x', sentiment: { id: 'cautious' }, start: [1, 1] });
+    const mem = createMemory({ approachId: 'nearest_frontier', approachText: 'x', thought: 'x', sentiment: { id: 'steady' }, start: [1, 1] });
     addLandmark(mem, { kind: 'exit', cell: [9, 9], step: 1, note: 'exit' });
     addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 2, note: 'first' });
     addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 5, note: 'again' });
@@ -877,7 +877,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const g = makeRoom();
     sizes.length = 0;
-    const ask = answerWith((k, ds) => (k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (ds.find((d) => d !== 'run_away') ?? ds[0]) : ds[0]));
+    const ask = answerWith((k, ds) => (k === 'sentiment' ? 'bold' : k === 'tactic' ? (ds.find((d) => d !== 'run_away') ?? ds[0]) : ds[0]));
     const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
     const m = brain.memory;
     await brain.takeTurn();
@@ -921,7 +921,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
         big.adversaries = [chaser([1, 5], mode)];
         sizes.length = 0;
         const bd = mkdtempSync(join(tmpdir(), 'jev-check-'));
-        const bb = new ExplorerBrain(new KnownWorld(big), { ask: answerWith((k, ds) => (k === 'sentiment' ? 'aggressive' : ds[0])), memoryDir: pathToFileURL(bd + '/') });
+        const bb = new ExplorerBrain(new KnownWorld(big), { ask: answerWith((k, ds) => (k === 'sentiment' ? 'bold' : ds[0])), memoryDir: pathToFileURL(bd + '/') });
         for (let i = 0; i < 3; i++) await bb.takeTurn();
         const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
         if (most < wantTactics) fail(`size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
@@ -1034,7 +1034,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const pickAsk = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
       if (q.type === 'noul') return [k, { noul: 0.9 }];
       const keys = Object.keys(q.criteria);
-      const c = k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
+      const c = k === 'sentiment' ? 'bold' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
       return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
     }));
     const brain = new ExplorerBrain(new KnownWorld(g), { ask: pickAsk, memoryDir: pathToFileURL(dir + '/') });
@@ -1080,7 +1080,9 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     if (g.adversaries.some((a) => a.id === 'a1')) fail(`dispel: the ghost is still in the game after a strike (skill_decision ${JSON.stringify(t1.skill_decision)})`);
     else {
       next = 'right';
-      await seeded(2, () => brain.takeTurn());
+      const t2d = await seeded(2, () => brain.takeTurn());
+      // `dispelled` is pending; an encounter-ending chase_over on the same tick wins it (one sentiment call, the merge rule).
+      if (!['dispelled', 'chase_over'].includes(t2d.decision?.trigger)) fail(`dispel: the tick after a dispel has trigger ${t2d.decision?.trigger ?? 'none'}, expected dispelled (or chase_over merged)`);
       const st = brain.lastRequest().state;
       const th = st.threats;
       if (th.remembered.length || th.visible.length) fail(`dispel: the dispelled ghost is still listed: ${JSON.stringify(th)}`);
@@ -1176,7 +1178,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const g = handGame(room, me);
     g.visits = { [me.join(',')]: 1 };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('scared'), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('wary'), memoryDir: pathToFileURL(dir + '/') });
     const a = chaser(ghost);
     g.adversaries = [a];
     const cells = [[...g.pos]], ghostState = { budget: 0 }, tactics = new Set();
@@ -1233,7 +1235,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     g.light = g.light.map((row) => row.map((_, x) => (x >= 4 && x <= 50 ? 1 : 0)));
     g.visits = { '26,2': 1 };
     const world = new KnownWorld(g);
-    const brain = new ExplorerBrain(world, { ask: smartAsk('curious'), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(world, { ask: smartAsk('greedy'), memoryDir: pathToFileURL(dir + '/') });
     const spot = [20, 2];
     g.adversaries = [chaser(spot)];
     await withSeed(7, () => brain.takeTurn());
@@ -1291,7 +1293,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
         else {
           const keys = Object.keys(q.criteria);
           // walk right until the portal is lit, then stand still (so the game never ends on a step onto it)
-          const c = k === 'sentiment' ? 'cautious' : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
+          const c = k === 'sentiment' ? 'steady' : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
           answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
         }
       }
@@ -1380,7 +1382,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
       if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
       const keys = Object.keys(q.criteria);
       // Follows "Closer to the target" literally (the portal step included, if a fact ever points through it); else stays.
-      const c = k === 'sentiment' ? 'cautious' : keys.find((d) => /Closer to the target/.test(String(q.criteria[d]))) ?? (keys.includes(STAY) ? STAY : keys[0]);
+      const c = k === 'sentiment' ? 'steady' : keys.find((d) => /Closer to the target/.test(String(q.criteria[d]))) ?? (keys.includes(STAY) ? STAY : keys[0]);
       return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
     }));
     const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
@@ -1413,7 +1415,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
         if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
         const keys = Object.keys(q.criteria);
         const known = new KnownWorld(g).seenTreasure() !== null;
-        const c = k === 'sentiment' ? 'cautious' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
+        const c = k === 'sentiment' ? 'steady' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
     };
@@ -1437,7 +1439,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 // 4h. Coins pull (PLAN-motivation P2; stub Jev, no network, temp memory dir): collect_coins is offered only
 //     while a lit pile is reachable and targets the best coins per known-path step, never through the portal;
 //     unlit piles change no request byte; the per-move "Toward / Away from N seen coins" fact shows within 8
-//     steps only; the coin decision (a next_approach question, no sentiment call) fires once on a new nearby
+//     steps only; the coin decision (a `coins` mood trigger: one sentiment call, then a next_approach question in the same tick) fires once on a new nearby
 //     pile, not again within 10 steps, not beside a tactic; a stub picking collect_coins walks onto the pile.
 {
   const strip = (n) => ['#'.repeat(n), '#' + '.'.repeat(n - 2) + '#', '#'.repeat(n)];
@@ -1503,7 +1505,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
       const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
         if (q.type === 'noul') return [k, { noul: 0.9 }];
         const keys = Object.keys(q.criteria);
-        const c = k === 'sentiment' ? 'cautious' : keys.includes('right') ? 'right' : keys[0];
+        const c = k === 'sentiment' ? 'steady' : keys.includes('right') ? 'right' : keys[0];
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
       const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
@@ -1534,7 +1536,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
           if (q.type === 'noul') return [k, { noul: 0.1 }];
           const keys = Object.keys(q.criteria);
           let c = keys.includes('right') ? 'right' : keys[0];
-          if (k === 'sentiment') c = 'cautious';
+          if (k === 'sentiment') c = 'steady';
           if (k === 'tactic') c = keys.includes('run_away') ? 'run_away' : keys[0];
           if (k === 'next_approach') c = pick === 'current' ? brain.memory.approach.id : pick;
           return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
@@ -1556,7 +1558,10 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const asks = a.log.filter((l) => l.kinds.includes('next_approach') && !l.kinds.includes('approach_working'));
     if (asks.length !== 1) fail(`coin decision asked ${asks.length} times, expected 1`);
     else if (asks[0].kind !== 'tick') fail(`coin decision on the wrong request: ${JSON.stringify(asks[0])}`);
-    if (a.log.filter((l) => l.kind === 'sentiment').length !== 1) fail('the coin decision cost a sentiment call (only the start one is expected)');
+    const sentCalls = a.log.filter((l) => l.kind === 'sentiment');
+    if (sentCalls.length !== 2) fail(`expected 2 sentiment calls (start, then the coins trigger), got ${sentCalls.length}`);
+    else if (!a.turns.some((t) => t.decision?.trigger === 'coins')) fail('no decision with trigger coins');
+    else if (a.log.indexOf(asks[0]) - a.log.indexOf(sentCalls[1]) !== 1) fail('the coin next_approach did not follow its sentiment call in the same tick');
     if (!a.turns.some((t) => t.policy?.to === 'collect_coins')) fail('picking collect_coins did not switch the approach');
     if (a.g.coins !== 2 || a.brain.memory.progress.coins !== 2) fail(`the stub picking collect_coins did not collect the pile (coins ${a.g.coins})`);
     if (!a.turns.some((t) => t.policy?.from === 'collect_coins' && t.policy.to === 'nearest_frontier')) fail('collect_coins did not hand back to nearest_frontier once the pile was taken');
@@ -1573,8 +1578,141 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const c = await play({ rows: wide, coins: [[10, 2]], pick: 'collect_coins', ticks: 10, ghost: true });
     if (c.log.some((l) => l.kinds.includes('next_approach') && (l.kinds.includes('tactic') || TACTICS.includes(l.approach)))) fail('coin decision asked during a tactic');
     if (!c.log.some((l) => l.kinds.includes('tactic'))) fail('tactic setup: no tactic question was asked');
-    console.log('coin decision: one next_approach on a new nearby pile (no sentiment call), none within 10 steps, none beside a tactic; collect_coins walks onto the pile, then hands back to nearest_frontier');
+    console.log('coin decision: one coins mood call + next_approach on a new nearby pile, none within 10 steps, none beside a tactic; collect_coins walks onto the pile, then hands back to nearest_frontier');
   }
+}
+
+// 4i. Four moods (PLAN-motivation P4): exactly wary/steady/greedy/bold, steady by default, memory accepts only
+//     those ids, no mood text pushes for the chest/portal, the mood triggers `coins` and `dispelled` (the latter
+//     checked in the dispel test above) fire as specified and merge with an encounter into ONE sentiment call.
+{
+  const ids = Object.keys(SENTIMENTS).sort().join();
+  if (ids !== 'bold,greedy,steady,wary') fail(`SENTIMENTS ids: ${ids}`);
+  if (MOOD_IDS.slice().sort().join() !== ids) fail('memory MOOD_IDS differ from SENTIMENTS');
+  const mins = Object.fromEntries(Object.entries(SENTIMENTS).map(([k, v]) => [k, `${v.min_gap}/${v.end_ticks}`]));
+  if (JSON.stringify(mins) !== JSON.stringify({ wary: '4/5', steady: '3/4', greedy: '3/2', bold: '2/1' })) fail(`mood numbers ${JSON.stringify(mins)}`);
+  for (const [id, m] of Object.entries(SENTIMENTS)) {
+    for (const f of ['min_gap', 'end_ticks', 'priority', 'move_priority', 'when', 'note', 'skill_priority']) if (m[f] == null) fail(`mood ${id} lacks ${f}`);
+    const text = [m.priority, m.move_priority, m.when, m.note, m.skill_priority].join(' ');
+    if (/chest|treasure/i.test(text) || /push(es)? for|the goal/i.test(text)) fail(`mood ${id} text mentions the chest or pushing for the goal: ${text}`);
+    if (!/Strike an adjacent adversary whenever the sword is ready/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
+    if (!/Upside/.test(m.when) || !/Risk/.test(m.when)) fail(`mood ${id} when does not name upside and risk`);
+  }
+  const g0 = handGame(['######', '#....#', '######'], [1, 1]);
+  const d0 = mkdtempSync(join(tmpdir(), 'jev-check-'));
+  const b0 = new ExplorerBrain(new KnownWorld(g0), { ask: async () => ({}), memoryDir: pathToFileURL(d0 + '/') });
+  if (b0.memory.sentiment.id !== 'steady') fail(`default mood ${b0.memory.sentiment.id}`);
+  for (const old of ['cautious', 'scared', 'risk_averse', 'curious', 'courageous', 'aggressive']) {
+    const m = structuredClone(b0.memory);
+    m.sentiment.id = old;
+    let threw = false;
+    try { validateMemory(m); } catch { threw = true; }
+    if (!threw) fail(`memory accepted the old mood ${old}`);
+  }
+  rmSync(d0, { recursive: true, force: true });
+
+  // The sentiment request: four options, each with upside and risk, the new question wording.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = handGame(['#'.repeat(30), ...Array(3).fill('#' + '.'.repeat(28) + '#'), '#'.repeat(30)], [2, 2], 2);
+    const seen = [];
+    const ask = async ({ kind, questions, body }) => {
+      seen.push({ kind, kinds: Object.keys(questions), bytes: JSON.stringify(body).length, q: questions.sentiment });
+      return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.1 }];
+        const keys = Object.keys(q.criteria);
+        const c = k === 'sentiment' ? 'steady' : keys.includes('right') ? 'right' : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+    };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    await brain.takeTurn();
+    const q = seen[0].q;
+    if (Object.keys(q.criteria).length !== 4) fail('sentiment question does not have 4 options');
+    if (!/What should the explorer go after right now: safety \(wary\), the plan \(steady\), loot \(greedy\) or the fight \(bold\)\?/.test(q.instructions)) fail(`sentiment question wording: ${q.instructions}`);
+    console.log(`sentiment request (start): ${seen[0].bytes} bytes, 4 moods`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  // Trigger `coins`: a first-seen pile within 8 steps asks the mood, then next_approach, in one tick; the
+  // cooldown (3 ticks after the start decision) delays it; an encounter on the same tick wins (one sentiment call).
+  {
+    const wide = ['#'.repeat(60), ...Array(3).fill('#' + '.'.repeat(58) + '#'), '#'.repeat(60)];
+    const run = async (ticks, adversaryAt = null) => {
+      const g = handGame(wide, [2, 2], 2);
+      g.coinPiles = [[11, 2]];
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const log = [];
+      const ask = async ({ kind, questions }) => {
+        log.push({ step: g.steps, kind, kinds: Object.keys(questions) });
+        return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+          if (q.type === 'noul') return [k, { noul: 0.1 }];
+          const keys = Object.keys(q.criteria);
+          let c = keys.includes('right') ? 'right' : keys[0];
+          if (k === 'sentiment') c = 'steady';
+          if (k === 'tactic') c = keys.includes('run_away') ? 'run_away' : keys[0];
+          if (k === 'next_approach') c = 'nearest_frontier';
+          return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+        }));
+      };
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const turns = [];
+      for (let i = 0; i < ticks; i++) {
+        if (adversaryAt && i === adversaryAt) g.adversaries = [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])];
+        turns.push(await brain.takeTurn());
+      }
+      rmSync(dir, { recursive: true, force: true });
+      return { log, turns };
+    };
+    const a = await run(12);
+    const ct = a.turns.filter((t) => t.decision?.trigger === 'coins');
+    if (ct.length !== 1) fail(`coins trigger fired ${ct.length} times, expected 1`);
+    else {
+      const startStep = a.turns.find((t) => t.decision?.trigger === 'start').step;
+      if (ct[0].step - startStep < 3) fail(`coins trigger ignored the redecide cooldown (start ${startStep}, coins ${ct[0].step})`);
+      const at = a.log.map((l, i) => ({ ...l, i })).filter((l) => l.step === ct[0].step - 1);
+      if (at.map((l) => l.kind).join() !== 'sentiment,tick' || !at[1].kinds.includes('next_approach')) fail(`coins tick requests ${JSON.stringify(at)}`);
+    }
+    // An adversary walks in once the pile is due: the encounter decision takes the tick, one sentiment call for it.
+    const b = await run(14, 3);
+    const perTick = new Map();
+    for (const l of b.log) if (l.kind === 'sentiment') perTick.set(l.step, (perTick.get(l.step) ?? 0) + 1);
+    if ([...perTick.values()].some((n) => n > 1)) fail(`two sentiment calls on one tick: ${JSON.stringify([...perTick])}`);
+    if (!b.turns.some((t) => t.decision?.trigger === 'encounter')) fail('coins+encounter setup: no encounter decision');
+    console.log('mood triggers: coins (cooldown, one sentiment call then next_approach), merged with an encounter into one call; dispelled in the dispel test');
+  }
+  // Trigger `dispelled`: the tick after a dispel (steady stays alert 4 ticks, so chase_over does not take it),
+  // with a spare ghost out of sight so the dispel does not win the game.
+  {
+    const seeded = async (n, fn) => { const real = Math.random; Math.random = rng(n); try { return await fn(); } finally { Math.random = real; } };
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const rows = ['#'.repeat(20), ...Array(9).fill('#' + '.'.repeat(18) + '#'), '#'.repeat(20)];
+    const g = handGame(rows, [2, 3]);
+    g.adversaries = [chaser([3, 3]), chaser([18, 9], 'patrol', 'a2')];
+    while (g.adversaries[0].hp > 1) g.adversaries[0].takeHit(1, [2, 3]);
+    g.adversaries[0].pos = [3, 3];
+    const log = [];
+    const ask = async ({ kind, questions }) => {
+      log.push({ step: g.steps, kind, kinds: Object.keys(questions) });
+      return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.1 }];
+        const keys = Object.keys(q.criteria);
+        const c = k === 'sentiment' ? 'steady' : k === 'skill' ? (keys.find((x) => x !== 'none') ?? 'none') : k === 'tactic' ? keys[0] : keys.includes('stay') ? 'stay' : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+    };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    await seeded(3, () => brain.takeTurn());
+    if (g.adversaries.some((a) => a.id === 'a1')) fail('dispelled setup: the ghost was not dispelled');
+    else {
+      log.length = 0;
+      const t = await seeded(4, () => brain.takeTurn());
+      if (t.decision?.trigger !== 'dispelled') fail(`tick after a dispel: trigger ${t.decision?.trigger ?? 'none'}, expected dispelled`);
+      if (log.filter((l) => l.kind === 'sentiment').length !== 1) fail('dispelled tick did not make exactly one sentiment call');
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
+
 }
 
 // 5. Scripted follower: nearest_frontier until the chest is seen, then go_to_exit,
@@ -1714,7 +1852,7 @@ if (MEASURE) {
   console.log('availableApproaches:', availableApproaches(new KnownWorld(g)).join(', '));
   console.log('approachTarget(run_away):', JSON.stringify(approachTarget(new KnownWorld(g), 'run_away')));
   console.log('describeMoves(run_away):', JSON.stringify(describeMoves(new KnownWorld(g), 'run_away'), null, 2));
-  for (const id of ['scared', 'curious', 'aggressive']) {
+  for (const id of ['wary', 'greedy', 'bold']) {
     console.log(`tacticOptions (${id}, min gap ${SENTIMENTS[id].min_gap}):`, JSON.stringify(tacticOptions(new KnownWorld(g), SENTIMENTS[id].min_gap), null, 2));
   }
 }

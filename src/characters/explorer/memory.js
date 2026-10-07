@@ -49,6 +49,9 @@ const WINDOW = 10; // revisits_last_10
 // reaches JSON.stringify (Jev's state, memory.json, the browser).
 const revisitWindows = new WeakMap();
 
+// The mood ids (brain.js SENTIMENTS has exactly these keys; check-dungeon asserts it). Validation accepts nothing else.
+export const MOOD_IDS = ['wary', 'steady', 'greedy', 'bold'];
+
 export function createMemory({ approachId, approachText, thought, sentiment, start }) {
   const memory = {
     approach: {
@@ -212,10 +215,10 @@ export function validateMemory(m) {
     if (!isNum(p[k])) fail(`progress.${k}`);
   }
   const s = m.sentiment;
-  if (!s || typeof s !== 'object' || !isStr(s.id, 32) || !s.id || !isNum(s.since_step)) fail('sentiment');
+  if (!s || typeof s !== 'object' || !MOOD_IDS.includes(s.id) || !isNum(s.since_step)) fail('sentiment');
   if (!Array.isArray(m.sentiment_history) || m.sentiment_history.length > LIMITS.sentimentHistory) fail('sentiment_history');
   m.sentiment_history.forEach((h, i) => {
-    if (!h || !isStr(h.id, 32) || !isNum(h.step)) fail(`sentiment_history[${i}]`);
+    if (!h || !MOOD_IDS.includes(h.id) || !isNum(h.step)) fail(`sentiment_history[${i}]`);
   });
   const r = m.recent;
   if (!r || typeof r !== 'object') fail('recent');
