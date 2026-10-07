@@ -71,7 +71,8 @@ const FLOOR_VARIANTS = 6;
 const TWEEN_MS = 150;             // entity move tween
 const BOB_PX = 2, BOB_MS = 1600;  // ghost hover
 const ANIM_MS = 260;              // idle animation frame time
-const STRIKE_MS = 350;            // strike overlay flash and fade
+const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
+const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
@@ -471,8 +472,9 @@ function boardUpdate() {
   computeFog();
   indexProps();
   syncActors(false);
-  // Only a view that arrives from a step flashes its strikes (a page load does not replay them).
-  strikeFx = Array.isArray(game.strikes) && game.strikes.length ? { t0: performance.now(), strikes: game.strikes } : null;
+  // Only a view that arrives from a step flashes its strikes (a page load does not replay them). A view
+  // without strikes leaves a running flash alone, so fast steps don't cut it short.
+  if (Array.isArray(game.strikes) && game.strikes.length) strikeFx = { t0: performance.now(), strikes: game.strikes };
 }
 
 // Ease displayed brightness toward the real light, for on-screen cells only.
@@ -633,6 +635,7 @@ function drawScene(now) {
     while (ei < ents.length && ents[ei].depth <= d) drawEntity(ents[ei++], now, cx, cy);
   }
   while (ei < ents.length) drawEntity(ents[ei++], now, cx, cy);
+  drawStrikes(cx, cy, now, known, reveal, 'edge');
   drawGlows(glows, now);
 }
 
@@ -722,38 +725,44 @@ function drawLandmarks(cx, cy, known) {
   }
 }
 
-// Strike overlays: a solid iso diamond per struck cell that flashes and fades over STRIKE_MS
-// after the view arrived. Drawn in the flats pass (above floor, below entities). A cell is
-// drawn only if it is known (lit), unless Reveal map is on, so a strike never leaks the map.
+// Strike overlays: per struck cell, a solid iso diamond in the flats pass (above floor, below
+// entities) plus a bright outline after the entities, so a knight or ghost standing on the cell
+// cannot hide it. Held at full strength for STRIKE_HOLD of STRIKE_MS, then fades. A cell is drawn
+// only if it is known (lit), unless Reveal map is on, so a strike never leaks the map.
 // Blocked strikes flash steel blue instead of red. The few cells are drawn per frame.
 const diamondCache = new Map();
-function diamondTile(color) {
-  let c = diamondCache.get(color);
+// edge: only the diamond's rim (a pixel inside whose 4-neighbour is outside), 1 art px thick.
+function diamondTile(color, edge = false) {
+  const key = color + (edge ? '/edge' : '');
+  let c = diamondCache.get(key);
   if (!c) {
     c = makeCanvas(TW, TH);
     const g = c.getContext('2d');
     g.fillStyle = color;
-    for (let py = 0; py < TH; py++) for (let px = 0; px < TW; px++) if (inDiamond(px, py)) g.fillRect(px, py, 1, 1);
-    diamondCache.set(color, c);
+    const rim = (px, py) => !inDiamond(px - 1, py) || !inDiamond(px + 1, py) || !inDiamond(px, py - 1) || !inDiamond(px, py + 1);
+    for (let py = 0; py < TH; py++) for (let px = 0; px < TW; px++) if (inDiamond(px, py) && (!edge || rim(px, py))) g.fillRect(px, py, 1, 1);
+    diamondCache.set(key, c);
   }
   return c;
 }
-function drawStrikes(cx, cy, now, known, reveal) {
+// pass 'fill' runs in the flats pass, 'edge' after the entities; only 'edge' retires strikeFx.
+function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   if (!strikeFx) return;
   const k = (now - strikeFx.t0) / STRIKE_MS;
-  if (k >= 1) { strikeFx = null; return; }
-  const flash = Math.floor(k * 6) % 2 ? .55 : .95;
+  if (k >= 1) { if (pass === 'edge') strikeFx = null; return; }
+  const fade = k < STRIKE_HOLD ? 1 : 1 - (k - STRIKE_HOLD) / (1 - STRIKE_HOLD);
+  const flash = k < STRIKE_HOLD && Math.floor(k / STRIKE_HOLD * 4) % 2 ? .7 : 1; // two pulses while held
   for (const st of strikeFx.strikes) {
     if (!Array.isArray(st?.cells)) continue;
     const blocked = st.result === 'blocked';
-    const tile = diamondTile(blocked ? BLOCK_COLOR : STRIKE_COLOR);
-    b.globalAlpha = (1 - k) * flash * (st.result === 'miss' ? .45 : .75);
+    const tile = diamondTile(blocked ? BLOCK_COLOR : STRIKE_COLOR, pass === 'edge');
+    b.globalAlpha = fade * flash * (st.result === 'miss' ? .5 : pass === 'edge' ? 1 : .85);
     for (const c of st.cells) {
       if (!Array.isArray(c)) continue;
       const [x, y] = c;
       if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= game.width || y >= game.height) continue;
       if (!reveal && !known(x, y)) continue;
-      const sx = (x - y) * HW - cx, sy = (x + y) * HH - cy;
+      const sx = (x - y) * HW - HW - cx, sy = (x + y) * HH - cy; // tile top-left, as the floors in pass A
       if (sx < -TW || sy < -TH || sx > buf.width || sy > buf.height) continue;
       b.drawImage(tile, sx, sy);
     }
