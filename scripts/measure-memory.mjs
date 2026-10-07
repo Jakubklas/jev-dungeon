@@ -173,7 +173,8 @@ if (WHO === 'adversary') {
     game = run.game;
     const hist = new Map(game.adversaries.map((a) => [a.id, [[...a.pos]]]));
     const lost = []; // { id, tick }
-    let ticks = 0, hunts = 0, huntTicks = 0, hits = 0, firstHit = null, refinds = 0, losses = 0, pingpong = 0;
+    let ticks = 0, hunts = 0, huntTicks = 0, hits = 0, firstHit = null, refinds = 0, losses = 0, pingpong = 0, maxIdle = 0;
+    const idleRun = new Map();
     const reasons = { timeout: 0, keep_hunting: 0, other: 0 };
     for (; ticks < TICKS && !game.won && !game.lost; ticks++) {
       const turn = await run.playTurn();
@@ -184,6 +185,12 @@ if (WHO === 'adversary') {
         if (e.type === 'hit') { hits++; firstHit ??= ticks + 1; }
       }
       for (const a of game.adversaries) {
+        if (limitedOn) {
+          // Idle: a searching ghost whose request holds no approach target.
+          const noTarget = a.hunt.on && a.mode === 'search' && a.lastRequest()?.state?.approach_target === null;
+          idleRun.set(a.id, noTarget ? (idleRun.get(a.id) ?? 0) + 1 : 0);
+          maxIdle = Math.max(maxIdle, idleRun.get(a.id));
+        }
         if (a.memory.brain.on) huntTicks++;
         const h = hist.get(a.id);
         h.push([...a.pos]);
@@ -202,6 +209,15 @@ if (WHO === 'adversary') {
     console.log(`${name}: ${ticks} ticks, hits ${hits}${firstHit ? ` (first at tick ${firstHit})` : ''}, hunts ${hunts} (${(hunts * 100 / Math.max(ticks, 1)).toFixed(1)}/100 ticks), hunting ticks per hunt ${(huntTicks / Math.max(hunts, 1)).toFixed(1)}`);
     console.log(`  give-ups: timeout ${reasons.timeout}, keep_hunting ${reasons.keep_hunting}, other ${reasons.other} | re-find within ${REFIND} ticks ${refinds}/${losses} | ping-pong ${pingpong} | calls/tick ${(calls / Math.max(ticks, 1)).toFixed(2)}`);
     console.log(`  bytes avg/max ${avg}/${max} (n=${all.length})` + (bytes.size > 1 ? ` | by character ${[...bytes].map(([c, v]) => `${c} ${Math.round(v.reduce((x, y) => x + y, 0) / v.length)}/${Math.max(...v)}`).join(', ')}` : ''));
+    if (limitedOn) {
+      const views = game.adversaries.map((a) => adversaryView(game, a));
+      const known = views.map((v) => v.knownCount() ?? 0);
+      console.log(`  known cells per ghost ${known.map((n) => n).join('/')} | cells forgotten ${views.reduce((n, v) => n + v.forgotten, 0)} | longest idle without a target ${maxIdle} ticks`);
+      if (maxIdle > 5) {
+        console.error(`FAIL: ${name}: a ghost idled ${maxIdle} ticks without a target`);
+        failed = true;
+      }
+    }
     if (memoryOn && all.length && (avg > ADV_BUDGET.avg || max > ADV_BUDGET.max)) {
       console.error(`FAIL: ${name}: adversary request bytes ${avg}/${max} over the budget ${ADV_BUDGET.avg}/${ADV_BUDGET.max}`);
       failed = true;
