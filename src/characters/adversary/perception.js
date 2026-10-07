@@ -158,7 +158,7 @@ export function describeMoves(view, a, hunt, approachIds, speed = 0.6) {
     const facts = [];
     if (hunt.inSight) {
       if (same(dest, explorer)) {
-        out[dir] = 'Steps onto the explorer: hits it (it loses a life, the last one ends the game).';
+        out[dir] = 'Steps onto the explorer: only a bump (nobody is hurt and you are knocked back). The claw strike is what hurts it.';
         continue;
       }
       facts.push(trend(toExplorer.get(key(here)), toExplorer.get(key(dest)), 'the explorer'));

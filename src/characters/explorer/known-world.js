@@ -3,6 +3,7 @@
 // file allowed to hold a Game (the static guard in check-dungeon.mjs enforces it). Reads are
 // live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
+import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
 export class KnownWorld {
   #game;
@@ -18,6 +19,7 @@ export class KnownWorld {
   get maxHealth() { return this.#game.maxHealth; }
   get graceLeft() { return graceLeft(this.#game); }
   get won() { return this.#game.won; }
+  get facing() { return this.#game.facing; }
   // Grid size, only for sizing flat BFS arrays and bounds checks. Says nothing about the layout.
   get width() { return this.#game.dungeon.width; }
   get height() { return this.#game.dungeon.height; }
@@ -37,4 +39,24 @@ export class KnownWorld {
 
   // The explorer's own step.
   move(dir) { return this.#game.applyMove(dir); }
+
+  // Uses the skill behind `key` of `skillSet`'s latest options() call, before the step: an attack turns to
+  // its aim and strikes its cells, a block raises the stance until the next step. Returns the events
+  // (strike, struck, dispelled), or null when the key is unknown or the skill is not ready.
+  useSkill(skillSet, key) {
+    const picked = skillSet.get(key);
+    if (!picked || !picked.skill.ready || this.#game.won || this.#game.lost) return null;
+    const { skill, target } = picked;
+    let events = [];
+    if (skill.kind === 'attack') {
+      this.#game.facing = target.dir;
+      events = resolveAttack(this.#game, EXPLORER, target.cells, skill.damage);
+    } else if (skill.kind === 'block') {
+      this.#game.block = { effectiveness: skill.effectiveness, until_step: this.#game.steps + 1 };
+    } else {
+      return null;
+    }
+    skill.markUsed(this.#game.steps);
+    return events;
+  }
 }

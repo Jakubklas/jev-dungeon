@@ -7,13 +7,17 @@ globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { DIRS, EXPLORER_LIVES, SIGHT_RANGE, Game, floorDistances, generateDungeon, hasLineOfSight, isFloor, rng } from '../src/dungeon.js';
 import {
-  Adversary, ADVERSARY_SPEED, ALERT_STEPS, CHASE_RANGE, GRACE_TICKS, HIT_DAMAGE, MAX_SEARCH_TICKS, adversaryView, graceLeft, seesExplorer, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
+  Adversary, ADVERSARY_SPEED, ALERT_STEPS, CHASE_RANGE, GRACE_TICKS, MAX_SEARCH_TICKS, adversaryView, graceLeft, seesExplorer, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
 } from '../src/characters/adversary/adversary.js';
 import { addEvent, createMemory, validateMemory } from '../src/characters/adversary/memory.js';
 import { configureWorld } from '../src/dungeon.js';
 import { configureAdversaries } from '../src/characters/adversary/adversary.js';
 import { brainView, buildRequest } from '../src/characters/adversary/brain.js';
 import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
+import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
+import { skillConfig, configureSkills } from '../src/skills/config.js';
+import { buildSkillSet } from '../src/skills/loadouts.js';
+import { profileOf, traitsOf } from '../src/characters/adversary/character.js';
 
 let failures = 0;
 const fail = (msg) => {
@@ -38,17 +42,20 @@ function handMap(rows, rooms = [{ x: 1, y: 1, w: rows[0].length - 2, h: rows.len
   game.adversaries = [];
   return game;
 }
+const clawDamageNow = (a) => a.skills.skills.find((k) => k.kind === 'attack')?.damage ?? 1;
 const adversary = (id, pos, extra = {}) => new Adversary({ id, pos, ...extra });
 
 // Stub brain. Moves along the true shortest path to the explorer while the request shows it,
 // else to the last-seen cell (or the approach target once there). Records every call.
 let stubGame = null; // the game whose dungeon the stub paths over
-const stub = { calls: [], keep: 0.9, approach: 'sweep_last_seen', delay: 0, inFlight: 0, maxInFlight: 0, target: null, fail: false };
+const stub = { calls: [], keep: 0.9, approach: 'sweep_last_seen', delay: 0, inFlight: 0, maxInFlight: 0, target: null, fail: false, strike: false };
 const resetStub = (game, opts = {}) => {
   stubGame = game;
-  Object.assign(stub, { calls: [], keep: 0.9, approach: 'sweep_last_seen', delay: 0, inFlight: 0, maxInFlight: 0, target: null, fail: false }, opts);
+  Object.assign(stub, { calls: [], keep: 0.9, approach: 'sweep_last_seen', delay: 0, inFlight: 0, maxInFlight: 0, target: null, fail: false, strike: false }, opts);
 };
+let maxBody = { bytes: 0, questions: '' }; // largest ghost request seen, for the report
 const decide = async ({ id, state, questions, body }) => {
+  if (Buffer.byteLength(body) > maxBody.bytes) maxBody = { bytes: Buffer.byteLength(body), questions: Object.keys(questions).join() };
   stub.calls.push({ id, state: JSON.parse(body).state, questions: Object.keys(questions), body, at: performance.now() });
   stub.inFlight++;
   stub.maxInFlight = Math.max(stub.maxInFlight, stub.inFlight);
@@ -64,6 +71,11 @@ const decide = async ({ id, state, questions, body }) => {
       const score = (d) => dist.get(`${s.self.position[0] + DIRS[d][0]},${s.self.position[1] + DIRS[d][1]}`) ?? 1e9;
       const choice = opts.reduce((b, d) => (score(d) < score(b) || (score(d) === score(b) && d < b) ? d : b));
       answers.next_move = { choice, probabilities: Object.fromEntries(opts.map((d) => [d, d === choice ? 1 : 0])), confidence: 1 };
+    }
+    if (questions.skill) {
+      const keys = Object.keys(questions.skill.criteria).filter((k) => k !== 'none');
+      const choice = stub.strike && keys.length ? keys[0] : 'none';
+      answers.skill = { choice, probabilities: { [choice]: 1 }, confidence: 1 };
     }
     if (questions.search_approach) answers.search_approach = { choice: stub.approach, probabilities: {}, confidence: 1 };
     if (questions.keep_hunting) answers.keep_hunting = { noul: stub.keep };
@@ -155,9 +167,11 @@ const expectedSteps = (ticks, b = 0) => {
   console.log('line of sight: walls block, range holds');
 }
 
-// 4. Chase and damage: a standing explorer gets closed in on and hit (one life), the hitter is
-// knocked back, grace keeps the next touches harmless, and the last life goes on the first touch
-// after grace. EXPLORER_LIVES = 2 is assumed by the "first hit is not the loss" checks.
+// 4. Chase and damage (PLAN-skills.md S4): a touch is only a BUMP. A hunting ghost hurts the explorer with its claw
+// strike (the `skill` question rides in next_move's request), grace and the one-hit-per-tick latch apply to strikes,
+// and the last life goes on the first strike after grace. EXPLORER_LIVES = 2 is assumed by "first hit is not the loss".
+// A ghost with a zero-cooldown claw (clawGhost) strikes on every step it takes; the default claw has cooldown 2.
+const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSkillSet(['claw_strike'], { claw_strike: { cooldown: 0 } }), ...extra });
 {
   const game = handMap([
     '#################',
@@ -170,7 +184,7 @@ const expectedSteps = (ticks, b = 0) => {
   game.adversaries = [a];
   check(EXPLORER_LIVES === 2, `damage checks assume 2 lives, EXPLORER_LIVES is ${EXPLORER_LIVES}`);
   check(startsChase(game, a), 'chase: trigger not met within CHASE_RANGE');
-  resetStub(game);
+  resetStub(game, { strike: true });
   const events = [];
   const startD = pathSteps(game.dungeon, a.pos, game.pos);
   let prev = startD, ticks = 0, hitTick = 0;
@@ -187,9 +201,9 @@ const expectedSteps = (ticks, b = 0) => {
     }
     if (res.events.some((e) => e.type === 'hit')) hitTick = ticks;
     const d = pathSteps(game.dungeon, a.pos, game.pos) ?? 0;
-    // Every chaser step is along a true shortest path: the path distance drops by exactly one.
-    // On the hit tick the knockback puts it back on the cell it came from (distance unchanged).
-    if (hitTick === ticks) check(same(before, a.pos) && d === prev, `hit: knockback not to the previous cell (${a.pos})`);
+    // Every chaser step is along a true shortest path. On the hit tick the claw strikes first, then the ghost steps
+    // onto the explorer (a bump) and is pushed back to the cell it came from: the distance is unchanged.
+    if (hitTick === ticks) check(same(before, a.pos) && d === prev, `hit: bump knockback not to the previous cell (${a.pos})`);
     else check(same(before, a.pos) ? d === prev : d === prev - 1, `chase: tick ${ticks} path distance ${prev} -> ${d}`);
     prev = d;
   }
@@ -199,80 +213,296 @@ const expectedSteps = (ticks, b = 0) => {
   check(hitTick === wantTicks, `hit: first hit after ${hitTick} ticks from ${startD} steps, want ${wantTicks}`);
   const hit = events.find((e) => e.type === 'hit');
   check(hit?.id === 'a1' && same(hit.at, game.pos) && hit.health === 1, `hit: event ${JSON.stringify(hit)}`);
-  check(!game.lost && game.health === 1 && game.caughtBy === null, 'hit: first touch lost the game');
+  const hitTypes = events.slice(events.findIndex((e) => e.type === 'hit')).map((e) => e.type).join();
+  check(hitTypes === 'hit,strike,bump', `hit: strike tick events ${hitTypes}, want hit,strike,bump`);
+  check(events.find((e) => e.type === 'strike')?.result === 'hit', 'hit: strike result not hit');
+  check(!game.lost && game.health === 1 && game.caughtBy === null, 'hit: first strike lost the game');
   check(!events.some((e) => e.type === 'caught'), 'hit: caught emitted for a non-lethal hit');
   check(graceLeft(game) === GRACE_TICKS, `hit: grace ${graceLeft(game)}, want ${GRACE_TICKS}`);
   check(!same(a.pos, game.pos), 'hit: hitter still on the explorer');
-  // Every step but the hitting one asked the brain (the touch is a code policy).
-  check(stub.calls.length === startD - 1, `chase: ${stub.calls.length} brain calls for ${startD} steps, want ${startD - 1}`);
-  check(stub.calls.every((c) => c.state.explorer.in_sight && c.questions.join() === 'next_move'), 'chase: chase requests should ask next_move only, explorer in sight');
+  check(a.facing === Object.keys(DIRS).find((d) => same([a.pos[0] + DIRS[d][0], a.pos[1] + DIRS[d][1]], game.pos)), `hit: ghost faces ${a.facing}, want the aim at the explorer`);
+  // Every step asked the brain (a bump is no longer a forced code policy); only the last request carries the skill.
+  check(stub.calls.length === startD, `chase: ${stub.calls.length} brain calls for ${startD} steps, want ${startD}`);
+  check(stub.calls.slice(0, -1).every((c) => c.state.explorer.in_sight && c.questions.join() === 'next_move'), 'chase: far requests should ask next_move only, explorer in sight');
+  check(stub.calls.at(-1).questions.join() === 'next_move,skill', `chase: adjacent request asks ${stub.calls.at(-1).questions}, want next_move,skill in one request`);
+  check(JSON.parse(stub.calls.at(-1).body).questions.skill.criteria.none !== undefined && Object.keys(JSON.parse(stub.calls.at(-1).body).questions.skill.criteria)[0] === 'none', 'chase: none is not the first skill option');
 
-  // Grace: the adjacent ghost keeps stepping in (forced move) but is bounced and does no damage.
-  // It steps every 1/ADVERSARY_SPEED ticks, so the first step after grace is the lethal one.
-  const every = Math.round(1 / ADVERSARY_SPEED);
-  const wantSecond = hitTick + every * (Math.floor(GRACE_TICKS / every) + 1);
+  // Grace: the adjacent ghost keeps going but its claw is blocked by hit protection ('protected'), then the first
+  // strike after grace is the lethal one. The default claw has cooldown 2, so strikes are every third step.
   let secondTick = 0, lastEvents = [];
-  while (ticks < hitTick + 40 && !game.lost) {
+  const sawProtected = [];
+  while (ticks < hitTick + 60 && !game.lost) {
     ticks++;
     lastEvents = (await step(game)).events;
     if (!game.lost) check(!same(a.pos, game.pos), `grace: ghost left on the explorer at tick ${ticks}`);
+    for (const e of lastEvents) if (e.type === 'strike' && e.result === 'protected') sawProtected.push(ticks);
     if (lastEvents.some((e) => e.type === 'hit')) secondTick ||= ticks;
   }
-  check(secondTick === wantSecond, `grace: second hit at tick ${secondTick}, want ${wantSecond} (grace ${GRACE_TICKS})`);
+  check(secondTick > hitTick + GRACE_TICKS, `grace: second hit at tick ${secondTick}, inside grace (hit ${hitTick}, grace ${GRACE_TICKS})`);
   check(game.lost && game.caughtBy === 'a1' && game.health === 0, 'chase: not lost after the last life');
   const types = lastEvents.map((e) => e.type).join();
-  check(types === 'hit,caught', `chase: lethal tick events ${types}, want hit,caught`);
+  check(types === 'hit,caught,strike', `chase: lethal tick events ${types}, want hit,caught,strike`);
   check(lastEvents[0]?.health === 0 && same(lastEvents[1]?.at ?? [-1, -1], game.pos), 'chase: lethal hit/caught event shape');
+  check(sawProtected.every((t) => t <= hitTick + GRACE_TICKS), 'grace: a strike was protected after grace ended');
   check((await step(game)).events.length === 0, 'chase: adversaries still act after the loss');
   check(game.applyMove('right').moved === false, 'chase: explorer can still move after the loss');
   check(game.legalMoves().length === 0, 'chase: legalMoves not empty after the loss');
-  console.log(`damage: standing explorer hit after ${hitTick} ticks from ${startD} path steps, caught on the next touch after ${GRACE_TICKS} grace ticks (tick ${secondTick})`);
+  console.log(`damage: standing explorer struck after ${hitTick} ticks from ${startD} path steps, caught by the first strike after ${GRACE_TICKS} grace ticks (tick ${secondTick})`);
 
-  // Stepping into an adversary costs one life (not the game), before any adversary moves; the
-  // adversary is pushed off the cell, not back onto the explorer's previous cell.
+  // Stepping into an adversary is only a bump: no life, no grace, no brain call; the ghost is pushed off the cell.
   const g3 = handMap(['#######', '#E...T#', '#######']);
   const c = adversary('a2', [2, 1], { budget: 0 });
   g3.adversaries = [c];
   g3.applyMove('right');
   resetStub(g3);
   const ev3 = (await step(g3)).events;
-  check(!g3.lost && g3.health === 1 && ev3[0]?.type === 'hit' && ev3[0].id === 'a2', `step-in: ${JSON.stringify(ev3)} health ${g3.health}`);
+  check(ev3.length >= 1 && ev3[0].type === 'bump' && ev3[0].id === 'a2' && same(ev3[0].at, g3.pos), `step-in: ${JSON.stringify(ev3)}`);
+  check(!ev3.some((e) => e.type === 'hit' || e.type === 'caught') && !g3.lost && g3.health === EXPLORER_LIVES && graceLeft(g3) === 0, `step-in: a bump cost something (health ${g3.health}, grace ${graceLeft(g3)})`);
   check(same(c.pos, [3, 1]), `step-in: a2 knocked to ${c.pos}, want 3,1`);
   check(stub.calls.length === 0, 'step-in: knocked-back adversary still asked its brain this tick');
 
-  // Two ghosts adjacent to a standing explorer, both stepping in this tick: one life, not two.
+  // Two adjacent ghosts that both strike this tick: one life, not two (the one-hit-per-tick latch).
   const twoGhosts = () => handMap(['#########', '#.......#', '#...E...#', '#......T#', '#########']);
   const g4 = twoGhosts();
-  const l = adversary('a1', [3, 2], { budget: 0.5 }), r = adversary('a2', [5, 2], { budget: 0.5 });
+  const l = clawGhost('a1', [3, 2], { budget: 0.5 }), r = clawGhost('a2', [5, 2], { budget: 0.5 });
   g4.adversaries = [l, r];
-  resetStub(g4);
+  resetStub(g4, { strike: true });
   const ev4 = (await step(g4)).events;
-  check(ev4.filter((e) => e.type === 'hit').length === 1 && g4.health === 1 && !g4.lost, `two ghosts adjacent: ${ev4.map((e) => e.type)} health ${g4.health}`);
-  check(!same(l.pos, g4.pos) && !same(r.pos, g4.pos), 'two ghosts adjacent: a ghost left on the explorer');
+  const strikes4 = ev4.filter((e) => e.type === 'strike');
+  check(ev4.filter((e) => e.type === 'hit').length === 1 && g4.health === 1 && !g4.lost, `two ghosts strike: ${ev4.map((e) => e.type)} health ${g4.health}`);
+  check(strikes4.length === 2 && strikes4[0].result === 'hit' && strikes4[1].result === 'protected', `two ghosts strike: results ${strikes4.map((e) => e.result)}, want hit,protected`);
+  check(!same(l.pos, g4.pos) && !same(r.pos, g4.pos), 'two ghosts strike: a ghost left on the explorer');
+  check(g4.strikes.length === 2 && g4.strikes.every((s) => s.by === 'a1' || s.by === 'a2'), 'two ghosts strike: game.strikes does not hold both flashes');
 
-  // Two ghosts already on the explorer's cell before anything moves: one life, both pushed off.
+  // Two ghosts already on the explorer's cell before anything moves: two bumps, no life lost, both pushed off.
   const g5 = twoGhosts();
   const p = adversary('a2', [4, 2]), q = adversary('a1', [4, 2]);
-  g5.adversaries = [p, q]; // array order != id order: the hit goes to a1 (id order)
+  g5.adversaries = [p, q];
   resetStub(g5);
   const ev5 = (await step(g5)).events;
-  const hits5 = ev5.filter((e) => e.type === 'hit');
-  check(hits5.length === 1 && hits5[0].id === 'a1' && g5.health === 1 && !g5.lost, `two ghosts on the cell: ${JSON.stringify(hits5)} health ${g5.health}`);
+  const bumps5 = ev5.filter((e) => e.type === 'bump');
+  check(bumps5.length === 2 && bumps5[0].id === 'a1' && bumps5[1].id === 'a2' && !ev5.some((e) => e.type === 'hit') && g5.health === EXPLORER_LIVES, `two ghosts on the cell: ${JSON.stringify(ev5)} health ${g5.health}`);
   check(!same(p.pos, g5.pos) && !same(q.pos, g5.pos), 'two ghosts on the cell: a ghost left on the explorer');
 
-  // Grace stops an immediate re-hit: the explorer steps straight back into a ghost next tick.
+  // Grace stops an immediate re-hit: a zero-cooldown claw keeps striking next tick, 'protected', no life lost.
   const g6 = twoGhosts();
-  const s6 = adversary('a1', [4, 2]);
+  const s6 = clawGhost('a1', [3, 2]);
   g6.adversaries = [s6];
-  resetStub(g6);
-  await step(g6); // hit, a1 knocked off
-  const from6 = [...g6.pos];
-  const dir6 = Object.keys(DIRS).find((d) => same([from6[0] + DIRS[d][0], from6[1] + DIRS[d][1]], s6.pos));
-  g6.applyMove(dir6);
+  resetStub(g6, { strike: true });
+  s6.budget = 1;
+  const first6 = (await step(g6)).events;
+  check(first6.some((e) => e.type === 'hit') && g6.health === 1, `grace: first strike did not hit (${first6.map((e) => e.type)})`);
+  s6.pos = [3, 2]; s6.budget = 1;
+  g6.clearTickState();
   const ev6 = (await step(g6)).events;
-  check(g6.health === 1 && !ev6.some((e) => e.type === 'hit') && !same(s6.pos, g6.pos), `grace: re-hit right after a hit (${ev6.map((e) => e.type)}, health ${g6.health})`);
+  check(g6.health === 1 && !ev6.some((e) => e.type === 'hit') && ev6.some((e) => e.type === 'strike' && e.result === 'protected'), `grace: re-hit right after a hit (${ev6.map((e) => e.type)}, health ${g6.health})`);
   check(graceLeft(g6) === GRACE_TICKS - 1, `grace: ${graceLeft(g6)} left after one tick, want ${GRACE_TICKS - 1}`);
-  console.log('damage: step-in costs a life, two ghosts cost one life per tick, grace blocks a re-hit');
+  check(g6.strikes.length === 1 && g6.strikes[0].result === 'protected', 'grace: game.strikes holds this tick\'s flash');
+
+  // A patrolling ghost (brain off) never strikes: it is next to the explorer, resting after a give-up, so it only
+  // patrols; no call, no strike event.
+  const g7 = twoGhosts();
+  const pat = clawGhost('a1', [3, 2], { budget: 1 });
+  pat.hunt.restUntil = 999;
+  g7.adversaries = [pat];
+  resetStub(g7, { strike: true });
+  const ev7 = (await step(g7)).events;
+  check(!pat.hunt.on && stub.calls.length === 0 && !ev7.some((e) => e.type === 'strike' || e.type === 'hit') && g7.health === EXPLORER_LIVES, `patrol: a brain-off ghost struck (${ev7.map((e) => e.type)})`);
+  check(Object.keys(DIRS).includes(pat.facing), 'patrol: facing is a 4-way direction');
+
+  // Shield vs claw: a block stops the claw (event 'blocked', no life, no latch); a failed roll lets it land; the
+  // roll is seeded, so the same seed gives the same outcomes.
+  const blockGame = (eff) => {
+    const g = twoGhosts();
+    g.adversaries = [clawGhost('a1', [3, 2], { budget: 1 })];
+    g.block = { effectiveness: eff, until_step: g.steps + 1 };
+    return g;
+  };
+  resetStub(null, { strike: true });
+  const gb = blockGame(1);
+  stubGame = gb;
+  const evb = (await step(gb)).events;
+  check(evb.some((e) => e.type === 'blocked') && !evb.some((e) => e.type === 'hit') && gb.health === EXPLORER_LIVES && graceLeft(gb) === 0, `block: effectiveness 1 did not stop the claw (${evb.map((e) => e.type)})`);
+  check(gb.strikes[0]?.result === 'blocked', 'block: strike result not blocked');
+  const gn = blockGame(0);
+  stubGame = gn;
+  const evn = (await step(gn)).events;
+  check(evn.some((e) => e.type === 'hit') && gn.health === EXPLORER_LIVES - 1, `block: effectiveness 0 stopped the claw (${evn.map((e) => e.type)})`);
+  const rolls = async () => {
+    const out = [];
+    for (let i = 0; i < 12; i++) {
+      const g = blockGame(0.6);
+      stubGame = g;
+      g.dungeon.seed = 1000 + i;
+      g.skillRand = null;
+      out.push((await step(g)).events.some((e) => e.type === 'blocked'));
+    }
+    return out.join();
+  };
+  const r1 = await rolls(), r2 = await rolls();
+  check(r1 === r2 && r1.includes('true') && r1.includes('false'), `block: seeded rolls differ between runs or never vary (${r1} / ${r2})`);
+  // Bump-lock: a 1-wide corridor, a hunting ghost, an explorer that steps onto it every tick. A bump keeps the
+  // ghost's budget, so it still acts (claw strike) within a few ticks instead of being pushed along forever.
+  const g8 = handMap(['###########', '#E........#', '###########']);
+  const lock = clawGhost('a1', [3, 1]);
+  g8.adversaries = [lock];
+  resetStub(g8, { strike: true });
+  let strikeTick = 0, bumps8 = 0;
+  for (let t = 1; t <= 6 && !strikeTick; t++) {
+    g8.clearTickState();
+    const dir = same(lock.pos, [g8.pos[0] + 1, g8.pos[1]]) ? 'right' : null;
+    if (dir) g8.applyMove(dir);
+    const ev = (await step(g8)).events;
+    bumps8 += ev.filter((e) => e.type === 'bump').length;
+    if (ev.some((e) => e.type === 'hit' || (e.type === 'strike' && e.result === 'protected'))) strikeTick = t;
+  }
+  check(strikeTick > 0 && strikeTick <= 4 && bumps8 >= 1, `bump-lock: explorer pushing a ghost down a corridor was struck at tick ${strikeTick} after ${bumps8} bumps`);
+  console.log(`bump-lock: bumped ghost struck at tick ${strikeTick} (${bumps8} bumps)`);
+  stubGame = g6;
+  console.log('damage: a touch is a bump, claw strikes hurt, grace and the one-hit latch hold, patrollers never strike, shield rolls are seeded');
+}
+
+// 4b. Ghost state and the skill request: six public keys, private hp/stun/facing/skills, takeHit, stun, dispel,
+// skill-only requests, requests built synchronously in id order, character lines.
+{
+  const a = adversary('a1', [3, 3]);
+  check(Object.keys(a).join() === 'id,pos,mode,budget,lastSeen,goal' && Object.keys(JSON.parse(JSON.stringify(a))).join() === 'id,pos,mode,budget,lastSeen,goal', `ghost keys: ${Object.keys(a)}`);
+  check(a.hp === 2 && a.maxHp === 2 && a.stun === 0 && a.facing === 'down' && a.skills.size === 1 && a.skills.skills[0].id === 'claw_strike', 'ghost private defaults (hp 2, no stun, facing down, one claw)');
+  check(a.memory.skills.length === 1 && a.memory.skills[0].id === 'claw_strike' && a.memory.skills[0].ready === true && validateMemory(a.memory) === a.memory, 'memory.skills mirrors the claw and validates');
+  let threw = false;
+  try { validateMemory({ ...a.memory, skills: [1, 2, 3, 4, 5].map(() => a.memory.skills[0]) }); } catch { threw = true; }
+  check(threw, 'memory: 5 skills accepted');
+  threw = false;
+  try { validateMemory({ ...a.memory, skills: [{ ...a.memory.skills[0], extra: 1 }] }); } catch { threw = true; }
+  check(threw, 'memory: a skill with an extra key accepted');
+  a.facing = 'left';
+  check(a.facing === 'left', 'facing accessor');
+  threw = false;
+  try { a.facing = 'north'; } catch { threw = true; }
+  check(threw, 'facing accepts a non-direction');
+  // takeHit: knockback directly away on the dominant axis, stun, hp; dispel at 0. Never into a wall or the attacker.
+  const g = handMap(['#######', '#.....#', '#..E..#', '#.....#', '#######']);
+  const t = adversary('a1', [4, 2]);
+  g.adversaries = [t];
+  const out = t.takeHit(1, [...g.pos], g);
+  check(out.hp === 1 && !out.dispelled && same(t.pos, [5, 2]) && t.stun === skillConfig().stunTicks && t.budget === 0, `takeHit: ${JSON.stringify(out)} pos ${t.pos} stun ${t.stun}`);
+  check(t.takeHit(1, [...g.pos], g).dispelled === true, 'takeHit: last hp dispels');
+  const w = adversary('a1', [5, 2]); // against the east wall: stays put
+  w.takeHit(1, [4, 2], g);
+  check(same(w.pos, [5, 2]) && w.hp === 1 && w.stun === skillConfig().stunTicks, 'takeHit: knockback into a wall keeps the cell');
+  const ng = adversary('a1', [4, 2]);
+  ng.takeHit(1, [3, 2]); // no game: hp and stun only
+  check(same(ng.pos, [4, 2]) && ng.hp === 1, 'takeHit: no game, no knockback');
+
+  // Stun: the explorer's strike stuns a hunting ghost; it makes no Jev call and does not step for stun ticks.
+  const g2 = handMap(['#################', '#E..............#', '#...............#', '#..............T#', '#################']);
+  const s = adversary('a1', [4, 1]);
+  g2.adversaries = [s];
+  resetStub(g2);
+  await step(g2); // spotted: brain on
+  check(s.hunt.on && stub.calls.length === 0, 'stun setup: ghost not hunting');
+  const flash = resolveAttack(g2, EXPLORER, [[4, 1]], 1);
+  check(flash.some((e) => e.type === 'struck') && s.stun === skillConfig().stunTicks, 'stun: the explorer\'s strike did not stun');
+  const where = [...s.pos];
+  const stunTurns = [];
+  for (let i = 0; i < skillConfig().stunTicks; i++) {
+    const res = await step(g2);
+    stunTurns.push(res.turns[0]);
+    check(same(s.pos, where) && stub.calls.length === 0 && res.turns[0].stunned === true && res.turns[0].dir === null, `stun: tick ${i + 1} stepped or called Jev`);
+  }
+  check(s.stun === 0 && s.budget === 0, `stun: ghost has stun ${s.stun}, budget ${s.budget} after the stun`);
+  let moved = 0;
+  for (let i = 0; i < 4 && !moved; i++) { await step(g2); moved = stub.calls.length; }
+  check(moved >= 1, 'stun: the ghost never resumed');
+
+  // Dispel: a 1-hp ghost struck by the explorer leaves the game cleanly; the next tick runs and the other ghost acts.
+  const g3 = handMap(['#################', '#E..............#', '#...............#', '#..............T#', '#################']);
+  const weak = adversary('a1', [3, 1], { hp: 1 }), other = adversary('a2', [9, 3]);
+  g3.adversaries = [weak, other];
+  resetStub(g3);
+  await step(g3);
+  const kill = resolveAttack(g3, EXPLORER, [[3, 1]], 1);
+  check(kill.some((e) => e.type === 'dispelled' && e.id === 'a1') && g3.adversaries.length === 1 && g3.adversaries[0] === other, 'dispel: ghost not removed from the game');
+  const after = await step(g3);
+  check(after.turns.length === 1 && after.turns[0].id === 'a2' && !g3.adversaries.includes(weak), 'dispel: next tick still lists the dispelled ghost');
+
+  // Skill-only request (one legal move, explorer adjacent): the request holds only the `skill` question.
+  const g4 = handMap(['######', '#..EA#', '######']);
+  const dead = clawGhost('a1', [4, 1], { budget: 1 });
+  g4.adversaries = [dead];
+  resetStub(g4, { strike: true });
+  const ev4 = (await step(g4)).events;
+  check(stub.calls.length === 1 && stub.calls[0].questions.join() === 'skill', `skill-only: asked ${stub.calls.map((c) => c.questions)}, want one skill-only request`);
+  check(ev4.some((e) => e.type === 'hit') && g4.health === EXPLORER_LIVES - 1, `skill-only: the claw did not land (${ev4.map((e) => e.type)})`);
+  check(same(dead.pos, [4, 1]), 'skill-only: forced step onto the explorer was not a bump back');
+  // Same cornered ghost with nothing to strike (explorer out of reach): forced move, no call.
+  const g5 = handMap(['#######', '#E....#', '#.#####', '#.....#', '#######']);
+  const far = clawGhost('a1', [5, 3], { budget: 1 });
+  g5.adversaries = [far];
+  resetStub(g5, { strike: true });
+  far.hunt.on = true; far.hunt.inSight = false; far.mode = 'search'; far.lastSeen = [1, 1];
+  await step(g5);
+  check(!stub.calls.some((c) => c.questions.includes('skill')), 'skill: asked with the explorer out of reach');
+
+  // Fog: the skill question appears only with the explorer adjacent AND in sight; `state` never gains a position.
+  const g6 = handMap(['#########', '#.......#', '#...EA..#', '#.......#', '#########']);
+  const near = clawGhost('a1', [5, 2], { budget: 1 });
+  g6.adversaries = [near];
+  resetStub(g6);
+  await step(g6);
+  const req = near.lastRequest();
+  check(req && req.questions.skill && Object.keys(req.questions.skill.criteria).join() === 'none,claw_strike_left', `skill request criteria: ${req && Object.keys(req.questions?.skill?.criteria ?? {})}`);
+  check(req.state.self.skills.length === 1 && req.state.self.skills[0].id === 'claw_strike' && !('text' in req.state.self.skills[0]), 'state.self.skills holds the summary without text');
+  check(/Besides the move/.test(req.questions.skill.instructions.question) && !/Strike whenever|only when cornered/.test(req.questions.skill.instructions.question), 'standard ghost: no aggression line');
+  check(/claw strike/.test(req.state.game) && /only bumps/.test(req.state.game) && /Touching is harmless/.test(req.state.game), 'rules(): touches only bump, the claw strike takes a life');
+  check(req.questions.next_move.criteria.left?.includes('only a bump') && req.questions.next_move.instructions.priorities.every((x) => !x.startsWith('Skills:')), 'move facts: stepping onto the explorer is only a bump');
+
+  // Character lines: aggression 3 / 1 add the strike line; caution 3 wakes keepDistance.
+  for (const [character, line] of [['aggressive', 'Strike whenever the explorer is adjacent and the claw is ready.'], ['timid', 'Strike only when cornered.']]) {
+    const gc = handMap(['#########', '#.......#', '#...EA..#', '#.......#', '#########']);
+    const c = clawGhost('a1', [5, 2], { budget: 1, character });
+    gc.adversaries = [c];
+    resetStub(gc);
+    await step(gc);
+    const rq = c.lastRequest();
+    check(rq.questions.skill.instructions.question.endsWith(line) && rq.questions.next_move.instructions.priorities.includes(`Skills: ${line}`), `character ${character}: strike line missing`);
+  }
+  const gk = handMap(['#########', '#.......#', '#...EA..#', '#.......#', '#########']);
+  const cautious = clawGhost('a1', [5, 2], { budget: 1 });
+  cautious.hunt.profile = profileOf({ ...traitsOf('standard'), caution: 3 });
+  gk.adversaries = [cautious];
+  resetStub(gk);
+  await step(gk);
+  check(cautious.lastRequest().questions.next_move.instructions.priorities.some((x) => /keep at least 2 cells/.test(x)), 'caution 3: keepDistance line missing');
+  const gs = handMap(['#########', '#.......#', '#...EA..#', '#.......#', '#########']);
+  const plain = clawGhost('a1', [5, 2], { budget: 1 });
+  gs.adversaries = [plain];
+  resetStub(gs);
+  await step(gs);
+  check(!plain.lastRequest().questions.next_move.instructions.priorities.some((x) => /keep at least/.test(x)), 'standard ghost got a keepDistance line');
+  // Fog twin: a ghost the explorer cannot be seen from gets no skill question, whatever the explorer's cell.
+  const gt = handMap(['#########', '#.......#', '#...E...#', '#.......#', '#########']);
+  const hid = clawGhost('a1', [7, 2], { budget: 1 });
+  hid.hunt.on = true; hid.hunt.inSight = false; hid.mode = 'search'; hid.lastSeen = [4, 2]; hid.hunt.pickApproach = false;
+  hid.memory.approach.id = 'sweep_last_seen'; hid.memory.brain.on = true;
+  gt.adversaries = [hid];
+  resetStub(gt);
+  gt.pos = [1, 3];
+  hid.hunt.restUntil = 0;
+  const reqs = [buildRequest(new AdversaryView(gt, hid), hid, 3, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: 1, graceTicks: GRACE_TICKS })];
+  gt.pos = [2, 1];
+  reqs.push(buildRequest(new AdversaryView(gt, hid), hid, 3, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: 1, graceTicks: GRACE_TICKS }));
+  check(JSON.stringify(JSON.parse(reqs[0].body).state) === JSON.stringify(JSON.parse(reqs[1].body).state) && !reqs[0].questions.skill && !reqs[1].questions.skill, 'fog: a searching ghost\'s state depends on the explorer cell, or it asked a skill');
+
+  // Requests are built synchronously in id order: after the un-awaited call, every Jev call has already started.
+  const g7 = handMap(['#################', '#E..............#', '#...............#', '#..............T#', '#################']);
+  const m2 = adversary('a2', [6, 3], { budget: 1 }), m1 = adversary('a1', [7, 3], { budget: 1 });
+  g7.adversaries = [m2, m1]; // array order != id order
+  resetStub(g7, { delay: 5 });
+  const pending = step(g7);
+  check(stub.calls.map((c) => c.id).join() === 'a1,a2', `sync: ${stub.calls.map((c) => c.id)} started before the first await, want a1,a2`);
+  await pending;
+  console.log('ghost state: six keys, takeHit, stun, dispel, skill-only request, character lines and sync requests ok');
 }
 
 // 5. Losing sight: chase -> search (brain still on) -> brain_off after MAX_SEARCH_TICKS -> patrol.
@@ -475,7 +705,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   check(m.approach.tried.every((t) => t.id === 'cut_off' || t.id === 'sweep_last_seen'), `memory: tried holds a non-search approach ${JSON.stringify(m.approach.tried)}`);
   check(m.approach.tried.length === 0, `memory: ${m.approach.tried.length} flip-flop rows in tried after ${CYCLES} cycles`);
   check(m.events.length === 1 && /^First sighting/.test(m.events[0].text), `memory: events after repeated sightings ${JSON.stringify(m.events)}`);
-  check(!('findings' in m) && Object.keys(m).join() === 'id,character,objective,brain,approach,tally,events,progress,latest_action,sightings,recent,landmarks,lifetime', `memory: keys ${Object.keys(m)}`);
+  check(!('findings' in m) && Object.keys(m).join() === 'id,character,objective,brain,approach,tally,events,progress,latest_action,sightings,recent,landmarks,lifetime,skills', `memory: keys ${Object.keys(m)}`);
   // A search approach that is replaced by giving up is recorded once.
   game.pos = [14, 2];
   for (let i = 0; i < MAX_SEARCH_TICKS + 2 && a.memory.brain.on; i++) await step(game);
@@ -502,7 +732,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   await step(g2);
   const call = JSON.parse(stub.calls.find((c) => c.id === 'a1').body);
   check(Object.keys(call.state).join() === 'game,tick,self,surroundings,explorer,last_seen,team,recent', `state keys ${Object.keys(call.state)}`);
-  check(Object.keys(call.state.self).join() === 'id,position,mode,approach,latest_action', `self keys ${Object.keys(call.state.self)}`);
+  check(Object.keys(call.state.self).join() === 'id,position,mode,approach,latest_action,skills', `self keys ${Object.keys(call.state.self)}`);
   const sur = call.state.surroundings;
   check(sur.here === 'room' && Number.isInteger(sur.exits) && Number.isInteger(sur.dead_ends_within_5) && 'nearest_junction_or_doorway' in sur, `surroundings ${JSON.stringify(sur)}`);
   check(sur.nearest_junction_or_doorway === null || (typeof sur.nearest_junction_or_doorway.direction === 'string' && sur.nearest_junction_or_doorway.path_steps > 0), `nearest_junction_or_doorway ${JSON.stringify(sur)}`);
@@ -518,23 +748,23 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
 
   // A hit is counted and noted.
   const g3 = twoRooms();
-  const hitter = adversary('a1', [2, 1], { budget: 0.9 });
+  const hitter = clawGhost('a1', [2, 1], { budget: 0.9 });
   g3.pos = [3, 1];
   g3.adversaries = [hitter];
-  resetStub(g3);
+  resetStub(g3, { strike: true });
   const { events } = await step(g3);
-  check(events.some((e) => e.type === 'hit'), 'memory: setup, no hit');
+  check(events.some((e) => e.type === 'hit'), `memory: setup, no hit (${events.map((e) => e.type)})`);
   m = validateMemory(hitter.memory);
   check(m.tally.hits === 1 && m.events.some((e) => /^Hit the explorer/.test(e.text)), `memory: hit not recorded ${JSON.stringify(m.tally)} ${JSON.stringify(m.events)}`);
   console.log(`memory: ${CYCLES} sight/lost cycles -> tally ${JSON.stringify(m.tally)} for the hit run, no flip-flop rows in tried, events capped at 5, surroundings and team in the request`);
 }
 
 // 6. Random-walk games: never on a wall, and the difficulty signal.
-async function walk(seed, policy, maxTicks = 3000) {
+async function walk(seed, policy, maxTicks = 800) {
   const dungeon = generateDungeon(seed);
   const game = new Game(dungeon);
   game.adversaries = spawnAdversaries(dungeon);
-  resetStub(game);
+  resetStub(game, { strike: true }); // ghosts strike when a claw option is offered, so games end
   const rand = rng(seed * 7919 + 13);
   let chases = 0, lostSight = 0, reacquired = 0;
   for (let tick = 1; tick <= maxTicks; tick++) {
@@ -578,7 +808,7 @@ async function walk(seed, policy, maxTicks = 3000) {
 }
 
 for (const policy of ['random', 'fresh', 'flee']) {
-  const GAMES = 40;
+  const GAMES = 24; // informational stats; kept small so the whole check stays fast
   const results = [];
   const started = performance.now();
   for (let seed = 1001; seed < 1001 + GAMES; seed++) results.push(await walk(seed, policy));
@@ -616,24 +846,26 @@ for (const policy of ['random', 'fresh', 'flee']) {
     resetStub(game);
     await step(game); // starts the chase (code policy)
     game.pos = [14, 2]; // out of sight: a search step, which asks Jev
-    const req = buildRequest(new AdversaryView(game, a), a, 2, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: HIT_DAMAGE, graceTicks: GRACE_TICKS });
+    const req = buildRequest(new AdversaryView(game, a), a, 2, { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: clawDamageNow(a), graceTicks: GRACE_TICKS });
     return req.state?.game ?? '';
   };
   const before = await rulesText();
   check(before.includes(`within ${SIGHT_RANGE} cells`), `rules: sight range ${SIGHT_RANGE} missing from "${before}"`);
-  const old = { sight: SIGHT_RANGE, grace: GRACE_TICKS, damage: HIT_DAMAGE };
+  const old = { sight: SIGHT_RANGE, grace: GRACE_TICKS, claw: skillConfig() };
   configureWorld({ sightRange: 9 });
-  configureAdversaries({ graceTicks: 6, hitDamage: 2 });
+  configureAdversaries({ graceTicks: 6 });
+  configureSkills({ ...skillConfig(), clawDamage: 2 });
   try {
     const after = await rulesText();
     check(after.includes('within 9 cells') && after !== before, 'rules: text did not follow sightRange 9');
-    check(after.includes('cannot be hurt for 6 ticks') && after.includes('loses 2 lives'), 'rules: text did not follow graceTicks/hitDamage');
+    check(after.includes('cannot be hurt for 6 ticks') && after.includes('loses 2 lives'), 'rules: text did not follow graceTicks/clawDamage');
   } finally {
     configureWorld({ sightRange: old.sight });
-    configureAdversaries({ graceTicks: old.grace, hitDamage: old.damage });
+    configureAdversaries({ graceTicks: old.grace });
+    configureSkills(old.claw);
   }
   check((await rulesText()) === before, 'rules: text not restored after the tunables were put back');
-  console.log('rules: text follows sight range, grace ticks and hit damage');
+  console.log('rules: text follows sight range, grace ticks and claw damage');
 }
 
 // AdversaryView (full mode): the API brain and perception use, and the explorer-in-sight guard.
@@ -1128,6 +1360,7 @@ for (const policy of ['random', 'fresh', 'flee']) {
   console.log('limited map: view, fading, cap, fog twins (patrol, chase, search, alerted from far) ok');
 }
 
+console.log(`largest ghost request: ${maxBody.bytes} bytes (questions ${maxBody.questions})`);
 console.log(`CHASE_RANGE ${CHASE_RANGE}, SIGHT_RANGE ${SIGHT_RANGE}`);
 if (failures) {
   console.error(`${failures} failure(s)`);

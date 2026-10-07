@@ -47,6 +47,10 @@ const ALLOWED_IMPORTS = {
   '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
   // Pure helpers shared with the adversary side (PLAN-adversary-memory.md A3); they import nothing from the game.
   '../shared/memory-kit.js': null,
+  // Skills (PLAN-skills.md): the brain builds its skill set and asks the `skill` question through these two
+  // modules only. They hold no game state; src/skills/ is guarded below (section 0c). resolve.js is not allowed.
+  '../../skills/loadouts.js': ['buildSkillSet'],
+  '../../skills/question.js': ['skillQuestion', 'pickSkill'],
 };
 function fogViolations(name, source, allowedImports = ALLOWED_IMPORTS) {
   const out = [];
@@ -88,6 +92,9 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
   '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
   './adversary.js': ['ADVERSARY_SPEED'],
+  // The ghost's skill set and `skill` question (PLAN-skills.md S4), same pure modules as the explorer's.
+  '../../skills/loadouts.js': ['buildSkillSet'],
+  '../../skills/question.js': ['skillQuestion', 'pickSkill'],
 };
 {
   const adv = (n, src) => fogViolations(n, src, ADVERSARY_ALLOWED_IMPORTS);
@@ -99,6 +106,25 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   const guarded = ['perception.js', 'brain.js', 'memory.js', 'character.js'].filter((f) => readdirSync(advUrl).includes(f));
   if (guarded.length < 3) fail('adversary fog guard: adversary files not found');
   for (const f of guarded) for (const v of adv(f, readFileSync(new URL(f, advUrl), 'utf8'))) fail(`adversary static fog guard: ${v}`);
+}
+
+// 0c. src/skills/*.js except resolve.js (the one file that mutates a Game, called only from world code):
+//     options() reads only the `view` and `self` it is given. No game reads, no .dungeon, imports only from
+//     sibling skills files and DIRS from dungeon.js.
+{
+  const SKILL_ALLOWED_IMPORTS = {
+    './skill.js': null, './attack.js': null, './block.js': null, './skill-set.js': null, './loadouts.js': null,
+    './question.js': null, './config.js': null, '../dungeon.js': ['DIRS'],
+  };
+  const sk = (n, src) => fogViolations(n, src, SKILL_ALLOWED_IMPORTS);
+  if (sk('synthetic', "const t = game.dungeon.tiles;").length < 2) fail('skills guard missed a game read');
+  if (sk('synthetic', "import { isFloor } from '../dungeon.js';").length < 1) fail('skills guard missed isFloor');
+  if (sk('synthetic', "import { resolveAttack } from './resolve.js';").length < 1) fail('skills guard missed resolve.js');
+  if (sk('synthetic', "import { DIRS } from '../dungeon.js';\nimport { Skill } from './skill.js';").length) fail('skills guard rejects allowed imports');
+  const skUrl = new URL('../src/skills/', import.meta.url);
+  const files = readdirSync(skUrl).filter((f) => f.endsWith('.js') && f !== 'resolve.js');
+  if (files.length < 6 || !files.includes('attack.js')) fail('skills guard: src/skills files not found');
+  for (const f of files) for (const v of sk(f, readFileSync(new URL(f, skUrl), 'utf8'))) fail(`skills static guard: ${v}`);
 }
 
 // 1. Generation: ~200 seeds.
@@ -429,11 +455,11 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 
   g.adversaries = [adv([3, 5], 'chase')];
   const caught = describeMoves(new KnownWorld(g), 'run_away');
-  if (!caught.right?.startsWith(`Steps into the adversary: costs 1 life (${EXPLORER_LIVES - 1} of ${EXPLORER_LIVES} left)`)) fail(`touch sentence missing: ${caught.right}`);
+  if (!caught.right?.startsWith('Steps into the adversary: only bumps it back, no life lost.')) fail(`bump sentence missing (D3: a touch never costs a life): ${caught.right}`);
   g.health = 1;
-  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: costs your last life and the game is lost.')) fail('last-life touch sentence missing');
+  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: only bumps it back, no life lost.')) fail('last-life bump sentence missing');
   g.graceTicks = 2;
-  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: no life lost while your hit protection lasts')) fail('grace touch sentence missing');
+  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: only bumps it back, no life lost.')) fail('grace bump sentence missing');
   const sit = situation(new KnownWorld(g));
   if (sit.self.lives !== 1 || sit.self.max_lives !== EXPLORER_LIVES || sit.self.hit_protection_steps !== 2) fail(`situation self: ${JSON.stringify(sit.self)}`);
   g.health = g.maxHealth; g.graceTicks = 0;
@@ -450,7 +476,7 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 
   g.adversaries = [adv([9, 7], 'patrol')]; // out of sight
   if (approachTarget(new KnownWorld(g), 'run_away') !== null || Object.keys(tacticOptions(new KnownWorld(g))).length) fail('run_away offered with nothing in sight');
-  console.log('threat sentences: touch (life/last life/grace), cornered, loop, run_away target ok');
+  console.log('threat sentences: touch is a bump (full/last life/grace), cornered, loop, run_away target ok');
   console.log('  touch sample    right:', caught.right);
   console.log('  cornered sample up:   ', cornered.up);
   console.log('  loop sample     left: ', cornered.left);
@@ -888,6 +914,92 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
       }
     }
     console.log(`encounter counters ${JSON.stringify(m.encounters)}, events ${m.events.length}; ${sizes.length} requests, largest ${max} bytes (up to ${maxTactics} tactics offered)`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// 4e-skills. Fog of skill facts: a VISIBLE ghost's private hit points, stun and cooldown never reach Jev, so
+//     scrambling them leaves every request byte-identical (the `skill` question included); after a dispel the
+//     ghost is not in threats.remembered. Stub Jev, no network, temp memory dir.
+{
+  const room = [
+    '###########',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '#.........#',
+    '###########',
+  ];
+  const seeded = async (n, fn) => {
+    const real = Math.random;
+    Math.random = rng(n);
+    try { return await fn(); } finally { Math.random = real; }
+  };
+  let bodies = [];
+  const ask = (strike) => async ({ body, questions }) => {
+    bodies.push(body);
+    return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+      if (q.type === 'noul') return [k, { noul: 0.9 }];
+      const keys = Object.keys(q.criteria);
+      const c = k === 'skill' && strike ? (keys.find((x) => x !== 'none') ?? 'none') : keys[0];
+      return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+    }));
+  };
+  // Scrambles the private state of a ghost without moving it: hit points and stun (and its skill cooldowns,
+  // when the ghost exposes a skill set), then puts it back where it stood.
+  const scramble = (g, a) => {
+    const at = [...a.pos];
+    a.takeHit(1, [at[0] - 1, at[1]]);
+    a.pos = at;
+    const ks = a.skills?.skills ?? a.skillSet?.skills;
+    if (Array.isArray(ks)) for (const k of ks) k.markUsed?.(0);
+  };
+  // Adjacent ghost: the gate opens and the attack is offered, whatever the ghost's private state.
+  const adj = async (scrambled) => {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    bodies = [];
+    const g = handGame(room, [2, 3]);
+    g.adversaries = [chaser([3, 3])];
+    if (scrambled) scramble(g, g.adversaries[0]);
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), memoryDir: pathToFileURL(dir + '/') });
+    await seeded(1, () => brain.takeTurn());
+    const out = { bodies: [...bodies], reqs: brain.lastRequests() };
+    rmSync(dir, { recursive: true, force: true });
+    return out;
+  };
+  const A = await adj(false), B = await adj(true);
+  const skillQ = (r) => r.reqs.map((x) => x.questions?.skill).find(Boolean);
+  if (!skillQ(A)) fail('skill twin: no skill question with a visible adjacent ghost');
+  else {
+    if (!Object.keys(skillQ(A).criteria).some((k) => k.startsWith('sword_strike_'))) fail(`skill twin: no strike option: ${Object.keys(skillQ(A).criteria)}`);
+    if (JSON.stringify(skillQ(A)) !== JSON.stringify(skillQ(B))) fail(`skill twin: skill question depends on a visible ghost's private state: ${firstDiff(skillQ(A), skillQ(B))}`);
+  }
+  if (A.bodies.join('|') !== B.bodies.join('|')) fail(`skill twin: requests depend on a visible ghost's private state: ${firstDiff(A.bodies.map((b) => JSON.parse(b)), B.bodies.map((b) => JSON.parse(b)))}`);
+  const maxAdj = Math.max(...A.bodies.map((b) => Buffer.byteLength(b, 'utf8')));
+  if (maxAdj > 9500) fail(`adjacent-ghost request is ${maxAdj} bytes (> 9500)`);
+  console.log(`  adjacent ghost + skill question: ${A.bodies.length} requests, largest ${maxAdj} bytes (skill question ${JSON.stringify(skillQ(A) ?? {}).length} bytes)`);
+
+  // Dispel: one strike on a 1-hp ghost removes it; the next request lists it neither as visible nor remembered.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    bodies = [];
+    const g = handGame(room, [2, 3]);
+    g.adversaries = [chaser([3, 3])];
+    const ghost = g.adversaries[0];
+    // Bring it to 1 hp, then stand it next to the explorer again (a hit knocks it back).
+    while (ghost.hp > 1) ghost.takeHit(1, [2, 3]);
+    ghost.pos = [3, 3];
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(true), memoryDir: pathToFileURL(dir + '/') });
+    const t1 = await seeded(1, () => brain.takeTurn());
+    if (g.adversaries.length) fail(`dispel: the ghost is still in the game after a strike (skill_decision ${JSON.stringify(t1.skill_decision)})`);
+    else {
+      await seeded(2, () => brain.takeTurn());
+      const th = brain.lastRequest().state.threats;
+      if (th.remembered.length || th.visible.length) fail(`dispel: the dispelled ghost is still listed: ${JSON.stringify(th)}`);
+      if (!brain.memory.events.some((e) => /Dispelled a1/.test(e.text))) fail('dispel: no dispel event in memory');
+      console.log('skill fog twin: skill question and requests byte-identical with a visible ghost scrambled; dispelled ghost not remembered');
+    }
     rmSync(dir, { recursive: true, force: true });
   }
 }

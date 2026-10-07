@@ -6,6 +6,8 @@ import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS, KINDS, FOOTPRINT_STANDIN, FORGE_SHAPES } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
+import { LOADOUTS } from './skills/loadouts.js';
+import { MAX_SKILLS } from './skills/skill-set.js';
 
 export const TESTBED_MIN = 3; // interior floor cells per side
 export const TESTBED_MAX = 60;
@@ -22,7 +24,11 @@ export const DEFAULTS = {
   characters: 'standard',
   props: 'none',
   map: null,
+  explorerSkills: 'default', // 'default' | 'none' | a list of loadout ids (<= 4)
+  ghostSkills: 'default', // 'default' (claw) | 'none' (harmless ghosts)
+  ghostHp: null, // 1..5; null = the Skills setting
 };
+export const TESTBED_MAX_GHOST_HP = 5;
 // Solid / small props per interior floor cell for the random prop presets.
 const PROP_DENSITY = { few: { solid: 1 / 30, small: 1 / 40 }, many: { solid: 1 / 12, small: 1 / 20 } };
 const MAP_CHARS = '#.@TAps';
@@ -123,8 +129,34 @@ export function normalizeConfig(raw = {}) {
     if (!Array.isArray(rows) || !rows.length || !rows.every((r) => typeof r === 'string')) bad('map must be a list of row strings (or one string, rows split by newlines or "/")');
     cfg.map = rows;
   }
+  if (given('explorerSkills')) {
+    let l = raw.explorerSkills;
+    if (typeof l === 'string' && /[;|,\s]/.test(l.trim())) l = l.trim().split(/[;|,\s]+/).filter(Boolean);
+    if (l === 'default' || l === 'none') cfg.explorerSkills = l;
+    else {
+      const ids = typeof l === 'string' ? [l] : l;
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) bad(`explorerSkills must be 'default', 'none' or a list of loadout ids, got ${JSON.stringify(raw.explorerSkills)}`);
+      if (ids.length > MAX_SKILLS) bad(`explorerSkills holds at most ${MAX_SKILLS} skills`);
+      for (const id of ids) if (!Object.hasOwn(LOADOUTS, id)) bad(`explorerSkills entry ${JSON.stringify(id)} is not one of ${Object.keys(LOADOUTS).join(', ')}`);
+      if (new Set(ids).size !== ids.length) bad('explorerSkills has a duplicate loadout id');
+      cfg.explorerSkills = ids.length ? ids : 'none';
+    }
+  }
+  if (given('ghostSkills')) {
+    if (raw.ghostSkills !== 'default' && raw.ghostSkills !== 'none') bad(`ghostSkills must be 'default' or 'none', got ${JSON.stringify(raw.ghostSkills)}`);
+    cfg.ghostSkills = raw.ghostSkills;
+  }
+  if (given('ghostHp')) {
+    cfg.ghostHp = toInt(raw.ghostHp, 'ghostHp');
+    if (cfg.ghostHp < 1 || cfg.ghostHp > TESTBED_MAX_GHOST_HP) bad(`ghostHp must be 1..${TESTBED_MAX_GHOST_HP}`);
+  }
   return cfg;
 }
+
+// What to hand buildSkillSet / ExplorerBrain({ skills }) for a normalized config: 'explorer', 'none' or a list.
+export const explorerSkillSetOf = (cfg) => (cfg.explorerSkills === 'default' ? 'explorer' : cfg.explorerSkills);
+// The same for ghosts: 'ghost' or 'none'.
+export const ghostSkillSetOf = (cfg) => (cfg.ghostSkills === 'none' ? 'none' : 'ghost');
 
 // --- arena -------------------------------------------------------------------------------------
 
@@ -328,7 +360,9 @@ export function buildArena(rawConfig = {}) {
   }
   // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
   const characters = charactersFor(cfg.characters, cfg.seed, positions.length);
-  const adversaries = positions.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos, character: characters[i] }));
+  const adversaries = positions.map((pos, i) => new Adversary({
+    id: `a${i + 1}`, pos, character: characters[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
+  }));
 
   const dungeon = {
     seed: cfg.seed,

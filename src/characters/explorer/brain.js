@@ -21,10 +21,12 @@ import { EXPLORER_LIVES, SIGHT_RANGE } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, isTactic, situation, tacticFeasibility, treasureSeen,
 } from './perception.js';
-import { dirWord, euclid, isFrontier, key, knownFloor, neighbours, sameCell } from './known-map.js';
+import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
 import { knownLineOfSight, speedPhrase } from './encounter.js';
+import { buildSkillSet } from '../../skills/loadouts.js';
+import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
-  LIMITS, addEvent, addLandmark, backAndForth, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, switchApproach,
+  LIMITS, addEvent, addLandmark, backAndForth, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
 import { askJev, shuffle } from '../../jev.js';
@@ -33,6 +35,12 @@ const REVIEW_EVERY = 8; // steps between approach reviews
 const APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
 const REDECIDE_COOLDOWN = 3; // min ticks between decision steps for a failing tactic
 const REMEMBER_STEPS = 30; // a remembered sighting expires after this many steps
+const SKILL_NEAR = 10; // loose gate (PLAN D7): an opponent visible, or remembered fresh, within this many cells
+const SKILL_REMEMBER_STEPS = 10; // a sighting this young still opens the gate
+const THREAT_STEPS = 2; // a visible chaser within this many path steps offers the block
+// Ghosts get their claw attack in a later phase (PLAN S4). Until then a block has nothing to stop; the
+// plan wants it left out, but this phase offers it anyway. Flip to false to hide the block option.
+const GHOSTS_CAN_ATTACK = true;
 const PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
@@ -47,6 +55,7 @@ const askReal = ({ state, questions, body }) => askJev(state, questions, body);
 //   priority   - a line injected into next_move's priorities and the tactic question
 //   move_priority - the same rule, shortened, for the one-per-tactic move questions
 //   when       - what Jev reads when picking it (concrete circumstances)
+//   skill_priority - the mind's rule for skills: in the `skill` question and, while a skill is offered, next_move's priorities
 export const SENTIMENTS = {
   scared: {
     min_gap: 5, end_ticks: 6,
@@ -54,6 +63,7 @@ export const SENTIMENTS = {
     when: 'Pick when cornered: a chasing adversary within about 4 steps, in a corridor, dead end or small room (a side under 6), with no route past it whose closest approach is 3 or more.',
     priority: 'Scared: getting away comes first. Never move toward an adversary; take the move that leaves the most steps between you and avoid every dead end.',
     note: 'Flees first and never moves toward an adversary.',
+    skill_priority: 'Block if caught close; never strike.',
   },
   risk_averse: {
     min_gap: 4, end_ticks: 5,
@@ -61,6 +71,7 @@ export const SENTIMENTS = {
     when: 'Pick when an adversary is in sight 5 or more steps away but the ground is uncertain: few known exits, a corridor, or the best route past it comes within 3 steps.',
     priority: 'Risk-averse: keep at least 4 steps from adversaries; when in doubt take the move that grows the distance or keeps more exits open, even at the cost of progress.',
     note: 'Prefers retreat or hiding over passing.',
+    skill_priority: 'Block when an adversary can reach you; never stay adjacent to strike.',
   },
   cautious: {
     min_gap: 3, end_ticks: 4,
@@ -68,6 +79,7 @@ export const SENTIMENTS = {
     when: 'Pick when danger is recent or near: fewer than the full lives left, a hit or chase in `recent.events`, an adversary seen a few steps ago (`threats.remembered`), or an adversary in sight that is far (6+ steps) or still patrolling and has not reacted.',
     priority: 'Cautious: keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
     note: 'Favours well-connected ground over dead ends and corridors.',
+    skill_priority: 'Block when an adversary can reach you; strike only to open a way out.',
   },
   // The opposite of cautious: drawn to the unknown, it accepts corridors and side branches that
   // still lead somewhere new. Same 3-step safety floor; it just gets back to exploring sooner.
@@ -77,6 +89,7 @@ export const SENTIMENTS = {
     when: 'Pick when it is safe to explore boldly: full lives, no adversary in sight or remembered (`threats.remembered` empty), no recent chase, and plenty of unexplored space (`surroundings.unexplored_by_direction`).',
     priority: 'Curious: the unknown comes first. Prefer the move that would reveal the most new cells or steps onto a never-visited cell; corridors and side branches are fine while they lead towards unexplored space. Still keep at least 3 steps from adversaries.',
     note: 'Drawn to the unknown: goes for the most new cells, even down corridors.',
+    skill_priority: 'Use a skill only to clear the way to unexplored ground.',
   },
   courageous: {
     min_gap: 2, end_ticks: 2,
@@ -84,6 +97,7 @@ export const SENTIMENTS = {
     when: 'Pick when an adversary is in sight but there is room to work with: a big room with several exits, or a route past it toward unexplored space whose closest approach is only 2 steps.',
     priority: 'Courageous: hold your nerve. Keep at least 2 steps from adversaries, but do not give up ground just because one is in sight; keep making progress.',
     note: 'Holds its nerve and keeps making progress.',
+    skill_priority: 'Strike when it is adjacent and you have a life to spare; otherwise block.',
   },
   aggressive: {
     min_gap: 2, end_ticks: 1,
@@ -91,6 +105,7 @@ export const SENTIMENTS = {
     when: 'Pick when the goal is within reach: the chest is seen and its path keeps the adversary 2+ steps off, or the adversary is far (7+ steps) and progress matters most.',
     priority: 'Aggressive: push for the goal. Moving toward an adversary is fine while at least 2 steps stay between you; take the move that makes the most progress.',
     note: 'Pushes for the goal, moving toward adversaries when that gains ground.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready.',
   },
 };
 const DEFAULT_SENTIMENT = 'cautious';
@@ -118,12 +133,13 @@ const TACTIC_MOVE_HINT = {
 
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
-const rules = () =>
+const rules = (hasSkills = true) =>
   'Find the treasure chest in this dark grid dungeon and step onto it in as few steps as possible, avoiding re-walked ground. ' +
   'Each step is up, down, left or right, or stay. Every visited cell lights its surroundings for good: lit cells are known, the rest (and the chest) unknown. ' +
   `Adversaries chase an explorer they see, at ${speedPhrase()}. ` +
-  `A touch costs 1 life (it starts with ${EXPLORER_LIVES}); at 0 the game is lost. After a hit the adversary is knocked back and for ${GRACE_TICKS} steps none can hurt it. ` +
-  '`threats.visible` is what is in sight now; `threats.remembered` is what was seen earlier, frozen where last seen.';
+  `A touch only bumps. An adjacent adversary's claw costs 1 life (you start with ${EXPLORER_LIVES}); at 0 you lose. A hit protects you ${GRACE_TICKS} steps. ` +
+  '`threats.visible` is what is in sight now; `threats.remembered` is what was seen earlier, frozen where last seen.' +
+  (hasSkills ? ' You have up to 4 skills (`self.skills`). Besides moving you may use at most one per step; most steps need none.' : '');
 
 // "cautious×3 → scared": the mind picks as runs, oldest first.
 function mindRuns(history) {
@@ -167,8 +183,13 @@ export class ExplorerBrain {
   #remembered = [];
   #zone = new Set();
   #lastBodies = [];
+  // The explorer's skills (stateful: cooldowns) and how often it hit each id it saw; private. memory.skills mirrors their summaries and is rewritten before every save.
+  #skills;
+  #hitsLanded = {};
+  #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
 
-  constructor(world, { ask = null, memoryDir = null } = {}) {
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer' } = {}) {
+    this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#ask = ask ?? askReal;
     this.#memoryDir = memoryDir ?? MEMORY_DIR;
@@ -180,6 +201,7 @@ export class ExplorerBrain {
       start: world.pos,
     });
     this.#memory = memory;
+    setSkills(memory, this.#skills.summaries());
     this.#review = { step: 0, targetSteps: approachTarget(world, 'nearest_frontier')?.steps ?? null };
     memory.progress.known_floor_cells = world.knownFloorCount();
     this.#encounter.pending = 'start';
@@ -210,13 +232,14 @@ export class ExplorerBrain {
   // The state Jev reads, regrouped: rules, then who the explorer is, what is around it, what
   // threatens it, what it is trying and what just happened. memory supplies the persistent parts,
   // `sit` (perception) everything recomputed this tick.
+  // self.skills drops each skill's `text` (the rules sentence covers it) to stay inside the request-size bounds.
   #state(sit, moves = null) {
     const m = this.#memory;
     const a = m.approach;
     const i = a.interrupted;
     return {
-      game: rules(),
-      self: { ...sit.self, mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
+      game: rules(this.#skills.size > 0),
+      self: { ...sit.self, ...(this.#skills.size ? { skills: this.#skills.summaries().map(({ text, ...rest }) => rest) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: sit.threats,
       plan: {
@@ -257,6 +280,43 @@ export class ExplorerBrain {
     this.#zone = avoidZone(world, this.#remembered);
   }
 
+  // Fog-safe `self` for the skill options, and the options. Only visibleAdversaries() and the brain's own
+  // sightings are read. Loose gate (D7): opponentsNear = something visible within SKILL_NEAR, or a
+  // sighting up to SKILL_REMEMBER_STEPS steps old within SKILL_NEAR; threatNear = a visible chaser within
+  // THREAT_STEPS path steps ({ id, steps } so the block fact can name it).
+  #skillOptions() {
+    const world = this.#world;
+    if (!this.#skills.size) return {};
+    const visible = world.visibleAdversaries();
+    const near = visible.some((v) => v.distance <= SKILL_NEAR);
+    const recalled = this.#remembered.some((r) => world.steps - r.step <= SKILL_REMEMBER_STEPS && euclid(world.pos, r.cell) <= SKILL_NEAR);
+    const opponentsNear = near || recalled;
+    let threatNear = false;
+    if (GHOSTS_CAN_ATTACK) {
+      const chasers = visible.filter((v) => v.mode === 'chase' && v.distance <= THREAT_STEPS + 1);
+      if (chasers.length) {
+        const dist = knownDistances(world, world.pos);
+        for (const v of chasers) {
+          const steps = dist.get(v.pos) ?? Math.round(euclid(world.pos, v.pos));
+          if (steps <= THREAT_STEPS && (!threatNear || steps < threatNear.steps)) threatNear = { id: v.id, steps };
+        }
+      }
+    }
+    const self = {
+      pos: [...world.pos],
+      visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance })),
+      opponentsNear,
+      threatNear,
+      hitsLanded: { ...this.#hitsLanded },
+    };
+    return this.#skills.options({ pos: [...world.pos], facing: world.facing }, self);
+  }
+
+  // A ready attack skill is in hand (face_off then says it can strike).
+  #armed() {
+    return this.#skills.skills.some((k) => k.kind === 'attack' && k.ready);
+  }
+
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
   #target(id, opts = {}) {
     return approachTarget(this.#world, id, { avoid: this.#zone, ...opts });
@@ -267,6 +327,7 @@ export class ExplorerBrain {
     const memory = this.#memory;
     const info = this.#encounter;
     const step = world.steps + 1;
+    this.#skillEvents = [];
     const prev = world.steps;
     this.#lastBodies = [];
     this.#observe();
@@ -281,6 +342,7 @@ export class ExplorerBrain {
     if (!legal.length) throw new Error('No legal moves');
     const forced = legal.length === 1;
     const inSight = sit.threats.visible.length > 0;
+    const skillOptions = this.#skillOptions(); // computed before the move, like the facts Jev reads
 
     // A decision without an adversary in sight waits for the next tick with a real choice. When an
     // encounter starts on the same tick as a pending decision (start, chest, review), the
@@ -304,7 +366,7 @@ export class ExplorerBrain {
       const profile = profileOf(memory);
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -321,6 +383,7 @@ export class ExplorerBrain {
 
     const profile = profileOf(memory);
     this.#keepEscapeGoal(profile);
+    const hasSkillOptions = Object.keys(skillOptions).length > 0;
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
@@ -341,14 +404,14 @@ export class ExplorerBrain {
       };
       if (!forced) {
         for (const id of tacticIds) {
-          const q = this.#moveQuestion(id, sit, profile, true);
+          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions);
           questions[`move_if_${id}`] = q.question;
           moveOptions[id] = q.options;
           sharedMoves = q.shared;
         }
       }
     } else if (!forced) {
-      const q = this.#moveQuestion(memory.approach.id, sit, profile, false);
+      const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions);
       questions.next_move = q.question;
       moveOptions[memory.approach.id] = q.options;
     }
@@ -361,15 +424,25 @@ export class ExplorerBrain {
       !forced && !tacticIds.length && approachId !== 'go_to_treasure' && !isTactic(approachId) &&
       sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
     if (reviewDue) this.#addReviewQuestions(questions, approachId, rInfo);
+    // ONE skill question per request (never per tactic, never in the sentiment request). On a forced tick
+    // it is the only question: a skill-only request (PLAN D4-a).
+    const skillQ = hasSkillOptions ? skillQuestion(skillOptions, profile.skill_priority) : null;
+    if (skillQ) questions.skill = skillQ;
 
     let dir = legal[0];
     let moveDecision = null;
     let review = null;
     let pendingSwitch = null;
+    let skillDecision = null;
+    let skillKey = 'none';
     if (Object.keys(questions).length) {
       const res = await this.#request('tick', this.#state(sit, sharedMoves), questions);
       apiMs += res.ms;
       const answers = res.answers;
+      if (skillQ) {
+        skillKey = pickSkill(answers.skill, skillOptions);
+        skillDecision = { choice: answers.skill?.choice ?? null, probabilities: answers.skill?.probabilities ?? null, used: null };
+      }
 
       let moveKey = 'next_move';
       let moveFor = memory.approach.id;
@@ -403,6 +476,9 @@ export class ExplorerBrain {
     }
     if (decision) decision.apiMs = apiMs; // the whole decision tick: sentiment + tick request
 
+    // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
+    if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
+
     const result = world.move(dir);
     recordStep(memory, {
       step: world.steps,
@@ -424,12 +500,42 @@ export class ExplorerBrain {
       info.pending = info.pending ?? 'review'; // the new approach gets its sentiment next tick
     }
     if (result.won) addEvent(memory, world.steps, 'Stepped onto the treasure chest and won.');
-    await saveMemory(memory, this.#memoryDir);
+    this.#skills.turnPassed();
+    await this.#save();
 
     return {
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
-      move_decision: moveDecision, decision, review, policy, apiMs,
+      move_decision: moveDecision, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
     };
+  }
+
+  // Uses the picked skill through the world, notes what it did. Returns the key used, or null when the
+  // world refused (not ready / unknown). Fog-safe: only ids the explorer saw can be struck.
+  #useSkill(key, step) {
+    const world = this.#world;
+    const memory = this.#memory;
+    const picked = this.#skills.get(key);
+    const res = world.useSkill(this.#skills, key);
+    const events = Array.isArray(res) ? res : res?.events;
+    if (!events) return null;
+    this.#skillEvents.push(...events); // handed to Run.playTurn through the turn shape
+    for (const e of events) {
+      if (e.type === 'struck') {
+        this.#hitsLanded[e.id] = (this.#hitsLanded[e.id] ?? 0) + 1;
+        addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'}.`);
+      } else if (e.type === 'dispelled') {
+        addEvent(memory, step, `Dispelled ${e.id}.`);
+        delete this.#hitsLanded[e.id];
+        this.#seen.delete(e.id); // it is gone, and the explorer saw it go
+      }
+    }
+    return key;
+  }
+
+  // Mirrors the live skills into memory, then saves (every save goes through here).
+  async #save() {
+    setSkills(this.#memory, this.#skills.summaries());
+    await saveMemory(this.#memory, this.#memoryDir);
   }
 
   // Records a catch (called by turn.js after the adversaries moved) and saves.
@@ -440,7 +546,7 @@ export class ExplorerBrain {
     countEncounter(memory, 'hits', at);
     addEvent(memory, at, `Caught by ${adversaryId}: the last life is gone.`);
     addLandmark(memory, { kind: 'hit_here', cell: world.pos, step: at, note: 'Took a hit here.' });
-    await saveMemory(memory, this.#memoryDir);
+    await this.#save();
   }
 
   // Records a hit that cost a life but did not end the game (called by turn.js) and saves.
@@ -451,7 +557,7 @@ export class ExplorerBrain {
     countEncounter(memory, 'hits', at);
     addEvent(memory, at, `Hit by ${adversaryId}: ${world.health} of ${world.maxHealth} lives left.`);
     addLandmark(memory, { kind: 'hit_here', cell: world.pos, step: at, note: 'Took a hit here.' });
-    await saveMemory(memory, this.#memoryDir);
+    await this.#save();
   }
 
   // Landmarks that come from where the explorer just stood (after its move): a known dead end with
@@ -509,7 +615,7 @@ export class ExplorerBrain {
 
   // next_move for one approach. speculative: asked once per tactic on a decision tick, so it keeps
   // only the safety line, the tactic's own hint and the mood's priority (the generic list lives in next_move).
-  #moveQuestion(approachId, sit, profile, speculative) {
+  #moveQuestion(approachId, sit, profile, speculative, skillLine = false) {
     const world = this.#world;
     const memory = this.#memory;
     const cells = memory.recent.cells;
@@ -556,6 +662,7 @@ export class ExplorerBrain {
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
           profile.priority,
+          ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
           'Standing still (stay) makes no progress and lets adversaries close in: pick it only when every step is worse.',
           'Follow the approach: prefer the move that brings the explorer closer to its target.',
           'Prefer moves that reveal many new cells and moves onto never-visited cells.',

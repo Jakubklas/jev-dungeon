@@ -250,7 +250,8 @@ function hereKind(world) {
 
 // Feasible tactics for a minimum gap, from known cells and visible adversaries only.
 // -> { [id]: { target, fact } } (infeasible tactics are left out); empty while nothing is in sight.
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null } = {}) {
+// `armed`: the explorer holds a ready attack skill, so face_off says it can strike if the adversary comes adjacent.
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -261,7 +262,9 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
     const target = approachTarget(world, id, { minGap, exclude });
     // `exclude` (cells a ping-pong bounced between, and the target that led there) rules a tactic out
     // when its only target is one of them; run_away picks another cell by itself.
-    if (target && !exclude?.has(key(target.cell))) out[id] = { target, fact: target.why };
+    if (target && !exclude?.has(key(target.cell))) {
+      out[id] = { target, fact: armed && id === 'face_off' ? `${target.why} You can strike it if it comes adjacent.` : target.why };
+    }
   };
   add('slip_past', s.slip && s.slip.gap >= minGap);
   add('run_away', true);
@@ -354,12 +357,16 @@ function visitSentence(n) {
   return `Visited ${n} times.`;
 }
 
-// What stepping onto an adversary costs: a life (the last one ends the game), or nothing while
-// the hit protection after an earlier hit lasts (the adversary is only pushed off the cell).
-function touchSentence(world) {
-  if (world.graceLeft > 0) return 'Steps into the adversary: no life lost while your hit protection lasts; it is pushed off your cell.';
-  if (world.health <= 1) return 'Steps into the adversary: costs your last life and the game is lost.';
-  return `Steps into the adversary: costs 1 life (${world.health - 1} of ${world.maxHealth} left) and it is knocked back.`;
+// What stepping onto an adversary does: only a bump (PLAN-skills D3). A touch costs nothing; the knock goes
+// to the adversary, not to the explorer's lives.
+const bumpSentence = () => 'Steps into the adversary: only bumps it back, no life lost.';
+
+// What an adversary next to you can do: strike with its claw (costs a life; the last one ends the game), or
+// nothing while the hit protection after an earlier hit lasts. Fog-safe: no cooldown or hit points of the ghost.
+function clawSentence(world) {
+  if (world.graceLeft > 0) return 'An adjacent adversary can strike you, but no life is lost while your hit protection lasts.';
+  if (world.health <= 1) return 'An adjacent adversary can strike you: costs your last life and the game is lost.';
+  return `An adjacent adversary can strike you (costs 1 life, ${world.health - 1} of ${world.maxHealth} left).`;
 }
 
 // Threat sentences for one move, one per visible adversary.
@@ -367,7 +374,7 @@ function threatSentences(world, threats, dest, minGap) {
   const facts = [];
   for (const th of threats) {
     if (sameCell(dest, th.pos)) {
-      facts.unshift(touchSentence(world));
+      facts.unshift(bumpSentence());
       continue;
     }
     const where = threats.length > 1 ? ` to the ${compass8(world.pos, th.pos)}` : '';
@@ -377,6 +384,7 @@ function threatSentences(world, threats, dest, minGap) {
     if (after > before) facts.push(`Moves away from ${who} ${gap}.`);
     else if (after < before) facts.push(`Moves toward ${who} ${gap}.`);
     else facts.push(`Keeps the same distance from ${who} ${gap}.`);
+    if (th.chasing && after <= 1) facts.push(clawSentence(world)); // a hunting ghost next to you strikes with its claw
   }
   return facts;
 }

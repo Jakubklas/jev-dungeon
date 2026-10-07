@@ -3,7 +3,10 @@
 // Brain on (mode 'chase' while it sees the explorer, 'search' otherwise): every step is a Jev
 // decision (brain.js), made in parallel for all adversaries stepping this tick.
 // Adversaries read the world through an AdversaryView (adversary-view.js); in `full` mode that is the real map.
-// This file holds the physics (movement, touch, spawning) and stays on Game.
+// This file holds the physics (movement, bumps, claw strikes, spawning) and stays on Game.
+// Damage model (PLAN-skills.md S4): a touch is only a BUMP (knockback, event 'bump', no life lost, no grace).
+// Only attacks take lives: a hunting ghost may use its claw strike (the `skill` question, brain.js); a patrolling
+// ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
 import {
   KEEP_HUNTING_MIN, ageHunt, applyDecision, decide, hunted, newHunt, lostSight, noteHit, noteStep, searchTick, seen, setKeepHuntingMin, setMemoryOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
@@ -11,6 +14,10 @@ import {
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
 import { assignCharacters, profileOf, traitsOf } from './character.js';
+import { setSkills } from './memory.js';
+import { buildSkillSet } from '../../skills/loadouts.js';
+import { skillConfig } from '../../skills/config.js';
+import { resolveAttack } from '../../skills/resolve.js';
 
 export { brainView } from './brain.js';
 
@@ -18,8 +25,7 @@ export { brainView } from './brain.js';
 export let ADVERSARY_SPEED = 0.6; // budget gained per tick; one step per whole point
 export let CHASE_RANGE = 7; // chase trigger distance, kept apart from SIGHT_RANGE on purpose
 export let MAX_SEARCH_TICKS = 18; // ticks without sight before code switches the brain off
-export let HIT_DAMAGE = 1; // lives an adversary's touch takes
-// Ticks after a hit during which no touch hurts (game.graceTicks counts them down). A knocked-back
+// Ticks after a hit during which no strike hurts (game.graceTicks counts them down). A knocked-back
 // adversary needs 1/ADVERSARY_SPEED = 2 ticks to step back in, so 4 gives the explorer a real head start.
 export let GRACE_TICKS = 4;
 export let ALERT_STEPS = 24; // path steps within which a patrolling adversary hears a spotter's call
@@ -38,7 +44,6 @@ export function configureAdversaries(o) {
   if (o.speed !== undefined) ADVERSARY_SPEED = o.speed;
   if (o.chaseRange !== undefined) CHASE_RANGE = o.chaseRange;
   if (o.maxSearchTicks !== undefined) MAX_SEARCH_TICKS = o.maxSearchTicks;
-  if (o.hitDamage !== undefined) HIT_DAMAGE = o.hitDamage;
   if (o.graceTicks !== undefined) GRACE_TICKS = o.graceTicks;
   if (o.alertSteps !== undefined) ALERT_STEPS = o.alertSteps;
   if (o.floorPerAdversary !== undefined) FLOOR_PER_ADVERSARY = o.floorPerAdversary;
@@ -87,8 +92,13 @@ export class Adversary {
   #character; // preset id (character.js), fixed at spawn
   #profile; // profileOf(traits) for that preset
   #home; // spawn cell: the centre of the patrol territory
+  #skills; // SkillSet (loadouts.js 'ghost': the claw strike, no block)
+  #facing = 'down'; // 4-way: the last step's direction or the last strike's aim (accessor, never an own property)
+  #hp; // hit points (D1) and their maximum; a hit knocks back and stuns, at 0 the ghost is dispelled
+  #maxHp;
+  #stun = 0; // ticks of stun left: no step, no Jev call
 
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard' }) {
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', hp = skillConfig().ghostHp, skills = 'ghost' }) {
     this.id = id;
     this.pos = pos;
     this.mode = mode;
@@ -99,6 +109,63 @@ export class Adversary {
     this.#profile = profileOf(traitsOf(character)); // throws on an unknown id
     this.#home = [...pos];
     this.#hunt = newHunt(id, this.#profile, character);
+    this.#hp = this.#maxHp = hp;
+    this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
+    this.syncSkills();
+  }
+
+  get skills() {
+    return this.#skills;
+  }
+
+  get facing() {
+    return this.#facing;
+  }
+
+  set facing(dir) {
+    if (!DIRS[dir]) throw new TypeError(`unknown facing ${dir}`);
+    this.#facing = dir;
+  }
+
+  get hp() {
+    return this.#hp;
+  }
+
+  get maxHp() {
+    return this.#maxHp;
+  }
+
+  get stun() {
+    return this.#stun;
+  }
+
+  // One tick of stun passes; true when the ghost was stunned this tick (it skips its step and its Jev call).
+  tickStun() {
+    if (this.#stun <= 0) return false;
+    this.#stun--;
+    return true;
+  }
+
+  // A hit on this ghost from `fromPos` (the attacker's cell): lose hp, and unless that was the last hp get knocked
+  // 1 cell directly away (dominant axis, ties x) when that cell is floor and not `fromPos`, and stunned
+  // stunTicks ticks. Knockback needs the `game` (for its map); without it the ghost only loses hp and is stunned.
+  // Returns { hp, dispelled }; the caller (resolve.js) removes a dispelled ghost from the game.
+  takeHit(damage, fromPos, game = null) {
+    this.#hp = Math.max(0, this.#hp - damage);
+    if (this.#hp === 0) return { hp: 0, dispelled: true };
+    const dx = this.pos[0] - fromPos[0], dy = this.pos[1] - fromPos[1];
+    const step = Math.abs(dx) >= Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)];
+    const to = [this.pos[0] + step[0], this.pos[1] + step[1]];
+    if (game && (step[0] || step[1]) && isFloor(game.dungeon, to) && !same(to, fromPos)) this.pos = to;
+    this.#stun = skillConfig().stunTicks;
+    this.budget = 0;
+    this.#route = null; // patrol routes assume contiguous cells
+    return { hp: this.#hp, dispelled: false };
+  }
+
+  // Mirrors the SkillSet into the memory (plain JSON, at most 4).
+  syncSkills() {
+    setSkills(this.#hunt.memory, this.#skills.summaries());
   }
 
   get character() {
@@ -432,7 +499,8 @@ function codeHuntDir(game, a) {
 // only when boxed in. No rng, so seeds stay reproducible.
 function knockBack(game, a, from = null) {
   a.route = null; // patrol routes assume contiguous cells
-  a.budget = 0; // no step straight back in this tick
+  // The budget is kept on purpose: a bump must not cost the ghost its next act, or a ghost bumped every tick
+  // (explorer pushing it down a corridor) would never strike. Only a sword hit stuns (Adversary.takeHit).
   if (from && isFloor(game.dungeon, from) && !same(from, game.pos)) {
     a.pos = [...from];
     return;
@@ -443,26 +511,35 @@ function knockBack(game, a, from = null) {
   if (pick) a.pos = pick;
 }
 
-// Touch check: an adversary on the explorer's cell. Outside grace and with no hit yet this tick it
-// takes HIT_DAMAGE lives (event 'hit', plus 'caught' when that was the last life), starts the
-// grace period and is knocked back. During grace (or after this tick's hit) a touching adversary
-// is only knocked back, so no adversary ever ends a tick on a living explorer. Returns true when
-// the game is now lost.
-function touchCheck(game, a, events, touch, from = null) {
-  if (game.lost || !same(a.pos, game.pos)) return false;
-  if (touch.canHit()) {
-    touch.hit = true;
-    const { health, lost } = game.damage(HIT_DAMAGE, a.id);
-    events.push({ id: a.id, type: 'hit', at: [...a.pos], health });
-    noteHit(a, game.adversaryTicks);
-    if (lost) {
-      events.push({ id: a.id, type: 'caught', at: [...a.pos] });
-      return true;
-    }
-    game.graceTicks = GRACE_TICKS;
-  }
+// Bump check: an adversary on the explorer's cell. A touch no longer hurts (PLAN-skills D3): the ghost is only
+// knocked back (event 'bump'), with no life lost and no grace started, so no adversary ever ends a tick on a
+// living explorer. Only a claw strike (strikeWith) takes lives.
+function bumpCheck(game, a, events, from = null) {
+  if (game.lost || !same(a.pos, game.pos)) return;
+  events.push({ id: a.id, type: 'bump', at: [...a.pos] });
   knockBack(game, a, from);
-  return false;
+}
+
+// The direction of the single step from `from` to `to`, or null (no step).
+const dirBetween = (from, to) => Object.keys(DIRS).find((d) => same(stepCell(from, d), to)) ?? null;
+
+// This ghost's claw strike (key of its latest skill options): turns to the aim, flashes the cells and, if the
+// explorer stands in them, rolls the explorer's block, then the grace/latch gate, then takes the life(s).
+// `latch` is the tick's one-hit-per-tick gate. Returns { events, used, lost }.
+function strikeWith(game, a, key, latch) {
+  const picked = a.skills.get(key);
+  if (!picked || !picked.skill.ready || picked.skill.kind !== 'attack') return { events: [], used: null, lost: false };
+  a.facing = picked.target.dir;
+  const events = resolveAttack(game, a, picked.target.cells, picked.skill.damage, {
+    canHit: () => latch.canHit(),
+    onHit: () => {
+      latch.hit = true;
+      game.graceTicks = GRACE_TICKS;
+      noteHit(a, game.adversaryTicks);
+    },
+  });
+  picked.skill.markUsed(game.steps);
+  return { events, used: key, lost: events.some((e) => e.type === 'caught') };
 }
 
 // Grace ticks left after the latest hit (0 = the explorer can be hit). Fog-safe: it is the
@@ -471,43 +548,67 @@ export function graceLeft(game) {
   return game.graceTicks;
 }
 
+// Lives one claw strike of this ghost takes (the rules text tells Jev).
+const clawDamage = (a) => a.skills.skills.find((k) => k.kind === 'attack')?.damage ?? 1;
+
 const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 
-// One tick for every adversary. Also hits an explorer that stepped onto an adversary.
-// Brain-on adversaries with a step this tick ask Jev in parallel, from the state after the
-// explorer's move; the steps are then applied in id order with a touch check after each.
-// At most one hit per tick: grace is decided once at the start of the tick and `hit` latches.
-// -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, error? }] }
+// One tick for every adversary. Order: grace read and decrement, stunned ghosts lose a stun tick, bump check
+// (an explorer that stepped onto a ghost only knocks it back), sensing, budgets. Brain-on ghosts with a step and
+// no stun ask Jev in parallel (requests built synchronously in id order, from the state after the explorer's move).
+// Then, in id order, each acting ghost: skill (claw strike, hunting ghosts only) -> step -> bump check.
+// A strike uses the grace read taken at the start of the tick and the `hit` latch: at most one life lost per tick,
+// none during grace (the strike still flashes, result 'protected'). Losing the last life emits 'hit' then 'caught'
+// and ends the tick at once.
+// -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, skill_decision?, stunned?, error? }] }
 export async function stepAdversaries(game, { decide: ask = null } = {}) {
   const events = [];
   const turns = [];
   if (game.won || game.lost) return { events, turns };
   const protectedNow = graceLeft(game) > 0;
   if (protectedNow) game.graceTicks--;
-  const touch = { hit: false, canHit() { return !protectedNow && !this.hit; } };
+  const hit = { hit: false, canHit() { return !protectedNow && !this.hit; } };
   const order = [...game.adversaries].sort(byId);
-  for (const a of order) if (touchCheck(game, a, events, touch)) return { events, turns };
+  const stunned = new Set(order.filter((a) => a.tickStun()));
+  for (const a of order) bumpCheck(game, a, events);
   const tick = game.adversaryTicks + 1;
   game.adversaryTicks = tick;
 
   for (const a of order) ageHunt(a, tick);
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
-  for (const a of order) a.budget += ADVERSARY_SPEED;
+  for (const a of order) if (!stunned.has(a)) a.budget += ADVERSARY_SPEED; // a stunned ghost gains no budget
 
-  const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, hitDamage: HIT_DAMAGE, graceTicks: GRACE_TICKS };
-  const thinking = order.filter((a) => a.budget >= 1 && a.hunt.on);
-  const cfgOf = (a) => ({ ...cfg, maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
+  const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };
+  const thinking = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
+  const cfgOf = (a) => ({ ...cfg, hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
   const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
 
   for (const a of order) {
     const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0 };
     turns.push(turn);
+    if (stunned.has(a)) {
+      turn.stunned = true;
+      turn.brain = a.hunt.on ? 'on' : 'off';
+      a.syncSkills();
+      continue;
+    }
     if (a.budget >= 1) {
       // At most one step per tick (ADVERSARY_SPEED < 1); the remainder carries over.
       a.budget -= 1;
       const res = results.get(a);
       const from = [...a.pos];
+      if (res?.skill && res.skill !== 'none') {
+        const strike = strikeWith(game, a, res.skill, hit);
+        events.push(...strike.events);
+        if (res.skill_decision) res.skill_decision.used = strike.used;
+        if (strike.lost) {
+          turn.skill_decision = res.skill_decision;
+          turn.brain = a.hunt.on ? 'on' : 'off';
+          a.syncSkills();
+          return { events, turns };
+        }
+      }
       if (res) {
         let dir = res.dir;
         if (res.error) {
@@ -518,22 +619,23 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
         applyDecision(a, tick, { ...res, dir }, { fallback: Boolean(res.error) });
         if (dir) {
           a.pos = stepCell(a.pos, dir);
+          a.facing = dir;
           noteStep(a, from, dir, tick);
         }
-        Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs });
+        Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs, skill_decision: res.skill_decision });
       } else {
-        patrolStep(game, a);
-        turn.dir = Object.keys(DIRS).find((d) => same(stepCell(from, d), a.pos)) ?? null;
+        patrolStep(game, a); // brain off: code policy, never a strike
+        turn.dir = dirBetween(from, a.pos);
+        if (turn.dir) a.facing = turn.dir;
       }
-      if (touchCheck(game, a, events, touch, from)) {
-        turn.brain = a.hunt.on ? 'on' : 'off';
-        return { events, turns };
-      }
+      bumpCheck(game, a, events, from);
+      a.skills.turnPassed();
       if (res && res.keep_hunting !== null && res.keep_hunting < knobsOf(a).keepHuntingMin && a.hunt.on) {
         turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
       }
       senseAfterStep(game, a, events, tick);
     }
+    a.syncSkills();
     turn.brain = a.hunt.on ? 'on' : 'off';
   }
   return { events, turns };

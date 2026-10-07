@@ -6,7 +6,8 @@
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { DIRS, SIGHT_RANGE, hasLineOfSight } from '../src/dungeon.js';
-import { buildArena, normalizeConfig, TestbedError } from '../src/testbed.js';
+import { buildArena, normalizeConfig, explorerSkillSetOf, ghostSkillSetOf, TestbedError } from '../src/testbed.js';
+import { buildSkillSet } from '../src/skills/loadouts.js';
 import { newTestGame } from '../src/turn.js';
 import { ALERT_STEPS } from '../src/characters/adversary/adversary.js';
 import { situation } from '../src/characters/explorer/perception.js';
@@ -194,6 +195,31 @@ for (const { name, config } of scenarios) {
   }
 }
 
+// 5b. Skill knobs: explorerSkills / ghostSkills / ghostHp parse, validate and reach buildArena's config.
+{
+  const d = normalizeConfig({});
+  check(d.explorerSkills === 'default' && d.ghostSkills === 'default' && d.ghostHp === null, 'skills: defaults');
+  check(explorerSkillSetOf(d) === 'explorer' && ghostSkillSetOf(d) === 'ghost', 'skills: default set names');
+  check(normalizeConfig({ explorerSkills: 'none' }).explorerSkills === 'none' && explorerSkillSetOf(normalizeConfig({ explorerSkills: 'none' })) === 'none', 'skills: explorerSkills none');
+  check(normalizeConfig({ explorerSkills: 'sword_strike;shield_block' }).explorerSkills.join() === 'sword_strike,shield_block', 'skills: URL list');
+  check(normalizeConfig({ explorerSkills: ['claw_strike'] }).explorerSkills.join() === 'claw_strike' && normalizeConfig({ explorerSkills: 'sword_strike' }).explorerSkills.join() === 'sword_strike', 'skills: array and single id');
+  check(normalizeConfig({ explorerSkills: [] }).explorerSkills === 'none', 'skills: empty list is none');
+  check(buildSkillSet(explorerSkillSetOf(normalizeConfig({ explorerSkills: 'shield_block' }))).size === 1, 'skills: list builds a skill set');
+  check(ghostSkillSetOf(normalizeConfig({ ghostSkills: 'none' })) === 'none' && normalizeConfig({ ghostSkills: 'none' }).ghostSkills === 'none', 'skills: ghostSkills none');
+  check(normalizeConfig({ ghostHp: '3' }).ghostHp === 3, 'skills: ghostHp from a URL string');
+  throwsBad({ explorerSkills: 'nope' }, 'explorerSkills unknown id');
+  throwsBad({ explorerSkills: ['sword_strike', 'sword_strike'] }, 'explorerSkills duplicate');
+  throwsBad({ explorerSkills: ['sword_strike', 'shield_block', 'claw_strike', 'a', 'b'] }, 'explorerSkills over 4');
+  throwsBad({ explorerSkills: 5 }, 'explorerSkills wrong type');
+  throwsBad({ ghostSkills: 'claws' }, 'ghostSkills bad value');
+  throwsBad({ ghostHp: 0 }, 'ghostHp 0');
+  throwsBad({ ghostHp: 6 }, 'ghostHp 6');
+  throwsBad({ ghostHp: 1.5 }, 'ghostHp fraction');
+  const a = buildArena({ explorerSkills: ['sword_strike'], ghostSkills: 'none', ghostHp: 4 });
+  check(a.config.explorerSkills.join() === 'sword_strike' && a.config.ghostSkills === 'none' && a.config.ghostHp === 4, 'skills: buildArena returns the knobs in config');
+  check(JSON.stringify(buildArena({ seed: 3 }).dungeon) === JSON.stringify(buildArena({ seed: 3, explorerSkills: 'none', ghostHp: 5 }).dungeon), 'skills: knobs do not change the arena');
+}
+
 // 6. Pack alert (P0 coverage): one ghost spots the explorer while the other is within ALERT_STEPS
 //    path steps behind a wall, so alertNearby / team sight runs. Must not throw, must emit 'alerted'.
 {
@@ -210,6 +236,30 @@ for (const { name, config } of scenarios) {
     console.log(`pack alert: ${ticks} ticks, events ${[...kinds].join(',')}`);
   } catch (err) {
     fail(`pack alert scenario: threw ${err.stack}`);
+  }
+}
+// 6b. Scripted adjacency: a ghost next to the explorer, the stub picks sword_strike_<dir>. The ghost takes the
+//     hit (struck event through Run.playTurn, hp down, stunned) and no life is lost by a touch alone.
+{
+  const strikeAsk = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+    if (q.type === 'noul') return [k, { noul: 0.9 }];
+    const keys = Object.keys(q.criteria);
+    const c = k === 'skill' ? (keys.find((x) => x.startsWith('sword_strike_')) ?? 'none') : keys[0];
+    return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+  }));
+  try {
+    const run = newTestGame({ map: ['#######', '#.....#', '#.@A..#', '#.....#', '#######'], seed: 1, ghostHp: 3 }, { ask: strikeAsk, decide, memoryDir: url, dir: url });
+    const ghost = run.game.adversaries[0];
+    check(ghost.hp === 3, `adjacency: ghostHp 3 reached the ghost (${ghost.hp})`);
+    const turn = await run.playTurn();
+    check(turn.events.some((e) => e.type === 'struck' && e.id === 'a1'), `adjacency: no struck event in playTurn (${turn.events.map((e) => e.type)})`);
+    check(ghost.hp === 2 && ghost.stun > 0, `adjacency: ghost hp ${ghost.hp} stun ${ghost.stun}`);
+    check(run.game.health === run.game.maxHealth, 'adjacency: a strike on a ghost cost the explorer a life');
+    const none = newTestGame({ map: ['#######', '#.....#', '#.@A..#', '#.....#', '#######'], seed: 1, ghostSkills: 'none', explorerSkills: 'none' }, { ask: strikeAsk, decide, memoryDir: url, dir: url });
+    check(none.explorer.memory.skills.length === 0 && none.game.adversaries[0].skills.skills.length === 0, 'adjacency: skills none reach the explorer and the ghost');
+    console.log('adjacency: sword strike hits the ghost, struck event reaches playTurn');
+  } catch (err) {
+    fail(`adjacency scenario: threw ${err.stack}`);
   }
 }
 check(explorerCalls > 0, 'stub explorer was asked');

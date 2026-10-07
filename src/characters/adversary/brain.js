@@ -8,15 +8,18 @@
 // Out of sight, Jev gets last_seen only. Never the treasure, never the explorer's light/visits.
 // Each Adversary keeps the exact body of its last request, for auditing.
 //
-// Code policies (no Jev): switch on at startsChase, direct_pursuit while in sight, take a move
-// that catches the explorer, take the only legal move, switch off after MAX_SEARCH_TICKS.
-// Jev decides: every other move, cut_off vs sweep_last_seen on the first search step, and
-// keep_hunting on every search step.
+// Code policies (no Jev): switch on at startsChase, direct_pursuit while in sight, take the only legal move
+// (unless a skill is offered: then a skill-only request), switch off after MAX_SEARCH_TICKS. A patrolling ghost
+// (brain off) never strikes: it has not seen the explorer hunt-wise, and a bump only starts a hunt through the
+// usual sight rules. Stepping onto the explorer is only a bump now (PLAN-skills D3), so it is no longer forced.
+// Jev decides: every other move, cut_off vs sweep_last_seen on the first search step, keep_hunting on every
+// search step, and (in sight, explorer adjacent) the claw `skill` question, in the SAME request as next_move.
 import { SIGHT_RANGE } from '../../dungeon.js';
 import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
 import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach } from './memory.js';
 import { askJev, shuffle } from '../../jev.js';
 import { PRESETS, profileOf, traitsOf } from './character.js';
+import { pickSkill, skillQuestion } from '../../skills/question.js';
 
 export let KEEP_HUNTING_MIN = 0.5; // keep_hunting.noul below this switches the brain off (live: src/settings.js)
 export const setKeepHuntingMin = (v) => { KEEP_HUNTING_MIN = v; };
@@ -34,6 +37,8 @@ const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 // The rules text, built from the live tunables: speed, search time, hit damage, grace ticks (cfg) and SIGHT_RANGE.
 function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited = false }, smart = false) {
   const lives = hitDamage === 1 ? 'a life' : `${hitDamage} lives`;
+  const ticks = `${graceTicks} tick${graceTicks === 1 ? '' : 's'}`;
+  const claw = `Touching is harmless: stepping onto the explorer only bumps it and you are knocked back. Only your claw strike (\`self.skills\`, one skill per step at most, most steps need none) hurts it: the explorer loses ${lives} and cannot be hurt for ${ticks} after a hit. `;
   if (smart) {
     // Shorter text for ghosts with memory: the state carries the rest (landmarks, sightings, team reports).
     return (
@@ -43,7 +48,7 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
         ? 'You know only your home area and the cells you have seen lately; the rest is unknown and old cells fade. A spot with path_steps null has no known route: head for the edge of what you know. '
         : 'You know the whole map. ') +
       `You see the explorer only with a clear line of sight within ${SIGHT_RANGE} cells; out of sight you only have your remembered sightings (frozen, with their age) and landmarks. ` +
-      `Stepping onto the explorer hits it: it loses ${lives}, you are knocked back, and it cannot be hurt for ${graceTicks} tick${graceTicks === 1 ? '' : 's'} after. ` +
+      claw +
       `Your objective: catch the explorer before it finds the treasure. After ${maxSearchTicks} ticks without sight, or if you stop hunting, you go back to patrolling.`
     );
   }
@@ -51,7 +56,8 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
     'A dungeon on a grid of walls and floor. You are one of several adversaries hunting an explorer who is looking for a hidden treasure chest. ' +
     `You move one cell per step (up, down, left or right) at ${Math.round(speed * 100)}% of the explorer's speed, so you cannot outrun it in a straight race. ` +
     `You know the whole map. You see the explorer only with a clear line of sight within ${SIGHT_RANGE} cells; out of sight you only know where and when you last saw it and which way it was heading. ` +
-    `Stepping onto the explorer's cell hits it: it loses ${lives} and you are knocked back; it is caught when its last life is gone, and right after a hit it cannot be hurt for ${graceTicks} tick${graceTicks === 1 ? '' : 's'}. Adversaries may share a cell. ` +
+    claw +
+    'The explorer is caught when its last life is gone. Adversaries may share a cell. ' +
     'Your objective: catch the explorer before it finds the treasure. ' +
     `If you stop hunting, or go ${maxSearchTicks} ticks without seeing the explorer, you go back to patrolling.`
   );
@@ -223,7 +229,7 @@ export function switchOff(a, tick, reason) {
   addEvent(h.memory, `Gave up: ${reason}`, tick);
 }
 
-// This adversary just hit the explorer (called by adversary.js touchCheck).
+// This adversary just hit the explorer (called by adversary.js when its claw strike lands).
 export function noteHit(a, tick) {
   const m = a.hunt.memory;
   addEvent(m, `Hit the explorer (hit ${count(m, 'hits')}).`, tick);
@@ -269,6 +275,7 @@ function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
       id: a.id,
       ...(withCharacter ? { character: { id: a.character, traits: h.profile.words, style: PRESET_STYLE(a.character) } } : {}),
       position, mode: h.inSight ? 'chase' : 'search', approach: m.approach, latest_action: m.latest_action,
+      skills: a.skills.summaries().map(({ text, ...rest }) => rest), // `text` is in the rules sentence
     },
     surroundings,
     explorer,
@@ -281,8 +288,20 @@ function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
   };
 }
 
-// Builds the request for one step. Pure: no state changes. Returns { legal, forced } when no
-// Jev call is needed (code policy), else { legal, state, questions, body, options }.
+const SKILL_NEAR = 10; // loose gate (PLAN D7): the explorer in sight within this many cells
+
+// The `skill` options from this ghost's own view: the explorer's position only while it is in sight (view.explorer()).
+// Loose gate: a skill is ready and the explorer is in sight within SKILL_NEAR; the claw then lists one option per
+// aim whose cell holds the explorer (so only when it is adjacent). {} when nothing is feasible.
+function skillOptionsOf(view, a) {
+  const e = view.explorer();
+  if (!e || !a.skills.size) return {};
+  const self = { pos: [...a.pos], opponentsNear: dist(a.pos, e) <= SKILL_NEAR, visibleOpponents: [{ id: 'the explorer', pos: e }] };
+  return a.skills.options({ pos: [...a.pos], facing: a.facing }, self);
+}
+
+// Builds the request for one step. No world state changes (only the SkillSet's latest-options map). Returns { legal, forced } when no
+// Jev call is needed (code policy), else { legal, state, questions, body, options, skillOptions }.
 export function buildRequest(view, a, tick, cfg) {
   const { speed, maxSearchTicks } = cfg;
   const h = a.hunt;
@@ -290,12 +309,8 @@ export function buildRequest(view, a, tick, cfg) {
   const withCharacter = special || Boolean(cfg.characters);
   const legal = view.legalMoves();
   if (!legal.length) return { legal, forced: null };
-  // Code policy: a move onto the (visible) explorer is always taken.
-  if (h.inSight) {
-    const explorer = view.explorer();
-    const catching = legal.find((d) => same(stepCell(a.pos, d), explorer));
-    if (catching) return { legal, forced: catching };
-  }
+  const skillOptions = h.inSight ? skillOptionsOf(view, a) : {};
+  const hasSkill = Object.keys(skillOptions).length > 0;
   const searching = !h.inSight;
   const approachIds = searching ? (h.pickApproach ? SEARCH_APPROACHES : [h.memory.approach.id]) : ['direct_pursuit'];
   const questions = {};
@@ -317,6 +332,11 @@ export function buildRequest(view, a, tick, cfg) {
           'Among moves that cut off about as much, prefer one that closes the path distance (`explorer.path_steps`), then one that keeps the explorer in sight, then one that blocks a corridor, doorway or junction ahead of it (`explorer.heading`).',
         ];
     if (special) priorities.splice(2, 0, h.profile.priority); // third priority: this ghost's character
+    // Caution: keep its distance from an explorer whose sword is ready (the trait is 3 only through a traits object).
+    if (h.inSight && h.profile.keepDistance > 0 && view.explorerArmed()) {
+      priorities.push(`The explorer's sword is ready: keep at least ${h.profile.keepDistance} cells away from it, and close in only to strike.`);
+    }
+    if (hasSkill && h.profile.skillPriority) priorities.push(`Skills: ${h.profile.skillPriority}`);
     questions.next_move = {
       type: 'choice',
       instructions: {
@@ -350,10 +370,13 @@ export function buildRequest(view, a, tick, cfg) {
       },
     };
   }
+  // ONE skill question, in the same request as next_move. With no move question (one legal move) it is asked alone:
+  // a skill-only request (PLAN D4-a), since a strike matters most in a cornered moment.
+  if (hasSkill) questions.skill = skillQuestion(skillOptions, h.profile.skillPriority);
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
   const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters)), withCharacter, Boolean(cfg.characters));
   const body = JSON.stringify({ model: 'jev-latest', state, questions });
-  return { legal, state, questions, body, options };
+  return { legal, state, questions, body, options, skillOptions };
 }
 
 // One step's decision. Never throws: a failed call returns { error } and the caller falls back
@@ -362,14 +385,14 @@ export function buildRequest(view, a, tick, cfg) {
 export async function decide(view, a, tick, cfg, ask = null) {
   const h = a.hunt;
   const req = buildRequest(view, a, tick, cfg);
-  if (!req.body) return { dir: req.forced, decision: null, keep_hunting: null, approach: null, forced: true, apiMs: 0, error: null };
+  if (!req.body) return { dir: req.forced, decision: null, keep_hunting: null, approach: null, forced: true, apiMs: 0, error: null, skill: 'none', skill_decision: null };
   a.lastRequestBody = req.body;
   const started = performance.now();
   let answers;
   try {
     answers = await (ask ?? jevAsk)({ id: a.id, state: req.state, questions: req.questions, body: req.body });
   } catch (err) {
-    return { dir: null, decision: null, keep_hunting: null, approach: null, forced: false, apiMs: Math.round(performance.now() - started), error: err.message ?? String(err) };
+    return { dir: null, decision: null, keep_hunting: null, approach: null, forced: false, apiMs: Math.round(performance.now() - started), error: err.message ?? String(err), skill: 'none', skill_decision: null };
   }
   const apiMs = Math.round(performance.now() - started);
   let dir = req.legal.length === 1 ? req.legal[0] : null;
@@ -383,7 +406,13 @@ export async function decide(view, a, tick, cfg, ask = null) {
     ? answers.search_approach.choice
     : null;
   const keep = typeof answers?.keep_hunting?.noul === 'number' ? answers.keep_hunting.noul : null;
-  return { dir, decision, keep_hunting: keep, approach, forced: !decision, apiMs, error: null, answers };
+  // The skill answer: a key of the options Jev saw, only at or above SKILL_MIN, else none.
+  let skill = 'none', skill_decision = null;
+  if (req.questions.skill) {
+    skill = pickSkill(answers?.skill, req.skillOptions);
+    skill_decision = { choice: answers?.skill?.choice ?? null, probabilities: answers?.skill?.probabilities ?? null, used: null };
+  }
+  return { dir, decision, keep_hunting: keep, approach, forced: !decision, apiMs, error: null, answers, skill, skill_decision };
 }
 
 // Applies the parts of a decision that change memory (approach choice, latest action).

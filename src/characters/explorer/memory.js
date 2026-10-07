@@ -12,6 +12,8 @@
 //   recent            - the last 6 moves and 8 positions (a ping-pong shows as back_and_forth)
 //   encounters        - counters: { count, escaped, hits, last_at_step }
 //   events            - up to 6 short milestones [{ step, text }] (chest seen, hit, switch, win)
+//   skills            - a plain-JSON mirror of the skill set, up to 4: [{ id, kind, name, text, ready, cooldown_left }]
+//                       (brain.js rewrites it every turn from the live skills; Jev's state carries it without `text`)
 //   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the chest is
 //                       pinned, the oldest of the rest is evicted. Perception turns them into
 //                       relative direction/distance each tick.
@@ -35,6 +37,8 @@ export const LIMITS = {
   landmarks: 8, // the chest is never evicted
   landmarkNote: 120,
   recentMoves: 6,
+  skills: 4,
+  skillText: 120,
   recentCells: 8, // 6 moves plus the two positions before them, so every move can be judged
 };
 
@@ -56,6 +60,7 @@ export function createMemory({ approachId, approachText, thought, sentiment, sta
     recent: { moves: [], cells: [[...start]], back_and_forth: 0 },
     encounters: { count: 0, escaped: 0, hits: 0, last_at_step: 0 },
     events: [],
+    skills: [],
     landmarks: [],
   };
   revisitWindows.set(memory, []);
@@ -95,6 +100,13 @@ export function addEvent(memory, step, text) {
 export function countEncounter(memory, field, step) {
   memory.encounters[field] += 1;
   memory.encounters.last_at_step = step;
+}
+
+// Mirrors the live skill summaries ({ id, kind, name, text, ready, cooldown_left }) into memory.
+export function setSkills(memory, summaries) {
+  memory.skills = (summaries ?? []).slice(0, LIMITS.skills).map((k) => ({
+    id: k.id, kind: k.kind, name: k.name, text: String(k.text ?? '').slice(0, LIMITS.skillText), ready: Boolean(k.ready), cooldown_left: k.cooldown_left,
+  }));
 }
 
 // Adds a located fact. One entry per kind + cell (a repeat refreshes its step and note and makes
@@ -218,6 +230,14 @@ export function validateMemory(m) {
   m.events.forEach((ev, i) => {
     if (!ev || !isNum(ev.step) || !isStr(ev.text, LIMITS.eventText) || !ev.text) fail(`events[${i}]`);
   });
+  if (!Array.isArray(m.skills) || m.skills.length > LIMITS.skills) fail('skills');
+  const skillIds = new Set();
+  m.skills.forEach((k, i) => {
+    if (!k || !isStr(k.id, 64) || !k.id || !isStr(k.kind, 32) || !isStr(k.name, 64) || !isStr(k.text, LIMITS.skillText)
+      || typeof k.ready !== 'boolean' || !Number.isInteger(k.cooldown_left) || k.cooldown_left < 0 || (k.ready !== (k.cooldown_left === 0))) fail(`skills[${i}]`);
+    if (skillIds.has(k.id)) fail(`skills[${i}] duplicates ${k.id}`);
+    skillIds.add(k.id);
+  });
   if (!Array.isArray(m.landmarks) || m.landmarks.length > LIMITS.landmarks) fail('landmarks');
   const seen = new Set();
   m.landmarks.forEach((l, i) => {
@@ -240,6 +260,9 @@ export function renderMarkdown(m) {
   if (m.sentiment_history.length) lines.push(`- Recent picks: ${m.sentiment_history.map((h) => `${h.id} (step ${h.step})`).join(', ')}`);
   const e = m.encounters;
   lines.push('', '## Encounters', `- ${e.count} met, ${e.escaped} escaped, ${e.hits} hit${e.hits === 1 ? '' : 's'}${e.last_at_step ? `, last at step ${e.last_at_step}` : ''}`);
+  lines.push('', '## Skills');
+  if (!m.skills.length) lines.push('_None._');
+  for (const k of m.skills) lines.push(`- **${k.name}** (${k.kind}): ${k.ready ? 'ready' : `ready again in ${k.cooldown_left} step${k.cooldown_left === 1 ? '' : 's'}`}${k.text ? ` — ${k.text}` : ''}`);
   lines.push('', '## Events');
   if (!m.events.length) lines.push('_None yet._');
   for (const ev of m.events) lines.push(`- ${ev.text} — _step ${ev.step}_`);
