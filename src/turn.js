@@ -20,11 +20,11 @@ export class Run {
   #memoryDir;
   #decide; // null = the real Jev
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer' } = {}) {
+  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = true } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;
-    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills });
+    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold });
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
   }

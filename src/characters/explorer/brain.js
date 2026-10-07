@@ -22,7 +22,7 @@ import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
-import { knownLineOfSight, speedPhrase } from './encounter.js';
+import { knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
@@ -41,6 +41,8 @@ const THREAT_STEPS = 2; // a visible chaser within this many path steps offers t
 // Ghosts get their claw attack in a later phase (PLAN S4). Until then a block has nothing to stop; the
 // plan wants it left out, but this phase offers it anyway. Flip to false to hide the block option.
 const GHOSTS_CAN_ATTACK = true;
+const HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps off a hunting ghost before the normal question returns
+const HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
 const PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
@@ -211,9 +213,13 @@ export class ExplorerBrain {
   // id -> the step the explorer last struck it (its own action, so fog-safe): engage closes in on a ghost
   // it stunned (#stunnedIds) instead of waiting for it.
   #struck = new Map();
+  // Engage hold (P7a): { cell, n, adj } = where the explorer waits, consecutive hold ticks there, ticks spent beside the ghost.
+  #hold = { cell: null, n: 0, adj: 0 };
+  #holdOn = true;
   #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer' } = {}) {
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true } = {}) {
+    this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#ask = ask ?? askReal;
@@ -378,6 +384,35 @@ export class ExplorerBrain {
     return { name: k.name, damage: k.damage, cooldown: k.cooldown, stun: c.stunTicks, coinChance: c.coinDropChance, clawCooldown: c.clawCooldown, shield: block ? block.effectiveness : null };
   }
 
+  // The engage hold (PLAN-motivation P7a): approach engage, ONE adversary in sight, hunting and not stunned by the
+  // explorer's own strike, the sword ready, and the explorer already on the engage target (the cell 2 known-path steps
+  // off, or next to it): code stays put with no move question. Stepping toward a hunting ghost hands it the first claw
+  // (stubbed duels: check-skills section 12, check-duels), and the live runs lost 3 of 8 fights to exactly that step.
+  // The skill question still goes out whenever the sword has an option, so the strike lands the tick the ghost steps
+  // adjacent. Released (the normal question) after HOLD_MAX ticks without it coming, or HOLD_ADJACENT_MAX ticks beside
+  // it without a strike; a stunned or patrolling ghost, a second adversary in sight or no sword keep the normal path.
+  // Fog-safe: visible adversaries, the explorer's own strike record and its own sword only.
+  #holding() {
+    const world = this.#world;
+    const h = this.#hold;
+    const stop = () => { this.#hold = { cell: null, n: 0, adj: 0 }; return false; };
+    if (!this.#holdOn || this.#memory.approach.id !== 'engage' || !this.#armed()) return stop();
+    const threats = threatsOf(world);
+    if (threats.length !== 1) return stop();
+    const [th] = threats;
+    const stunned = this.#stunnedIds();
+    if (!th.chasing || stunned.has(th.id)) return stop();
+    if (approachTarget(world, 'engage', { stunned })?.steps !== 0) return stop();
+    const here = world.pos;
+    const same = h.cell && sameCell(h.cell, here);
+    if (threatDistance(th, here) <= 1) {
+      this.#hold = { cell: [...here], n: 0, adj: (same ? h.adj : 0) + 1 };
+      return this.#hold.adj <= HOLD_ADJACENT_MAX;
+    }
+    this.#hold = { cell: [...here], n: (same ? h.n : 0) + 1, adj: 0 };
+    return this.#hold.n <= HOLD_MAX;
+  }
+
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
   #target(id, opts = {}) {
     return approachTarget(this.#world, id, { avoid: this.#zone, ...opts });
@@ -457,6 +492,10 @@ export class ExplorerBrain {
     const profile = profileOf(memory);
     this.#keepEscapeGoal(profile);
     const hasSkillOptions = Object.keys(skillOptions).length > 0;
+    // engage hold: stay, no move question (P7a). A decision tick (tactic question) is not a hold tick, so it restarts
+    // the count: HOLD_MAX counts consecutive hold ticks, not ones split by a re-decision on the same cell.
+    if (tacticIds.length) this.#hold = { cell: null, n: 0, adj: 0 };
+    const held = !tacticIds.length && this.#holding();
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
@@ -494,7 +533,7 @@ export class ExplorerBrain {
           if (id !== 'engage' || !sharedMoves) sharedMoves = q.shared;
         }
       }
-    } else if (!forced) {
+    } else if (!forced && !held) {
       const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions);
       questions.next_move = q.question;
       moveOptions[memory.approach.id] = q.options;
@@ -533,7 +572,7 @@ export class ExplorerBrain {
     const skillQ = hasSkillOptions ? skillQuestion(skillOptions, profile.skill_priority, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
-    let dir = legal[0];
+    let dir = held ? STAY : legal[0];
     let moveDecision = null;
     let review = null;
     let pendingSwitch = null;
@@ -630,7 +669,7 @@ export class ExplorerBrain {
 
     return {
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
-      move_decision: moveDecision, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
+      move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
     };
   }
 
@@ -785,7 +824,7 @@ export class ExplorerBrain {
     const dirs = shuffle(world.availableMoves());
     const whole = (p) => p.whole ?? [p.shared, p.target].filter(Boolean).join(' ');
     // `stay` is the same under every tactic, so its whole fact goes to the shared facts and the option is short.
-    const specOption = (d) => (d === STAY ? 'Stand still.' : parts[d].whole ?? parts[d].target);
+    const specOption = (d) => (d === STAY ? (parts[d].holding ? parts[d].whole : 'Stand still.') : parts[d].whole ?? parts[d].target);
     const options = Object.fromEntries(dirs.map((d) => [d, speculative ? specOption(d) : whole(parts[d])]));
     const shared = Object.fromEntries(world.availableMoves().filter((d) => d === STAY || !parts[d].whole).map((d) => [d, parts[d].shared ?? parts[d].whole]));
     const question = speculative
@@ -801,6 +840,7 @@ export class ExplorerBrain {
       : speculative
         ? 'Onto the portal only to leave or dodge a strike.'
         : 'A move onto the portal ends the game: take it only if leaving now is the plan or an adversary would otherwise strike you.';
+    const engaging = approachId === 'engage';
     const hint = TACTIC_MOVE_HINT[approachId] ?? 'Avoid known dead ends where you can be cornered; keep the distance growing.';
     const safety = sit.threats.visible.length
       ? [
@@ -813,7 +853,15 @@ export class ExplorerBrain {
       : [];
     // The one-per-tactic questions decide the move on a decision tick, so they keep the mood's rule (shortened).
     const priorities = speculative
-      ? [...(portalSeen ? [portalLine] : []), ...safety, profile.move_priority]
+      ? [...(portalSeen ? [portalLine] : []), ...safety, ...(engaging ? [] : [profile.move_priority])]
+      : engaging ? [
+          // engage: the hint in `safety` is the whole plan. The mood's lines ("moving toward one is fine"), "stay makes no
+          // progress" and "reveal new cells" would talk the explorer off the holding cell (P7a).
+          ...(portalSeen ? [portalLine] : []),
+          ...safety,
+          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
+        ]
       : [
           ...(portalSeen ? [portalLine] : []),
           ...safety,
