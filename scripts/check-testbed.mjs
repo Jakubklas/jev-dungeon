@@ -2,12 +2,15 @@
 // determinism, props, adversary placement, and stubbed explorer + adversary ticks (no Jev, free).
 // Run from the dungeon-game directory: node scripts/check-testbed.mjs
 
-import { DIRS, SIGHT_RANGE, hasLineOfSight, isKnown } from '../src/dungeon.js';
+// Tripwire: every Run here gets stubbed ask/decide; a missed stub would call the paid Jev API.
+globalThis.fetch = () => { throw new Error('network call in a check script'); };
+
+import { DIRS, SIGHT_RANGE, hasLineOfSight } from '../src/dungeon.js';
 import { buildArena, normalizeConfig, TestbedError } from '../src/testbed.js';
-import { newTestGame, playTurn, view } from '../src/turn.js';
-import { setAsker, setMemoryDir } from '../src/characters/explorer/brain.js';
+import { newTestGame } from '../src/turn.js';
+import { ALERT_STEPS } from '../src/characters/adversary/adversary.js';
 import { situation } from '../src/characters/explorer/perception.js';
-import { setDecider } from '../src/characters/adversary/adversary.js';
+import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { SOLID_KINDS, SMALL_KINDS } from '../src/props/catalog.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -127,16 +130,16 @@ const floorCount = (d) => d.tiles.join('').split('').filter((c) => c === '.').le
   check(buildArena({ map: '#####/#@..#/#...#/#..A#/#####' }).adversaries.length === 1, 'map as one "/"-separated string');
 }
 
-// 5. Stubbed play: explorer (setAsker) + adversary brains (setDecider), ~25 ticks per scenario.
+// 5. Stubbed play: explorer (injected `ask`) + adversary brains (injected `decide`), ~25 ticks per scenario.
 //    Covers the fully lit, chest-less arena with no frontier, which a normal dungeon never has.
 const dir = mkdtempSync(join(tmpdir(), 'testbed-check-'));
-setMemoryDir(pathToFileURL(dir + '/'));
+const url = pathToFileURL(dir + '/');
 let explorerCalls = 0, adversaryCalls = 0;
 const first = (q) => Object.keys(q.criteria ?? {})[0];
 const stubAnswers = (questions) => Object.fromEntries(Object.entries(questions).map(([k, q]) =>
   [k, q.type === 'noul' ? { noul: 0.9 } : { choice: first(q), probabilities: { [first(q)]: 1 }, confidence: 1 }]));
-setAsker(async ({ questions }) => { explorerCalls++; return stubAnswers(questions); });
-setDecider(async ({ questions }) => { adversaryCalls++; return stubAnswers(questions); });
+const ask = async ({ questions }) => { explorerCalls++; return stubAnswers(questions); };
+const decide = async ({ questions }) => { adversaryCalls++; return stubAnswers(questions); };
 const scenarios = [
   { name: 'empty 9x9, no chest, no adversaries', config: { size: [9, 9], numAdversaries: 0 } },
   { name: 'empty 9x9, no chest, 2 adversaries', config: { size: [9, 9], numAdversaries: 2 } },
@@ -145,29 +148,46 @@ const scenarios = [
 ];
 for (const { name, config } of scenarios) {
   try {
-    const { game, memory } = newTestGame(config);
-    const v = view(game);
+    const run = newTestGame(config, { ask, decide, memoryDir: url, dir: url });
+    const { game } = run;
+    const v = run.view();
     check(v.testbed === true && v.width === game.dungeon.width && v.adversaries.length === game.adversaries.length, `${name}: view`);
     if (!config.map && config.size[0] <= 13) {
       let lit = 0;
-      for (let y = 0; y < game.dungeon.height; y++) for (let x = 0; x < game.dungeon.width; x++) if (game.dungeon.tiles[y][x] === '.' && isKnown(game, [x, y])) lit++;
+      for (let y = 0; y < game.dungeon.height; y++) for (let x = 0; x < game.dungeon.width; x++) if (game.dungeon.tiles[y][x] === '.' && game.isKnown([x, y])) lit++;
       check(lit === game.floorCount, `${name}: small arena floor fully lit at step 0 (${lit}/${game.floorCount})`);
     }
-    check(typeof situation(game).treasure === 'string', `${name}: situation`);
+    check(typeof situation(new KnownWorld(game)).surroundings.chest === 'string', `${name}: situation`);
     let ticks = 0;
     for (; ticks < 25 && !game.won && !game.lost; ticks++) {
-      await playTurn(game, memory, pathToFileURL(dir + '/'));
+      await run.playTurn();
     }
     console.log(`${name}: ${ticks} ticks, pos ${game.pos}, won ${game.won}, lost ${game.lost}, health ${game.health}`);
   } catch (err) {
     fail(`${name}: threw ${err.stack}`);
   }
 }
+
+// 6. Pack alert (P0 coverage): one ghost spots the explorer while the other is within ALERT_STEPS
+//    path steps behind a wall, so alertNearby / team sight runs. Must not throw, must emit 'alerted'.
+{
+  const config = { map: ['###########', '#....#....#', '#.@..#..A.#', '#..A.#....#', '#....#....#', '#.........#', '###########'], seed: 1 };
+  try {
+    const run = newTestGame(config, { ask, decide, memoryDir: url, dir: url });
+    const { game } = run;
+    check(game.adversaries.length === 2, 'alert scenario: 2 adversaries');
+    check(ALERT_STEPS >= 8, `alert scenario: second ghost must be within ALERT_STEPS (${ALERT_STEPS})`);
+    const kinds = new Set();
+    let ticks = 0;
+    for (; ticks < 30 && !game.won && !game.lost; ticks++) (await run.playTurn()).events.forEach((e) => kinds.add(e.type));
+    check(kinds.has('spotted') && kinds.has('alerted'), `alert scenario: expected spotted + alerted events, got ${[...kinds].join(',') || 'none'}`);
+    console.log(`pack alert: ${ticks} ticks, events ${[...kinds].join(',')}`);
+  } catch (err) {
+    fail(`pack alert scenario: threw ${err.stack}`);
+  }
+}
 check(explorerCalls > 0, 'stub explorer was asked');
 console.log(`stub calls: explorer ${explorerCalls}, adversaries ${adversaryCalls} (no network)`);
-setAsker(null);
-setDecider(null);
-setMemoryDir(null);
 rmSync(dir, { recursive: true, force: true });
 
 if (failures) {

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#080a12">
+<meta name="theme-color" content="#070913">
 <title>Jev Dungeon</title>
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -29,9 +29,10 @@
       <div class="controls">
         <button id="start" class="primary">Start</button>
         <button id="reload">Reload</button>
+        <button id="settings" title="Server settings" onclick="location.href='/settings'">⚙ Settings</button>
         <label class="speed">Delay
-          <input id="delay" type="range" min="100" max="1500" step="50" value="500">
-          <output id="delay-value" for="delay">500 ms</output>
+          <input id="delay" type="range" min="0" max="200" step="10" value="100">
+          <output id="delay-value" for="delay">100 ms</output>
         </label>
         <label class="check"><input id="reveal" type="checkbox"> Reveal map (debug)</label>
       </div>
@@ -70,22 +71,28 @@
       </div>
 
       <div class="panel">
-        <h2>Objective</h2>
-        <p id="objective" class="muted">—</p>
-      </div>
-
-      <div class="panel">
         <h2>Approach</h2>
         <p><b id="approach">—</b> <span id="approach-since" class="muted"></span></p>
         <ul id="tried" class="tried"></ul>
       </div>
 
-      <div class="panel">
-        <h2>Findings</h2>
-        <ul id="findings" class="findings"><li class="muted">None yet.</li></ul>
+      <div class="panel" id="recent" hidden>
+        <h2>Recent</h2>
+        <p class="recent-row"><span id="recent-moves" class="recent-moves"></span> <span id="recent-bf" class="badge" hidden></span></p>
       </div>
 
       <div class="panel">
+        <h2>Events</h2>
+        <p id="encounters" class="muted small" hidden></p>
+        <ul id="mem-events" class="findings"><li class="muted">None yet.</li></ul>
+      </div>
+
+      <div class="panel" id="landmarks-panel" hidden>
+        <h2>Landmarks</h2>
+        <ul id="landmarks" class="findings landmarks"></ul>
+      </div>
+
+      <div class="panel" id="move-panel" hidden>
         <h2>Last move <span id="forced" class="tag" hidden>forced</span></h2>
         <div class="probs" id="probs"></div>
         <p id="move-note" class="muted small"></p>

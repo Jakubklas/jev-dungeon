@@ -1,16 +1,30 @@
-// Dungeon rules: map generation, movement, permanent lighting and line of sight.
+// Dungeon rules: map generation, movement, permanent lighting and line of sight, plus the `Game`
+// class (one game's state and its methods). Game lives here, not in its own file, because
+// scripts/check-props.mjs copies this file alone to a temp dir: keep it free of other relative imports.
 // No Jev knowledge lives here; perception.js decides what Jev may see.
 
 import { placeProps } from './props/place.js';
 
-export const LIGHT_RADIUS = 7;
-export const SIGHT_RANGE = 7;
-export const MIN_SIZE = 25;
-export const MAX_SIZE = 90;
+// `export let` on purpose: src/settings.js changes these through configureWorld(), and every importer sees the live value.
+export let LIGHT_RADIUS = 7;
+export let SIGHT_RANGE = 7;
+export let MIN_SIZE = 25;
+export let MAX_SIZE = 90;
 export const ROOM_MIN = 4; // room width and height are each ROOM_MIN..ROOM_MAX
 export const ROOM_MAX = 15;
-export const EXPLORER_LIVES = 2; // lives the explorer starts with
-const ROOM_AREA = 290; // map cells per room when choosing the room count
+export let EXPLORER_LIVES = 2; // lives the explorer starts with
+let ROOM_AREA = 290; // map cells per room when choosing the room count
+
+// Settings hook (src/settings.js). Light radius, lives, size range and room area only matter to a game
+// that starts afterwards; sight range is read every tick.
+export function configureWorld(o) {
+  if (o.lightRadius !== undefined) LIGHT_RADIUS = o.lightRadius;
+  if (o.sightRange !== undefined) SIGHT_RANGE = o.sightRange;
+  if (o.minSize !== undefined) MIN_SIZE = o.minSize;
+  if (o.maxSize !== undefined) MAX_SIZE = o.maxSize;
+  if (o.lives !== undefined) EXPLORER_LIVES = o.lives;
+  if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
+}
 const SPAWN_STEPS = 20; // mirrors MIN_SPAWN_STEPS in characters/adversary/adversary.js
 
 export const DIRS = {
@@ -215,45 +229,6 @@ function lightAround(game, [cx, cy]) {
   return revealed;
 }
 
-export function createGame(dungeon) {
-  let floorCount = 0;
-  for (const row of dungeon.tiles) for (const c of row) if (c === '.') floorCount++;
-  const game = {
-    dungeon,
-    pos: [...dungeon.start],
-    steps: 0,
-    visits: { [key(dungeon.start)]: 1 },
-    light: Array.from({ length: dungeon.height }, () => Array(dungeon.width).fill(0)),
-    knownCount: 0,
-    knownFloor: 0, // running count of known floor cells (knownFloorCount reads it)
-    litOutside: new Set(), // lit cells beyond the map edge (known rock)
-    floorCount,
-    won: false,
-    lost: false,
-    caughtBy: null,
-    health: EXPLORER_LIVES,
-    maxHealth: EXPLORER_LIVES,
-    trail: [[...dungeon.start]],
-    adversaries: [],
-  };
-  lightAround(game, game.pos);
-  return game;
-}
-
-// Takes lives off the explorer. The game is lost (caughtBy = sourceId) only when health hits 0.
-// No-op once won or lost. Returns the state after the hit.
-export function damageExplorer(game, amount = 1, sourceId = null) {
-  game.health ??= EXPLORER_LIVES;
-  game.maxHealth ??= EXPLORER_LIVES;
-  if (game.won || game.lost) return { health: game.health, lost: game.lost };
-  game.health = Math.max(0, game.health - amount);
-  if (game.health === 0) {
-    game.lost = true;
-    game.caughtBy = sourceId;
-  }
-  return { health: game.health, lost: game.lost };
-}
-
 // Real tiles: for adversary movement, never for explorer perception.
 export function isFloor(dungeon, [x, y]) {
   return inBounds(dungeon, [x, y]) && dungeon.tiles[y][x] === '.';
@@ -286,78 +261,128 @@ export function hasLineOfSight(dungeon, a, b) {
   return true;
 }
 
-export function legalMoves(game) {
-  if (game.won || game.lost) return [];
-  const [x, y] = game.pos;
-  return Object.keys(DIRS).filter((d) => isFloor(game.dungeon, [x + DIRS[d][0], y + DIRS[d][1]]));
-}
-
-// The explorer's per-tick options: every legal step plus STAY (stand still). Empty once the game is over.
-export function availableMoves(game) {
-  const steps = legalMoves(game);
-  return steps.length ? [...steps, STAY] : steps;
-}
-
-// One step. Illegal moves (into a wall) and moves once the game is won or lost do nothing.
-// STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
-export function applyMove(game, dir) {
-  if (dir === STAY && !game.won && !game.lost) {
-    game.steps++;
-    return { moved: false, stayed: true, revealed: 0, revisit: false, won: game.won };
+// The game state and everything that mutates or reads it directly. It lives in this file (not its
+// own) because scripts/check-props.mjs copies dungeon.js to a temp dir. Fields are public on
+// purpose: the check scripts set them directly. Never JSON-clone or spread one: `litOutside` is a
+// Set and the methods live on the prototype (use `twin`).
+export class Game {
+  constructor(dungeon) {
+    let floorCount = 0;
+    for (const row of dungeon.tiles) for (const c of row) if (c === '.') floorCount++;
+    this.dungeon = dungeon;
+    this.pos = [...dungeon.start];
+    this.steps = 0;
+    this.visits = { [key(dungeon.start)]: 1 };
+    this.light = Array.from({ length: dungeon.height }, () => Array(dungeon.width).fill(0));
+    this.knownCount = 0;
+    this.knownFloor = 0; // running count of known floor cells (knownFloorCount reads it)
+    this.litOutside = new Set(); // lit cells beyond the map edge (known rock)
+    this.floorCount = floorCount;
+    this.won = false;
+    this.lost = false;
+    this.caughtBy = null;
+    this.health = EXPLORER_LIVES;
+    this.maxHealth = EXPLORER_LIVES;
+    this.graceTicks = 0; // ticks of hit protection left (adversary.js GRACE_TICKS counts it down)
+    this.trail = [[...dungeon.start]];
+    this.adversaries = [];
+    this.adversaryTicks = 0; // world ticks the adversaries have run (adversary.js)
+    this.patrolRand = null; // per-game patrol RNG, created on the first patrol goal (adversary.js)
+    lightAround(this, this.pos);
   }
-  if (game.won || game.lost || !legalMoves(game).includes(dir)) {
-    return { moved: false, revealed: 0, revisit: false, won: game.won };
+
+  // Shallow copy like the old `{ ...game, ...overrides }` spread: arrays and objects not in
+  // `overrides` are shared. Keeps the prototype so methods work. `litOutside` must be a Set.
+  // Only the fog twin tests use it.
+  twin(overrides = {}) {
+    return Object.assign(Object.create(Game.prototype), this, overrides);
   }
-  const next = [game.pos[0] + DIRS[dir][0], game.pos[1] + DIRS[dir][1]];
-  const k = key(next);
-  const revisit = (game.visits[k] ?? 0) > 0;
-  game.visits[k] = (game.visits[k] ?? 0) + 1;
-  game.pos = next;
-  game.steps++;
-  game.trail.push([...next]);
-  const revealed = lightAround(game, next);
-  game.won = !!game.dungeon.treasure && same(next, game.dungeon.treasure); // testbed arenas may have no chest
-  return { moved: true, revealed, revisit, won: game.won };
-}
 
-// Known = lit. Cells past the map edge are rock: known once lit, unknown otherwise,
-// exactly like rock inside the map, so perception cannot tell where the edge is.
-export function isKnown(game, [x, y]) {
-  if (!inBounds(game.dungeon, [x, y])) return game.litOutside?.has(key([x, y])) ?? false;
-  return game.light[y][x] > 0;
-}
+  // Takes lives off the explorer. The game is lost (caughtBy = sourceId) only when health hits 0.
+  // No-op once won or lost. Returns the state after the hit.
+  damage(amount = 1, sourceId = null) {
+    if (this.won || this.lost) return { health: this.health, lost: this.lost };
+    this.health = Math.max(0, this.health - amount);
+    if (this.health === 0) {
+      this.lost = true;
+      this.caughtBy = sourceId;
+    }
+    return { health: this.health, lost: this.lost };
+  }
 
-export function knownTile(game, [x, y]) {
-  if (!isKnown(game, [x, y])) return null;
-  return inBounds(game.dungeon, [x, y]) ? game.dungeon.tiles[y][x] : '#';
-}
+  legalMoves() {
+    if (this.won || this.lost) return [];
+    const [x, y] = this.pos;
+    return Object.keys(DIRS).filter((d) => isFloor(this.dungeon, [x + DIRS[d][0], y + DIRS[d][1]]));
+  }
 
-export function knownFloorCount(game) {
-  return game.knownFloor;
-}
+  // The explorer's per-tick options: every legal step plus STAY (stand still). Empty once the game is over.
+  availableMoves() {
+    const steps = this.legalMoves();
+    return steps.length ? [...steps, STAY] : steps;
+  }
 
-export function exploredPct(game) {
-  return Math.round((knownFloorCount(game) / game.floorCount) * 100);
-}
+  // One step. Illegal moves (into a wall) and moves once the game is won or lost do nothing.
+  // STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
+  applyMove(dir) {
+    if (dir === STAY && !this.won && !this.lost) {
+      this.steps++;
+      return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won };
+    }
+    if (this.won || this.lost || !this.legalMoves().includes(dir)) {
+      return { moved: false, revealed: 0, revisit: false, won: this.won };
+    }
+    const next = [this.pos[0] + DIRS[dir][0], this.pos[1] + DIRS[dir][1]];
+    const k = key(next);
+    const revisit = (this.visits[k] ?? 0) > 0;
+    this.visits[k] = (this.visits[k] ?? 0) + 1;
+    this.pos = next;
+    this.steps++;
+    this.trail.push([...next]);
+    const revealed = lightAround(this, next);
+    this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
+    return { moved: true, revealed, revisit, won: this.won };
+  }
 
-// Everything the browser needs. The full map is included only so the UI can offer
-// a debug "reveal map" toggle; the canvas should draw from `light` by default.
-// `light` is stored rounded to 2 decimals already; this hands out a copy.
-export function publicView(game) {
-  const { seed, width, height, tiles, start, treasure } = game.dungeon;
-  return {
-    seed, width, height, tiles, start, treasure,
-    props: game.dungeon.props ?? [],
-    decor: game.dungeon.decor ?? [],
-    pos: game.pos,
-    steps: game.steps,
-    won: game.won,
-    lost: game.lost,
-    health: game.health,
-    max_health: game.maxHealth,
-    light: game.light.map((row) => row.slice()),
-    visits: game.visits,
-    trail: game.trail,
-    explored_pct: exploredPct(game),
-  };
+  // Known = lit. Cells past the map edge are rock: known once lit, unknown otherwise,
+  // exactly like rock inside the map, so perception cannot tell where the edge is.
+  isKnown([x, y]) {
+    if (!inBounds(this.dungeon, [x, y])) return this.litOutside.has(key([x, y]));
+    return this.light[y][x] > 0;
+  }
+
+  knownTile([x, y]) {
+    if (!this.isKnown([x, y])) return null;
+    return inBounds(this.dungeon, [x, y]) ? this.dungeon.tiles[y][x] : '#';
+  }
+
+  knownFloorCount() {
+    return this.knownFloor;
+  }
+
+  exploredPct() {
+    return Math.round((this.knownFloorCount() / this.floorCount) * 100);
+  }
+
+  // Everything the browser needs. The full map is included only so the UI can offer
+  // a debug "reveal map" toggle; the canvas should draw from `light` by default.
+  // `light` is stored rounded to 2 decimals already; this hands out a copy.
+  publicView() {
+    const { seed, width, height, tiles, start, treasure } = this.dungeon;
+    return {
+      seed, width, height, tiles, start, treasure,
+      props: this.dungeon.props ?? [],
+      decor: this.dungeon.decor ?? [],
+      pos: this.pos,
+      steps: this.steps,
+      won: this.won,
+      lost: this.lost,
+      health: this.health,
+      max_health: this.maxHealth,
+      light: this.light.map((row) => row.slice()),
+      visits: this.visits,
+      trail: this.trail,
+      explored_pct: this.exploredPct(),
+    };
+  }
 }

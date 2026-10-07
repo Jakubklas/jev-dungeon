@@ -72,20 +72,20 @@ const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Rev
 // Known stone ramps from cold navy (light 0.2, the edge of what Jev has seen) through
 // dusky stone to warm torchlit amber (light 1.0, where Jev walked). Three stops each.
 const PALETTE = {
-  void: '#05060c',
-  floor:      ['#1c2742', '#4b4757', '#b07a40'],
-  floorHi:    ['#25345a', '#5d586a', '#d29e5c'],
-  floorLo:    ['#162038', '#3c3948', '#93622f'],
-  mortar:     ['#0c1224', '#24212e', '#553419'],
-  wallTop:    ['#33476f', '#6d6878', '#d3a264'],
-  wallTopHi:  ['#4b6395', '#8c8597', '#f2c98a'],
-  wallL:      ['#1f2c4b', '#48434f', '#8d5d34'],
-  wallR:      ['#141c34', '#302c39', '#5d3b20'],
-  wallMortar: ['#0a0f1f', '#1b1923', '#37210f'],
-  fog:        ['#121b33', '#0e1529', '#0b1020', '#080b17', '#06080f'], // distance 1..5
+  void: '#04050d',
+  floor:      ['#172547', '#463d61', '#bc7a34'],
+  floorHi:    ['#1e3161', '#574b77', '#dd9f51'],
+  floorLo:    ['#121e3c', '#373150', '#9d6225'],
+  mortar:     ['#0a1126', '#211c33', '#5b3313'],
+  wallTop:    ['#2a4478', '#675987', '#dda35a'],
+  wallTopHi:  ['#3f5fa1', '#8976a6', '#facb82'],
+  wallL:      ['#1a2a50', '#463959', '#975c2a'],
+  wallR:      ['#101a38', '#2e263f', '#633a1a'],
+  wallMortar: ['#080e21', '#191527', '#3b210b'],
+  fog:        ['#0e1937', '#0b142c', '#090f22', '#060a19', '#050710'], // distance 1..5
   trail: '#ffd98c',
-  explorer: '#ffe7b0', chest: '#f2c040', enemy: '#ff4a3a', shadow: 'rgba(0,0,0,.45)',
-  brain: '#7ee8ff', brainEdge: '#0b2a33',   // "Jev brain on" marker above a ghost
+  explorer: '#ffe7b0', chest: '#ffc633', enemy: '#ff4a3a', shadow: 'rgba(0, 0, 0, .45)',
+  brain: '#7ee8ff', brainEdge: '#082c36',   // "Jev brain on" marker above a ghost
 };
 
 const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
@@ -236,15 +236,15 @@ function spriteFrom(w, h, anchorX, anchorY, rects) {
 function fallbackSprites() {
   return {
     knight: spriteFrom(14, 22, 7, 21, [
-      ['#b02828', 6, 0, 3, 3], ['#c8ccd6', 3, 3, 9, 7], ['#1a1d26', 8, 6, 4, 1],
-      ['#9a2020', 2, 10, 4, 9], ['#7d8494', 4, 10, 7, 8], ['#c8a040', 9, 11, 4, 6], ['#3a3d48', 4, 18, 3, 3], ['#3a3d48', 8, 18, 3, 3],
+      ['#bb1d1d', 6, 0, 3, 3], ['#c2c9dc', 3, 3, 9, 7], ['#161b2a', 8, 6, 4, 1],
+      ['#a41616', 2, 10, 4, 9], ['#6d7ea4', 4, 10, 7, 8], ['#d5a533', 9, 11, 4, 6], ['#313851', 4, 18, 3, 3], ['#313851', 8, 18, 3, 3],
     ]),
     ghost: spriteFrom(14, 18, 7, 17, [
-      ['#c9ccd4', 3, 0, 8, 2], ['#c9ccd4', 1, 2, 12, 11], ['#9da1ac', 1, 13, 3, 3], ['#9da1ac', 5, 13, 3, 4], ['#9da1ac', 10, 13, 3, 3],
+      ['#c3c9da', 3, 0, 8, 2], ['#c3c9da', 1, 2, 12, 11], ['#919bb8', 1, 13, 3, 3], ['#919bb8', 5, 13, 3, 4], ['#919bb8', 10, 13, 3, 3],
       ['#ff3030', 7, 5, 2, 2], ['#ff3030', 10, 5, 2, 2],
     ]),
     chest: spriteFrom(14, 11, 7, 9, [
-      ['#6b3d1c', 1, 1, 12, 9], ['#8e5626', 1, 1, 12, 3], ['#f2c040', 1, 4, 12, 1], ['#f2c040', 6, 4, 2, 3],
+      ['#723c15', 1, 1, 12, 9], ['#97551d', 1, 1, 12, 3], ['#ffc633', 1, 4, 12, 1], ['#ffc633', 6, 4, 2, 3],
     ]),
   };
 }
@@ -534,6 +534,7 @@ function drawScene(now) {
     }
   }
   drawTrail(cx, cy);
+  drawLandmarks(cx, cy, known);
 
   // Entities, sorted by depth (x+y of the cell; the larger one while moving).
   const ents = [];
@@ -643,6 +644,28 @@ function parseGlow(c) {
 }
 
 // Trail: warm dotted path through visited cells (dot on each cell, half-dot between).
+// Landmarks: a tiny diamond on the floor of each remembered cell. Only known cells are drawn.
+function drawLandmarks(cx, cy, known) {
+  const list = validLandmarks();
+  if (!list.length) return;
+  const W = buf.width, H = buf.height;
+  for (const l of list) {
+    const [x, y] = l.cell;
+    if (x < 0 || y < 0 || x >= game.width || y >= game.height || !known(x, y)) continue;
+    const px = Math.round((x - y) * HW - cx), py = Math.round((x + y) * HH + HH - cy);
+    if (px < -4 || py < -4 || px > W + 4 || py > H + 4) continue;
+    b.fillStyle = 'rgba(4, 5, 13, .7)';
+    b.fillRect(px - 2, py - 1, 5, 3);
+    b.fillRect(px - 1, py - 2, 3, 5);
+    b.fillStyle = landmarkKind(l.kind).colour;
+    b.globalAlpha = .9;
+    b.fillRect(px - 1, py - 1, 3, 1);
+    b.fillRect(px - 1, py + 1, 3, 1);
+    b.fillRect(px, py - 1, 1, 3);
+    b.globalAlpha = 1;
+  }
+}
+
 function drawTrail(cx, cy) {
   const t = game.trail;
   if (!t?.length) return;
@@ -871,6 +894,14 @@ function drawMinimap() {
     dot(a.pos, PALETTE.enemy, Math.max(1.5, s * .8));
   }
   mctx.globalAlpha = 1;
+  for (const l of validLandmarks()) {
+    const [x, y] = l.cell;
+    if (x < 0 || y < 0 || x >= game.width || y >= game.height || !(game.light[y][x] > 0)) continue;
+    mctx.strokeStyle = landmarkKind(l.kind).colour;
+    mctx.lineWidth = 1;
+    const r = Math.max(2, s * .9);
+    mctx.strokeRect((x + .5) * s - r, (y + .5) * s - r, r * 2, r * 2);
+  }
   dot(game.pos, PALETTE.explorer, Math.max(2, s));
 
   // Viewport outline: the buffer's corners, inverse-projected to grid space.
@@ -931,6 +962,28 @@ function probRows(probs, chosen, { title, tint } = {}) {
   });
 }
 
+// Short static description per sentiment (the backend no longer sends a profile note).
+const SENTIMENT_NOTES = {
+  scared: 'Jittery: sees threats everywhere and prefers to hide or run.',
+  risk_averse: 'Avoids danger where it can and keeps well clear of adversaries.',
+  cautious: 'Careful: weighs the risk of each step and keeps its distance.',
+  curious: 'Drawn to the unknown and eager to see what lies ahead.',
+  courageous: 'Bold: willing to cut close past an adversary to get ahead.',
+  aggressive: 'Reckless: presses forward and stands its ground.',
+};
+
+// Landmarks (fog-safe: they are known cells). One colour and glyph per kind.
+const LANDMARK_KINDS = {
+  chest: { text: 'Chest', glyph: '▣', colour: '#ffc633' },
+  dead_end_explored: { text: 'Dead end', glyph: '■', colour: '#8f9bb8' },
+  hit_here: { text: 'Hit here', glyph: '✖', colour: '#ff6a55' },
+  hiding_spot_used: { text: 'Hiding spot', glyph: '◆', colour: '#7ee8ff' },
+};
+const landmarkKind = (k) => LANDMARK_KINDS[k] ?? { text: label(k), glyph: '●', colour: '#c9b8ff' };
+const validLandmarks = () => (Array.isArray(memory?.landmarks) ? memory.landmarks : [])
+  .filter((l) => Array.isArray(l?.cell) && l.cell.length === 2 && Number.isFinite(l.cell[0]) && Number.isFinite(l.cell[1]));
+const MOVE_ARROWS = { up: '↑', down: '↓', left: '←', right: '→', stay: '·' };
+
 function renderMind() {
   const s = memory?.sentiment;
   const chip = $('sentiment-chip');
@@ -938,7 +991,7 @@ function renderMind() {
   if (s) chip.dataset.sentiment = s.id;
   else delete chip.dataset.sentiment;
   $('sentiment-since').textContent = s?.since_step != null ? `since step ${s.since_step}` : '';
-  $('profile-note').textContent = s?.profile_note ?? (s ? '' : 'No sentiment yet.');
+  $('profile-note').textContent = s ? (SENTIMENT_NOTES[s.id] ?? '') : 'No sentiment yet.';
   const hist = (memory?.sentiment_history ?? []).slice(-5).reverse();
   $('sentiment-history').replaceChildren(...hist.map((h) => {
     const li = el('li', `${label(h.id)} `);
@@ -999,32 +1052,83 @@ function renderMemory() {
   renderDanger();
   renderAdversaries();
   renderMind();
-  if (!memory) return;
+  if (!memory) { renderRecent(); renderEvents(); renderLandmarks(); return; }
 
-  $('objective').textContent = memory.objective;
-  $('approach').textContent = memory.approach.current;
-  $('approach-since').textContent = `(since step ${memory.approach.since_step})`;
-  approachesUsed.add(memory.approach.id);
-  $('tried').replaceChildren(...memory.approach.tried.map((t) => {
-    approachesUsed.add(t.id);
+  const ap = memory.approach;
+  $('approach').textContent = ap?.current ?? '—';
+  $('approach-since').textContent = ap?.since_step != null ? `(since step ${ap.since_step})` : '';
+  if (ap?.id) approachesUsed.add(ap.id);
+  const tried = Array.isArray(ap?.tried) ? ap.tried : [];
+  const items = tried.map((t) => {
+    if (t.id) approachesUsed.add(t.id);
     const li = el('li');
-    li.append(el('s', t.approach), el('span', ` steps ${t.steps}: ${t.reason}`, 'why'));
+    li.append(el('s', t.approach ?? label(t.id)), el('span', ` steps ${t.steps ?? '?'}${t.reason ? `: ${t.reason}` : ''}`, 'why'));
     return li;
-  }));
-
-  const findings = memory.findings.length
-    ? [...memory.findings].reverse().map((f) => {
-      const li = el('li', `${f.fact} `);
-      li.append(el('span', `(step ${f.step})`));
-      return li;
-    })
-    : [el('li', 'None yet.', 'muted')];
-  $('findings').replaceChildren(...findings);
+  });
+  if (ap?.interrupted) {
+    const it = ap.interrupted;
+    const li = el('li', null, 'interrupted');
+    li.append(el('b', 'paused: '), el('span', `${it.approach ?? label(it.id)}${it.since_step != null ? ` (from step ${it.since_step})` : ''}${it.reason ? ` · ${it.reason}` : ''}`, 'why'));
+    items.unshift(li);
+  }
+  $('tried').replaceChildren(...items);
+  renderRecent();
+  renderEvents();
+  renderLandmarks();
 }
 
-// Safe / Chased: from memory.danger when the brain provides it, else from visible chasers.
+function renderRecent() {
+  const r = memory?.recent;
+  const moves = Array.isArray(r?.moves) ? r.moves : [];
+  $('recent').hidden = !moves.length;
+  if (!moves.length) return;
+  const row = $('recent-moves');
+  row.replaceChildren(...moves.map((m) => {
+    const sp = el('span', MOVE_ARROWS[m] ?? '?', 'mv');
+    sp.title = m;
+    return sp;
+  }));
+  const bf = Number(r.back_and_forth);
+  $('recent-bf').hidden = !(bf >= 2);
+  $('recent-bf').textContent = bf >= 2 ? `back and forth ×${bf}` : '';
+}
+
+function renderEvents() {
+  const ev = Array.isArray(memory?.events) ? [...memory.events].reverse() : [];
+  $('mem-events').replaceChildren(...(ev.length
+    ? ev.map((e) => {
+      const li = el('li', `${e.text ?? ''} `);
+      if (e.step != null) li.append(el('span', `step ${e.step}`, 'step'));
+      return li;
+    })
+    : [el('li', 'None yet.', 'muted')]));
+  const en = memory?.encounters;
+  $('encounters').hidden = !en;
+  if (en) {
+    const parts = [`Encounters ${en.count ?? 0}`];
+    if (en.escaped != null) parts.push(`escaped ${en.escaped}`);
+    if (en.hits != null) parts.push(`hits ${en.hits}`);
+    $('encounters').textContent = parts.join(' · ');
+  }
+}
+
+function renderLandmarks() {
+  const list = validLandmarks();
+  $('landmarks-panel').hidden = !list.length;
+  $('landmarks').replaceChildren(...[...list].reverse().map((l) => {
+    const k = landmarkKind(l.kind);
+    const li = el('li');
+    const g = el('span', k.glyph, 'lm-glyph');
+    g.style.color = k.colour;
+    li.append(g, el('b', ` ${k.text} `), el('span', `(${l.cell[0]},${l.cell[1]})`, 'step'));
+    if (l.note) li.append(el('span', ` ${l.note}`, 'lm-note'));
+    if (l.step != null) li.append(el('span', ` step ${l.step}`, 'step'));
+    return li;
+  }));
+}
+
+// Safe / Chased: from the adversaries the game view says are in sight and chasing.
 function dangerStatus() {
-  if (memory?.danger?.status) return memory.danger.status;
   return (game?.adversaries ?? []).some((a) => a.visible && a.mode === 'chase') ? 'chased' : 'safe';
 }
 
@@ -1034,14 +1138,10 @@ function renderDanger() {
   chip.textContent = status === 'caught' ? 'Caught' : status === 'chased' ? 'Chased' : 'Safe';
   chip.className = `chip ${status === 'safe' ? 'safe' : 'chased'}`;
 
-  const d = memory?.danger;
   const visible = (game?.adversaries ?? []).filter((a) => a.visible).length;
-  const parts = [];
-  if (d) {
-    parts.push(d.status === 'chased' ? `Chased since step ${d.since_step}.` : `Safe${d.since_step ? ` since step ${d.since_step}` : ''}.`);
-    parts.push(`Adversaries seen: ${d.adversaries_seen ?? 0}.`);
-  }
-  parts.push(`In sight now: ${visible}.`);
+  const parts = [`In sight now: ${visible}.`];
+  const last = memory?.encounters?.last_at_step;
+  if (last != null && memory.encounters.count > 0) parts.push(`Last encounter at step ${last}.`);
   $('danger').textContent = parts.join(' ');
   $('danger').className = status === 'safe' ? 'muted' : '';
 
@@ -1060,6 +1160,7 @@ const EVENT_TEXT = {
   lost_sight: (id) => `${id} lost sight of Jev and is searching`,
   gave_up: (id) => `${id} gave up the search`,
   caught: (id) => `${id} caught Jev`,
+  alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,
   brain_off: (id, e) => `${id} brain off${e.reason ? `: ${e.reason}` : ''}`,
 };
@@ -1154,7 +1255,7 @@ function splitDecisions(turn) {
   const d = turn.decision ?? null;
   const approach = d?.trigger ? d : null;
   const legacy = d && !d.trigger ? d : null;
-  const move = turn.move_decision ?? turn.move ?? legacy ?? (turn.forced ? null : memory?.latest_action) ?? null;
+  const move = turn.move_decision ?? turn.move ?? legacy ?? null;
   return { approach, move };
 }
 
@@ -1170,6 +1271,7 @@ function renderTurn(turn) {
   // The decision is made before the move, so its log line goes under this tick's events.
   if (approach) noteDecision(turn, approach);
   logEvents(turn);
+  $('move-panel').hidden = false;
   const probs = move?.probabilities ?? { [turn.dir]: 1 };
   $('forced').hidden = !turn.forced;
   $('probs').replaceChildren(...EXPLORER_MOVES.flatMap((dir) => {
@@ -1234,6 +1336,11 @@ function resetPane() {
   $('probs').removeAttribute('title');
   $('forced').hidden = true;
   $('move-note').textContent = '';
+  // No turn yet this session (new game or page reload): the panel stays hidden, unless the memory
+  // still knows the last direction, which is all it can show without that turn's probabilities.
+  const lastDir = Array.isArray(memory?.recent?.moves) ? memory.recent.moves.at(-1) : null;
+  $('move-panel').hidden = !lastDir;
+  if (lastDir) $('move-note').textContent = `Last direction: ${lastDir}. Jev's odds appear after the next step.`;
   renderReview();
 }
 

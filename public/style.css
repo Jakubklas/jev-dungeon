@@ -1,17 +1,17 @@
 /* Always dark: navy stone with warm amber torchlight. Canvas colours live in app.js (PALETTE). */
 :root {
   color-scheme: dark;
-  --bg: #080a12; --panel: #111727; --panel-2: #172036; --ink: #e9e2cf; --muted: #8b91a8;
-  --line: #263150; --line-hi: #34416a; --accent: #e8a23c; --accent-ink: #1a1006;
-  --warn: #ff6a52; --enemy: #ff4a3a; --safe: #5fb3a1; --shade: rgba(2, 3, 8, .72);
-  --void: #05060c; --drop: #000; --brain: #7ee8ff;
+  --bg: #070913; --panel: #0e162a; --panel-2: #131e3a; --ink: #ede4cb; --muted: #7e89b5;
+  --line: #202e56; --line-hi: #2c3d72; --accent: #f5a42f; --accent-ink: #1c1004;
+  --warn: #ff6a52; --enemy: #ff4a3a; --safe: #53bfa8; --shade: rgba(1, 3, 9, .72);
+  --void: #04050d; --drop: #000000; --brain: #7ee8ff;
   --font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
 * { box-sizing: border-box; }
 html { overflow-x: hidden; }
 body {
   margin: 0; height: 100dvh; color: var(--ink);
-  background: radial-gradient(120% 80% at 30% 0%, #10172a 0%, var(--bg) 60%) var(--bg);
+  background: radial-gradient(120% 80% at 30% 0%, #0d162d 0%, var(--bg) 60%) var(--bg);
   font: 14px/1.45 var(--font);
   padding: 16px; display: flex; flex-direction: column; overflow: hidden;
 }
@@ -31,7 +31,7 @@ h1 {
 .board-wrap {
   position: relative; flex: 1; min-height: 0; overflow: hidden;
   background: var(--void); border: 2px solid var(--line-hi);
-  box-shadow: 4px 4px 0 var(--drop), inset 0 0 0 2px #000;
+  box-shadow: 4px 4px 0 var(--drop), inset 0 0 0 2px #000000;
 }
 .pane { overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; padding-bottom: 6px; }
 
@@ -46,7 +46,7 @@ h1 {
 #board { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 .minimap {
   position: absolute; right: 8px; top: 8px; display: block;
-  border: 2px solid var(--line-hi); background: rgba(3, 4, 10, .78);
+  border: 2px solid var(--line-hi); background: rgba(2, 4, 11, .78);
   box-shadow: 3px 3px 0 var(--drop);
   image-rendering: pixelated; pointer-events: none;
 }
@@ -54,7 +54,7 @@ h1 {
 .bubble {
   position: absolute; left: 0; top: 0; max-width: 220px; width: max-content;
   padding: 6px 9px; font: 12px/1.35 var(--font); color: var(--ink);
-  background: rgba(10, 13, 24, .94); border: 2px solid var(--accent);
+  background: rgba(8, 12, 26, .94); border: 2px solid var(--accent);
   box-shadow: 3px 3px 0 var(--drop); opacity: 0; will-change: transform, opacity;
 }
 .bubble.adversary { border-color: var(--brain); }
@@ -97,9 +97,9 @@ button:disabled { opacity: .45; cursor: default; }
 .stat b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
 .chip {
   display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 8px; text-transform: uppercase;
-  letter-spacing: .06em; color: #06110e; background: var(--safe); vertical-align: middle;
+  letter-spacing: .06em; color: #05120f; background: var(--safe); vertical-align: middle;
 }
-.chip.chased { background: var(--enemy); color: #1a0402; }
+.chip.chased { background: var(--enemy); color: #1c0200; }
 .events li { font-variant-numeric: tabular-nums; }
 .events li span { color: var(--muted); }
 .events li.caught { color: var(--warn); font-weight: 700; }
@@ -120,7 +120,7 @@ button:disabled { opacity: .45; cursor: default; }
 .adv-card.on { border-color: var(--brain); }
 .adv-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .adv-id { color: var(--ink); min-width: 2.2em; }
-.chip.brain { background: var(--brain); color: #04161b; }
+.chip.brain { background: var(--brain); color: #02171d; }
 .chip.off { background: var(--line-hi); color: var(--muted); }
 .adv-head .chip { font-size: 10px; padding: 0 6px; }
 .adv-mode { color: var(--muted); text-transform: uppercase; font-size: 10px; letter-spacing: .06em; }
@@ -166,7 +166,7 @@ ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
 ul:empty { display: none; }
 .tried li s { color: var(--muted); }
 .tried li .why { color: var(--muted); }
-.findings li span { color: var(--muted); font-variant-numeric: tabular-nums; }
+.findings li span.step, .findings li span { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .probs { display: grid; grid-template-columns: 48px 1fr 40px; gap: 4px 8px; align-items: center; font-size: 12px; }
 .probs .chosen { font-weight: 700; color: var(--accent); }
@@ -179,12 +179,12 @@ ul:empty { display: none; }
 /* v4 sentiment: one muted tint per mood, used by the chip, the bubble tag and the bars.
    Unknown ids keep the neutral default, so a refined sentiment list still looks fine. */
 [data-sentiment] { --senti: var(--muted); }
-[data-sentiment="courageous"] { --senti: #e8b04a; }
-[data-sentiment="aggressive"] { --senti: #e8705a; }
-[data-sentiment="calculated"] { --senti: #8fa8e8; }
-[data-sentiment="cautious"] { --senti: #6fb8a4; }
-[data-sentiment="risk_averse"] { --senti: #a9b47e; }
-[data-sentiment="scared"] { --senti: #b496dc; }
+[data-sentiment="courageous"] { --senti: #f4b43e; }
+[data-sentiment="aggressive"] { --senti: #f3684f; }
+[data-sentiment="curious"] { --senti: #88a5ef; }
+[data-sentiment="cautious"] { --senti: #64c3a9; }
+[data-sentiment="risk_averse"] { --senti: #b0bf73; }
+[data-sentiment="scared"] { --senti: #b38fe3; }
 .bubble.explorer[data-sentiment] { border-color: color-mix(in srgb, var(--accent) 55%, var(--senti)); }
 .senti-tag {
   display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 9px; line-height: 14px; vertical-align: 1px;
@@ -230,3 +230,24 @@ ul:empty { display: none; }
 .modal dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
 .modal .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .modal button { padding: 4px 12px; font-size: 13px; }
+
+
+/* explorer memory blocks: recent moves, events, landmarks */
+[hidden] { display: none !important; }
+.recent-row { display: flex; align-items: center; gap: 10px; margin: 4px 0 0; }
+.recent-moves { display: inline-flex; gap: 3px; }
+.recent-moves .mv {
+  width: 20px; height: 20px; line-height: 18px; text-align: center; font-size: 13px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--accent);
+}
+.badge {
+  font-size: 10px; letter-spacing: .06em; padding: 1px 6px; text-transform: uppercase;
+  color: var(--bg); background: var(--senti, #f3684f);
+}
+.tried li.interrupted { list-style: none; margin-left: -18px; color: var(--muted); }
+.tried li.interrupted b { color: var(--accent); font-weight: 600; }
+.findings li .step { font-size: 10px; letter-spacing: .04em; }
+.findings li .step::before { content: ''; }
+.landmarks { list-style: none; padding-left: 0; }
+.landmarks .lm-glyph { display: inline-block; width: 14px; text-align: center; margin-right: 2px; }
+.landmarks .lm-note { color: var(--muted); }

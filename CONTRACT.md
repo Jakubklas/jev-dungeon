@@ -1,205 +1,315 @@
-# Jev Dungeon: module contract (v2, adversaries)
+# Jev Dungeon: module contract (v5, classes)
 
-Jev steers an explorer through a pre-generated 2D dungeon one cell at a time (up/down/left/right).
+Jev steers an explorer through a pre-generated 2D dungeon one cell at a time (up/down/left/right, or stay).
 The explorer wins by stepping on the treasure chest. Every visited cell permanently lights everything
-within `LIGHT_RADIUS` (4, Euclidean, no line of sight needed). Lit cells are **known territory**.
-Adversaries roam the dungeon. An adversary that sees the explorer gives chase, and the game is lost
-if one catches it. Reload regenerates everything.
+within `LIGHT_RADIUS` (7, Euclidean, no line of sight needed). Lit cells are **known territory**.
+Adversaries roam the dungeon. An adversary that sees the explorer gives chase, and each touch costs the
+explorer a life (2 at the start); the game is lost when the last life goes. Reload regenerates everything.
 
 Zero dependencies (Node ≥ 20.12, ES modules). `JEV_API_KEY` is in `../.env` and never reaches the browser. Port 3003.
+
+**The code is the source of truth.** This file describes it as of the memory redesign on top of the OOP refactor (`Game`, `KnownWorld`, `ExplorerBrain`, `Adversary`, `Run`, injected Jev calls, regrouped explorer state, explorer and adversary memory, settings, capability scaffold). Numbers quoted here are the **defaults**: the tunables live in `src/settings.js` and are edited on the `/settings` page. [AGENTS.md](AGENTS.md) is the working guide (rules, checks, caveats); if the two disagree with the code, fix them.
 
 ## Layout and ownership
 
 ```
 dungeon-game/
-  server.js, package.json, public/{index.html,app.js,style.css}    -> UI agent
-  src/dungeon.js                     world: map gen, tiles, lighting, explorer movement, line of sight -> world agent
-  src/jev.js                         Jev API client (shared, unchanged; owned by brain agent)
-  src/turn.js                        one world tick + new game + browser view                       -> adversary agent
-  src/characters/adversary/adversary.js   adversary spawning, senses, state machine, movement      -> adversary agent
-  src/characters/explorer/perception.js   what the explorer can sense, as plain-language facts      -> world agent
-  src/characters/explorer/memory.js       explorer memory (memory.json/memory.md)                   -> brain agent
-  src/characters/explorer/brain.js        Jev decisions for the explorer                            -> brain agent
-  scripts/check-dungeon.mjs          map + fog-of-war checks                                        -> world agent
-  scripts/check-adversaries.mjs      adversary behaviour checks (no Jev calls)                      -> adversary agent
+  server.js, package.json, public/{index.html,app.js,style.css,sprites.js,settings.html,props/*}   -> UI agent (+ art agents)
+  src/dungeon.js                     constants, map gen, line of sight, the Game class                -> world agent
+  src/jev.js                         Jev API client (askJev, shuffle)                                 -> brain agent
+  src/turn.js                        Run: one game in progress (tick, view); newGame / newTestGame    -> adversary agent
+  src/testbed.js                     small configurable test arenas (buildArena, normalizeConfig)    -> shared
+  src/settings.js                    tunables: schema, validation, per-port persistence, configure hooks -> shared
+  src/capabilities/index.js          capability scaffold: empty registry, not wired into any brain   -> shared
+  src/props/{catalog,place}.js       props and wall decor placement                                   -> props-world agent
+  src/characters/adversary/adversary.js   Adversary class, spawning, senses, state machine, movement -> adversary agent
+  src/characters/adversary/{brain,memory,perception}.js   adversary Jev brains                       -> adversary agent
+  src/characters/explorer/known-world.js  KnownWorld: the explorer's only window on a Game          -> world agent
+  src/characters/explorer/known-map.js    pure known-floor helpers (BFS, frontier, compass)          -> world agent
+  src/characters/explorer/encounter.js    the encounter model (safe distances, routes, hide, facts)  -> world agent
+  src/characters/explorer/perception.js   approaches, tactics, situation, move facts, as plain text  -> world agent
+  src/characters/explorer/memory.js       explorer memory (memory.json / memory.md)                  -> brain agent
+  src/characters/explorer/brain.js        ExplorerBrain: Jev decisions for the explorer              -> brain agent
+  scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, capabilities; no Jev)
+  scripts/run-testbed.mjs            testbed runner (no Jev unless --live)
+  scripts/measure-memory.mjs, scripts/arenas/{door,open,corridor,explore}.json   request-size and behaviour metrics over fixture arenas (stubbed unless --live)
+  PLAN-memory.md, PLAN-adversary-memory.md, PLAN-multiplayer.md   plans, not specs of the code (the adversary-memory plan is not built)
 ```
-Only create or edit the files you own. The explorer files were just moved into `src/characters/explorer/` and their relative imports already fixed. `server.js` and `scripts/check-dungeon.mjs` still import the old paths, and their owners will fix that.
+Only edit files your role owns; the full ownership table is in AGENTS.md ("Repo map & ownership").
 
 ## Conventions
 
 - A cell is `[x, y]`. `x` runs from 0 to `width-1`, `y` from 0 to `height-1`, and **y points down**. A cell's key is `` `${x},${y}` ``. `tiles[y][x]` is `'#'` or `'.'`.
-- `DIRS = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] }`.
+- `DIRS = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] }`. `STAY = 'stay'` is the explorer's non-move (not in `DIRS`).
 - Time is turn-based. One **tick** = the explorer's one step plus the adversaries' moves for that tick.
-- **Map size varies per level.** `width` and `height` are each a random integer from 35 to 150, chosen independently and drawn from the seed. There are no `WIDTH`/`HEIGHT` constants any more: always use `dungeon.width`/`dungeon.height`.
-- **Fog of war stays a hard rule.** Jev may only see two things: known cells, and adversaries the explorer can currently *see* (see Sight). Adversaries the explorer cannot see must never influence anything sent to Jev.
+- **Map size varies per level.** `width` and `height` are each a random integer from 25 to 90 (`MIN_SIZE`, `MAX_SIZE`), chosen independently and drawn from the seed. There are no `WIDTH`/`HEIGHT` constants: always use `dungeon.width`/`dungeon.height`.
+- **Fog of war stays a hard rule.** Jev may only see three things: known cells, adversaries the explorer can currently *see* (see Sight), and (user-approved amendment) adversaries it *saw earlier*, frozen at the moment of sighting (`threats.remembered`, below). Adversaries the explorer cannot see must never influence anything sent to Jev: a remembered sighting is the explorer's own record at the cell where it saw the adversary, it is never updated from the game, and it expires after `REMEMBER_STEPS` (30) steps or as soon as the explorer sees that cell empty (within `SIGHT_RANGE` with a known line of sight while the id is not visible). Explorer code enforces this structurally: it takes a `KnownWorld`, never a `Game` (see `KnownWorld`), and a static guard in `scripts/check-dungeon.mjs` fails on any other read, and twin tests (hidden tiles and adversaries scrambled, including a hidden adversary moving after it was seen) require byte-identical Jev input.
 - **Sight (symmetric).** An adversary and the explorer see each other when `hasLineOfSight(dungeon, a, b)` is true **and** their Euclidean distance is `<= SIGHT_RANGE` (7). Line of sight is physical: walls block it, and it uses the real tiles, not light.
-- **Chase rule.** An adversary that sees the explorer switches to `chase`. While chasing, it moves along the true shortest floor path toward the explorer (adversaries know the map). When it loses sight, it goes to `search`: it walks to `lastSeen`, and if it doesn't see the explorer again it goes back to `patrol`. `patrol` wanders between random room cells.
-- **Speed.** Adversaries move at 0.5 of the explorer's speed. Each tick an adversary gains 0.5 to `budget` and moves one step per whole point (1 step every 2 ticks). Patrolling adversaries use the same speed.
-- **Caught.** The game is lost when an adversary occupies the explorer's cell. This is checked after the explorer moves (stepping into an adversary counts) and after every adversary step. The explorer moves first in a tick. A win on the explorer's step ends the tick before the adversaries move.
+- **Chase rule.** An adversary that sees the explorer within `CHASE_RANGE` (7) switches to `chase`. While chasing, it moves toward the explorer (adversaries know the map). When it loses sight, it goes to `search`: it hunts from `lastSeen`, and after `MAX_SEARCH_TICKS` (18) without sight, or if Jev's `keep_hunting` falls below `KEEP_HUNTING_MIN` (0.5), it goes back to `patrol`. `patrol` wanders between random room cells.
+- **Speed.** Adversaries move at 0.6 of the explorer's speed (`ADVERSARY_SPEED`). Each tick an adversary gains 0.6 to `budget` and moves one step per whole point (3 steps every 5 ticks). Patrolling adversaries use the same speed.
+- **Damage, not instant loss.** An adversary on the explorer's cell (it stepped in, or the explorer stepped onto it) costs one life (`HIT_DAMAGE = 1`, event `hit`). The game is lost only at 0 lives (`hit` then `caught`). At most one hit per tick; a hit starts `GRACE_TICKS` (4) of protection and the adversary is knocked back off the explorer's cell. The explorer moves first in a tick. A win on the explorer's step ends the tick before the adversaries move.
+- **Injected Jev.** Every class that calls Jev takes the call as an option (`ask` for the explorer, `decide` for the adversaries). Left out, it is the real, paid Jev. There are no global setters.
 
 ## `src/dungeon.js` (world agent)
 
 ```js
-export const LIGHT_RADIUS = 4, SIGHT_RANGE = 7, MIN_SIZE = 35, MAX_SIZE = 150;
-export const DIRS;
-export function rng(seed)                       // -> () => float in [0,1)   (mulberry32, exported for adversary spawning)
+export let LIGHT_RADIUS = 7, SIGHT_RANGE = 7, MIN_SIZE = 25, MAX_SIZE = 90, EXPLORER_LIVES = 2;   // defaults; live bindings changed by configureWorld
+export const ROOM_MIN = 4, ROOM_MAX = 15;
+export function configureWorld({ lightRadius, sightRange, minSize, maxSize, lives, roomArea })  // called by src/settings.js; any key optional. roomArea (290) is the cells-per-room divisor
+//   sightRange applies at once; the others shape the next game.
+export const DIRS, STAY;
+export function rng(seed)                       // -> () => float in [0,1)   (mulberry32)
 export function generateDungeon(seed = randomSeed()) // -> Dungeon
-//   Dungeon = { seed, width, height, tiles: string[], start: [x,y], treasure: [x,y], rooms: [{x,y,w,h}] }
+//   Dungeon = { seed, width, height, tiles: string[], start: [x,y], treasure: [x,y] | null, rooms: [{x,y,w,h}], props, decor }
+//   (props/decor: see "props and wall decor" below; a testbed arena also sets `testbed: true`.)
 //   Room count and corridor network scale with area. The floor is fully connected and has loops. The treasure is in a room,
 //   at a path distance of at least 60% of the farthest reachable cell. Same seed gives the same dungeon.
-export function createGame(dungeon)              // -> Game (as before, plus adversaries: [], lost: false, caughtBy: null)
-//   Game = { dungeon, pos, steps, visits, light /* [y][x] */, knownCount, floorCount, won, lost, caughtBy, trail, adversaries: [] }
+//   `treasure` is `null` only in a testbed arena with no chest.
 export function isFloor(dungeon, [x,y])          // -> bool (real tiles; for adversary movement, never for explorer perception)
 export function floorDistances(dungeon, from)    // -> Map<key, steps> over real floor (adversary pathing)
-export function hasLineOfSight(dungeon, a, b)    // -> bool. Bresenham/supercover between cell centres; any '#' strictly between blocks
-export function legalMoves(game)                 // -> dirs whose destination is floor ([] once won or lost)
-export function applyMove(game, dir)             // -> { moved, revealed, revisit, won }  (no-op when won or lost)
-export function isKnown(game, cell), knownTile(game, cell), knownFloorCount(game), exploredPct(game)
-export function publicView(game)                 // -> { seed, width, height, tiles, start, treasure, pos, steps, won, lost,
-//                                                 light /* rounded to 2 decimals */, visits, trail, explored_pct }
+export function hasLineOfSight(dungeon, a, b)    // -> bool. Supercover line between cell centres; any '#' strictly between blocks
 ```
-Performance: maps are up to 150×150. Per-tick work should stay cheap (no full-grid scans per candidate move where a BFS bounded by known cells will do).
-
-## `src/characters/adversary/adversary.js` (adversary agent). Pure code, no Jev.
 
 ```js
-export const ADVERSARY_SPEED = 0.5;
-export function spawnAdversaries(dungeon)        // -> Adversary[]. Seeded from dungeon.seed (via rng(dungeon.seed ^ 0x9e3779b9)).
-//   count = clamp(round(floorCells / 700), 1, 8). They spawn in rooms at a path distance of at least 20 from start
-//   and never in the start's sight.
-//   Adversary = { id: 'a1', pos: [x,y], mode: 'patrol'|'chase'|'search', budget: 0, lastSeen: [x,y]|null, goal: [x,y]|null }
-export const CHASE_RANGE = 7;                    // separate from SIGHT_RANGE on purpose (see below)
-export function seesExplorer(game, adversary)    // -> bool (SIGHT_RANGE + hasLineOfSight, symmetric)
-export function startsChase(game, adversary)     // -> bool. Trigger for patrol/search -> chase. Currently seesExplorer && distance <= CHASE_RANGE.
-//   The user wrote "has a direct line of sight ... and is at least 7 steps away". We build "within 7" pending confirmation,
-//   so the trigger must be a one-line change, and sight must stay its own function and constant.
-export function visibleAdversaries(game)         // -> [{ id, pos, mode, distance /* euclidean, 1 decimal */ }] that the explorer sees now
-export function stepAdversaries(game)            // mutates game.adversaries (and game.lost/caughtBy) -> events
-//   events = [{ id, type: 'spotted'|'lost_sight'|'gave_up'|'caught', at: [x,y] }]
+export class Game {
+  constructor(dungeon)                           // fresh game at dungeon.start, start cell lit
+  // Public fields, set in this order by the constructor:
+  //   dungeon, pos, steps, visits /* {key: count} */, light /* [y][x], 0 = unknown */, knownCount, knownFloor,
+  //   litOutside /* Set of lit keys beyond the map edge: known rock */, floorCount,
+  //   won, lost, caughtBy, health, maxHealth /* = EXPLORER_LIVES */, graceTicks /* hit protection left */,
+  //   trail, adversaries /* Adversary[] */,
+  //   adversaryTicks /* world ticks the adversaries have run */, patrolRand /* patrol RNG, created lazily */
+  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won }. No-op when won or lost. STAY keeps the cell, counts a step.
+                         //    A null treasure never wins.
+  damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
+  legalMoves()           // dirs whose destination is floor ([] once won or lost)
+  availableMoves()       // legalMoves plus STAY ([] once won or lost)
+  isKnown([x,y]), knownTile([x,y]) /* '#' | '.' | null */, knownFloorCount(), exploredPct()
+  publicView()           // -> { seed, width, height, tiles, start, treasure, props, decor, pos, steps, won, lost, health, max_health,
+                         //      light /* copy */, visits, trail, explored_pct }
+  twin(overrides = {})   // shallow copy that keeps the prototype (for fog twin tests). `litOutside` must stay a Set.
+}
 ```
+Never JSON-clone or spread a `Game`: `litOutside` is a `Set` and the methods live on the prototype. `Game` lives in dungeon.js because `scripts/check-props.mjs` copies that single file to a temp dir, so dungeon.js keeps the line `import { placeProps } from './props/place.js';` byte-identical and no other relative import. Lit cells outside the map count as known `'#'` (rock), so neither `unexplored_by_direction` nor the "would reveal" counts give away where the map ends.
+
+Performance: maps are up to 90×90. Per-tick work should stay cheap (no full-grid scans per candidate move where a BFS bounded by known cells will do).
+
+## `src/characters/adversary/adversary.js` (adversary agent)
+
+```js
+export let ADVERSARY_SPEED = 0.6, CHASE_RANGE = 7, MAX_SEARCH_TICKS = 18, ALERT_STEPS = 24, HIT_DAMAGE = 1, GRACE_TICKS = 4;   // defaults; live bindings
+export function configureAdversaries({ speed, chaseRange, maxSearchTicks, hitDamage, graceTicks, alertSteps, floorPerAdversary, maxAdversaries, packAlert, teamSight, keepHuntingMin })
+//   called by src/settings.js; any key optional. Private tunables behind it: FLOOR_PER_ADVERSARY 150, MAX_ADVERSARIES 12, PACK_ALERT true, TEAM_SIGHT true;
+//   keepHuntingMin (0.5) lives in adversary/brain.js (KEEP_HUNTING_MIN). MIN_SPAWN_STEPS (20) is fixed.
+export class Adversary {
+  // Public fields, in this order. This is also its whole JSON shape (adversaries are never spread or cloned).
+  id /* 'a1' */, pos /* [x,y] */, mode /* 'patrol'|'chase'|'search' */, budget /* 0 */, lastSeen /* [x,y]|null */, goal /* [x,y]|null */
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null })
+  // Private state behind prototype accessors (not own properties, so JSON/Object.keys show only the six fields):
+  get hunt                       // brain state (adversary/brain.js newHunt)
+  get memory                     // the adversary's plain-JSON memory (adversaries.json)
+  get route / set route          // cached patrol route, or null
+  get lastRequestBody / set ...  // exact body of its last Jev request, or null
+  lastRequest()                  // that body parsed, or null
+}
+export function spawnAdversaries(dungeon)        // -> Adversary[]. Seeded via rng(dungeon.seed ^ 0x9e3779b9).
+//   count = min(MAX_ADVERSARIES, max(1, round(floorCells / FLOOR_PER_ADVERSARY))) (defaults 12 and 150). They spawn in rooms at a path distance of at least 20 from start
+//   and never in the start's sight, spread round-robin over the rooms.
+export function seesExplorer(game, adversary)    // -> bool (SIGHT_RANGE + hasLineOfSight, symmetric)
+export function startsChase(game, adversary)     // -> bool. Trigger for patrol/search -> chase: seesExplorer && distance <= CHASE_RANGE.
+//   The user wrote "has a direct line of sight ... and is at least 7 steps away". We build "within 7" pending confirmation,
+//   so the trigger stays a one-operator change, and sight stays its own function and constant.
+export function visibleAdversaries(game)         // -> [{ id, pos, mode, distance /* euclidean, 1 decimal */ }] that the explorer sees now
+export function graceLeft(game)                  // -> game.graceTicks
+export async function stepAdversaries(game, { decide = null } = {})   // mutates game.adversaries and the game's health/lost/caughtBy
+//   -> { events, turns }. `decide({ id, state, questions, body })` replaces the Jev call of a brain-on adversary (null = the real Jev).
+//   events = [{ id, type: 'spotted'|'lost_sight'|'hit'|'caught'|'brain_on'|'brain_off'|'alerted', at: [x,y] }]  // 'alerted' also has `by`
+//            hit adds `health` (after the hit); brain_off adds `reason`. `caught` is emitted only right after the life-ending `hit`.
+//            (`gave_up` is never emitted.)
+//   turns  = [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, error? }]
+export { brainView } from './brain.js'
+```
+`stepAdversaries` order: return at once if the game is won or lost; read grace, then decrement it; touch check for every adversary in id order before anything moves (catches the explorer stepping into one); bump `game.adversaryTicks`; sense; add `ADVERSARY_SPEED` to every budget; brain-on adversaries with `budget >= 1` call `decide` in parallel from the same snapshot; apply steps in id order with a touch check after each (knockback to the previous cell). Request bodies are built synchronously in id order, so never add an `await` before `buildRequest` in `adversary/brain.js`. `adversary/brain.js` also exports `newHunt(id)` and `decide(game, a, tick, cfg, ask)`.
 
 ## `src/turn.js` (adversary agent). The world tick, which the server uses.
 
 ```js
-export function newGame(seed?)                   // -> { game, memory }: generateDungeon + createGame + spawnAdversaries + brain.newRun
-export async function playTurn(game, memory)     // -> Turn
-//   1. explorer = await brain.takeTurn(game, memory)        (explorer decides + moves; returns ExplorerTurn)
-//   2. If the explorer stepped onto an adversary, then lost. Else if not won: events = stepAdversaries(game)
-//   3. If caught: brain.noteCaught(game, memory, adversaryId) records it in memory and saves
-//   Turn = { ...ExplorerTurn, events, lost: game.lost, caughtBy: game.caughtBy }
-export function view(game)                       // -> { ...publicView(game), adversaries: [{ id, pos, mode, visible }] , over: won||lost }
-//   The full adversary list is included for the debug reveal toggle. `visible` = the explorer sees it now.
+export class Run {                               // one game in progress
+  game                                           // the Game
+  explorer                                       // the ExplorerBrain (reads the game through a KnownWorld)
+  get memory()                                   // = explorer.memory (plain JSON)
+  async persist()                                // writes memory.json/md and adversaries.json (server.js on a new game)
+  async playTurn()                               // -> Turn
+  view()                                         // -> the browser view
+}
+export function newGame(seed?, opts = {})        // generateDungeon + spawnAdversaries -> Run. No Jev calls.
+export function newTestGame(config, opts = {})   // buildArena(config) -> Run. Throws TestbedError on a bad config.
+//   opts = { ask, decide, dir, memoryDir } (all optional):
+//     ask       replaces the explorer's Jev call: ({ kind: 'sentiment'|'tick', state, questions, body }) => answers
+//     decide    replaces the adversaries' Jev call: ({ id, state, questions, body }) => answers
+//     memoryDir URL of the folder for memory.json / memory.md (default: dungeon-game/)
+//     dir       URL of the folder for adversaries.json (default: dungeon-game/)
+//   A Run without `ask` / `decide` calls the real, paid Jev.
 ```
+`playTurn`:
+1. `explorer = await this.explorer.takeTurn()` (decides, moves, saves memory).
+2. `{ events, turns } = await stepAdversaries(game, { decide })`. It first hits an explorer that stepped onto an adversary, and does nothing once the game is won or lost.
+3. `saveMemories(...)` writes `adversaries.json` (`{ tick, adversaries: memories }`, in `game.adversaries` order).
+4. If newly lost, `explorer.noteCaught(game.caughtBy)`; else if a `hit` event fired, `explorer.noteHit(id)`.
 
-## `src/characters/explorer/perception.js` (world agent)
+`Turn = { ...ExplorerTurn, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns }`.
 
-Same exports as before (`APPROACHES`, `treasureSeen`, `availableApproaches`, `approachTarget`, `describeMoves`, `situation`), adapted to variable map size, plus:
-- `APPROACHES.escape = { text: 'An adversary is chasing: get away from it, keep escape routes open, and avoid dead ends.', needsThreat: true }`. `availableApproaches` lists `escape` only while a visible adversary is in `chase` mode.
-- `situation(game).threats`: `[]`, or one entry per visible adversary, `{ direction: 'north-east', distance: 5, chasing: true }`. Directions use 8-point compass words.
-- `describeMoves` adds threat sentences when any adversary is visible, for example: "Moves away from the chasing adversary (6 steps between you after this)", "Moves toward an adversary", "Steps into the adversary: caught", "Leads into a known dead end: risk of being cornered". Distances to adversaries use BFS over known floor if the adversary's cell is known, else Euclidean. Only visible adversaries count (via `visibleAdversaries`).
-- `approachTarget(game, 'escape')`: a reachable known floor cell that maximises (adversary distance − own distance), preferring cells that have more than one exit.
+`view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain }], grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees it now. `brain` is the adversary-brain view under "v3" below.
 
-## `src/characters/explorer/memory.js` + `brain.js` (brain agent)
+## `src/characters/explorer/*`
 
-Memory keeps the v1 shape and adds `danger: { status: 'safe' | 'chased', since_step, adversaries_seen: number }`.
-`brain.js` keeps `newRun`, `takeTurn`, `lastRequest`, and adds `noteCaught(game, memory, adversaryId)`.
-- **Code policy:** when a visible adversary is chasing, switch approach to `escape` (reason "chased by an adversary") unless the approach is `go_to_treasure` and the chest is closer than the chaser. When no adversary has been visible for 3 ticks, switch back to the approach that was interrupted (reason "lost the chaser").
-- `next_move` priorities: (1) step onto the chest if possible; (2) when chased, never move toward or into an adversary or into a dead end, and keep the distance growing; (3) approach; (4) reveal new cells; (5) avoid backtracking. `RULES` must say that adversaries roam, move slower (1 step per 2 of yours), chase on sight, and that being caught loses the game.
-- Findings: "Spotted an adversary to the north-east, 6 steps away (step N).", "Escaped the chaser (step N).", "Caught by adversary a2 at step N."
-- Approach reviews do not run while escaping.
+### `known-world.js`: `KnownWorld` (world agent)
+
+The explorer's only window on a game (the one explorer file allowed to hold a `Game`, in a private `#game`). Reads are live, never cached, and fog-safe:
+
+```js
+new KnownWorld(game)
+get pos, steps, visits, health, maxHealth, graceLeft, won   // the explorer's own state
+get width, height                       // grid size, only for sizing arrays; says nothing about the layout
+isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()
+visibleAdversaries()                    // -> [{ id, pos, mode, distance }] the explorer sees now
+seenTreasure()                          // -> the chest cell once lit, else null (also null when there is no chest)
+move(dir)                               // the explorer's own step (Game.applyMove)
+```
+Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characters/explorer/*.js` file must not contain `game.x`, `game[...]`, `.dungeon`, dynamic or namespace imports, or imports outside this allowlist: `DIRS, LIGHT_RADIUS, STAY, EXPLORER_LIVES, SIGHT_RANGE` from dungeon.js (`SIGHT_RANGE` is a constant, used only to expire a remembered sighting); `ADVERSARY_SPEED, GRACE_TICKS` from adversary.js; sibling explorer files; `../../jev.js`; `node:fs/promises`.
+
+### `known-map.js`, `encounter.js`, `perception.js` (world agent)
+
+All take a `world` (a `KnownWorld`). Layering, acyclic: `known-map.js` ← `encounter.js` ← `perception.js`.
+- `known-map.js`: `key`, `sameCell`, `step`, `neighbours`, `knownFloor`, `plural`, `euclid`, `isFrontier`, `knownDistances` (BFS over known floor), `wouldReveal`, `compass`, `dirWord`, `compass8`, `reachableFrontier`, `pick`.
+- `encounter.js`: the encounter model over known floor and visible adversaries only: `threatsOf`, `threatDistance`, `safeDistances` (gap-limited BFS), `goalsAt`, `hiddenFromAll`, `escapeTarget`, `isRoomCell`, `openArea`, `faceOffTarget`, `encounterFacts` (the sentence set behind `threats.encounter`), `knownLineOfSight` (supercover over known tiles, **unknown cells block**), `speedPhrase` (derived from `ADVERSARY_SPEED`), `FACE_OFF_MIN_SIDE`.
+- `perception.js`: `APPROACHES`, `TACTICS`, `isTactic`, `DEFAULT_MIN_GAP`, `treasureSeen(world)`, `availableApproaches(world)`, `approachTarget(world, id, { minGap, goal, avoid, exclude, remembered })`, `tacticFeasibility(world, minGap, { exclude })`, `tacticOptions(world, minGap)`, `avoidZone(world, remembered)`, `situation(world, { remembered, landmarks })`, `describeMoves(world, approachId, opts)` and `describeMoveParts(world, approachId, { minGap, goal, avoid, remembered, prev, backAndForth })`. Tactic feasibility lives here, not in encounter.js, because it needs `approachTarget`.
+- Exploration approaches: `nearest_frontier` (default), `largest_unexplored`, `far_side`, `go_to_treasure` (only once the chest is known). Encounter tactics (`tactic: true`): `slip_past`, `run_away`, `face_off`, `hide`, `race_to_chest`, `carry_on` (see "v4: encounter tactics").
+- `situation(world, { remembered = [], landmarks = [] })` returns `{ self, surroundings, threats }` (the brain adds `game`, `plan`, `recent` and `self.mind`):
+  - `self = { lives, max_lives, hit_protection_steps }`.
+  - `surroundings = { here ('room'|'junction'|'corridor'|'dead end'), steps, known_floor_cells /* a count, not a % */, chest /* sentence */, unexplored_by_direction /* none|little|some|a lot per side, fixed 12-cell window */, frontier_cells, landmarks[] }`. A landmark is `{ kind, note, direction, distance, steps_ago }`, `memory.landmarks` made relative to the explorer every tick.
+  - `threats = { visible[], remembered[], encounter }`. `visible` is `[]` or `{ id, direction: 'north-east', distance: 5, chasing: true }` per adversary in sight (8-point compass words). `remembered` is `{ id, last_seen_steps_ago, was_chasing, direction ('here' on the frozen cell), distance }` per frozen sighting not in sight now. `encounter` is `null` unless an adversary is visible.
+- `describeMoveParts` returns, per legal move, `{ shared, target }` (or `{ whole }` for a winning move and for `stay`). `shared` is approach-independent: threat sentences, a sentence about the nearest remembered sighting (also "Heads back toward where a chasing adversary was N steps ago (D steps from that spot after this)." for a chasing sighting up to 15 steps old, whatever the distance), chest, reveal estimate, visits, a "Goes back to the cell you left 2 steps ago" fact, dead-end warnings; `target` is progress toward the approach's target. `describeMoves` joins them into one sentence per move. Threat sentences, for example: "Moves toward an adversary", "Steps into the adversary: costs 1 life (N of M left) and it is knocked back" (or "costs your last life and the game is lost", or "no life lost while your hit protection lasts"), "Leads into a known dead end: risk of being cornered", "Heads toward where an adversary was last seen N steps ago", and the gap warning "below your minimum gap of N". Distances to adversaries use BFS over known floor if the adversary's cell is known, else Euclidean. Only visible adversaries count as threats; remembered sightings only produce the "last seen" sentence.
+
+### `memory.js` + `brain.js`: `ExplorerBrain` (brain agent)
+
+```js
+export class ExplorerBrain {
+  constructor(world, { ask = null, memoryDir = null } = {})  // builds the initial memory (runs approachTarget); null ask = real Jev
+  get memory()                                 // plain JSON object, saved as memory.json; Jev reads a regrouped state built from it (below)
+  async takeTurn()                             // -> ExplorerTurn
+  async noteCaught(adversaryId)                // event "Caught by a2: the last life is gone.", encounters.hits + 1, a hit_here landmark, save
+  async noteHit(adversaryId)                   // event "Hit by a2: 1 of 2 lives left.", encounters.hits + 1, a hit_here landmark, save
+  lastRequest()                                // latest request body, parsed, or null
+  lastRequests()                               // this tick's bodies in order, parsed: [sentiment, tick] on a decision tick
+}
+export const SENTIMENTS, profileOf
+```
+Review info, encounter bookkeeping, the tactic goal, the remembered sightings and the last request bodies are `#private` fields: one brain per `Run`, no module-level mutable state. `memory.js`'s revisit window is a WeakMap keyed by the memory object, so it never reaches Jev or disk.
+
+**Memory** (`memory.js`, `createMemory`, validated by `validateMemory`; `saveMemory` writes `memory.json` and `memory.md`) has the shape:
+
+```
+{ approach { id, current, thought, since_step, tried[{ id, approach, steps, reason }], interrupted },
+  progress { steps, known_floor_cells, revealed_since_approach, steps_since_approach, revisits_last_10 },
+  sentiment { id, since_step }, sentiment_history[{ id, step }],
+  recent { moves[], cells[], back_and_forth },
+  encounters { count, escaped, hits, last_at_step },
+  events[{ step, text }],
+  landmarks[{ kind, cell, step, note }] }
+```
+`objective`, `findings`, `latest_action`, `danger` and `sentiment.profile_note` no longer exist. Limits (`LIMITS`): approach text 240, `tried` 5, thought 60, `sentiment_history` 5, `events` 6 (text 200, oldest dropped, the step never repeated in the text), `landmarks` 8 (note 120; kinds `chest`, `dead_end_explored`, `hit_here`, `hiding_spot_used`; one per kind + cell, the chest is never evicted), `recent.moves` 6, `recent.cells` 8. `recent.back_and_forth` counts moves that returned to the cell two positions back. `encounters.count` / `escaped` / `hits` count encounters begun, ended unhurt, and hits taken. The remembered sightings are **not** in memory: they are a private field of the brain.
+
+**Jev state (explorer).** Memory is not sent verbatim. Every explorer request carries `state = { game, self, surroundings, threats, plan, recent }`:
+- `game`: `rules()`, a sentence block saying that adversaries roam, move slower (derived from `ADVERSARY_SPEED`), chase on sight, that a touch costs one life (`EXPLORER_LIVES`, `GRACE_TICKS` of protection afterwards), and what `threats.visible` / `threats.remembered` mean. The objective is folded in.
+- `self`: `situation().self` plus `mind: { id, since_step, recent }` (`recent` = the last 5 picks as runs, "cautious×3 → scared").
+- `surroundings`: `situation().surroundings`, plus `moves` (`{ dir: shared facts }`, sent once) on a decision tick that asks tactic questions.
+- `threats`: `situation().threats`. `plan`: `{ approach { id, current, since_step, interrupted | null }, tried[{ id, steps, reason }] }`.
+- `recent`: `{ path /* compass words */, back_and_forth, revealed_since_approach, steps_since_approach, revisits_last_10, encounters, events }`.
+- Request size: the largest explorer decision tick is about 9-10 KB; `check-dungeon.mjs` asserts ≤ 9500 bytes (a chasing adversary, 5 tactics) and ≤ 10500 (a patrolling one, 6 tactics).
+
+**Minds.** `SENTIMENTS` has `scared` (min_gap 5, end_ticks 6), `risk_averse` (4, 5), `cautious` (3, 4; the default before the first pick), `curious` (3, 2; the opposite of cautious; replaced `calculated`, which is gone), `courageous` (2, 2) and `aggressive` (2, 1). Each also has `priority` (a line in `next_move` and `tactic`), `move_priority` (the same rule, short, for the speculative `move_if_<tactic>` questions), `when` (the circumstances that call for it, shown in the sentiment question) and `note`. `profileOf(memory)` returns the current profile.
+
+- `next_move` priorities: (1) step onto the chest, else head for the seen chest; (2) while threats are visible, never step into one, avoid moves below the sentiment's `min_gap`, plus the current tactic's hint; (3) do not head toward where an adversary was last seen (when `threats.remembered` is non-empty); (4) the sentiment's priority line; (5) avoid `stay`, follow the approach, reveal new cells, avoid backtracking. The speculative per-tactic questions keep only the chest line, the safety line and the mind's `move_priority`.
+- **Remembered sightings.** The brain freezes each adversary in `visibleAdversaries()` as `{ id, cell, step, chasing }` and drops it after `REMEMBER_STEPS` (30) steps or when the explorer sees the frozen cell empty. The ones not in sight form `threats.remembered`, a per-move "last seen" fact, and an avoid zone (`avoidZone`) that exploration targets steer around: known cells within 10 known-path steps of a sighting under 10 steps old, or 6 of one up to 15 steps old, plus a sector for the 3 latest chasing sightings (known cells nearer the sighting than the explorer, and cells whose shortest route from the explorer runs through the frozen cell). `approachTarget`'s `exclude` (cell keys not to pick) and `remembered` (the sightings) feed `run_away`.
+- **Triggers** of a decision tick (`turn.decision.trigger`): `start`, `encounter`, `tactic_failed`, `chase_over`, `chest`, `review`. A pending `start` / `chest` / `review` decision and an `encounter` on the same tick share **one** sentiment call (the encounter wins). `tactic_failed` fires when the tactic's target is gone, when the gap fell below `min_gap` (not for `run_away`), or on **back-and-forth** (`PINGPONG_FAILS` = 3 moves since the last decision returning to the cell just left; the bounce cells and the old target are then excluded from the re-decision's targets, until the encounter starts or ends); at most once per `REDECIDE_COOLDOWN` (3) ticks.
+- Approach reviews (every `REVIEW_EVERY` = 8 steps; `approach_working` below 0.5 switches) do not run during `go_to_treasure` or any tactic.
+- `ExplorerTurn = { step, dir, forced, revealed, won, move_decision, decision, review, policy, apiMs }`. `policy: { from, to, reason } | null` is for code-driven approach switches, separate from `review`.
 
 ## `server.js` + `public/*` (UI agent)
 
-- Uses `newGame`, `playTurn`, `view` from `./src/turn.js` only. `POST /api/new` → `{ game: view, memory }`. `POST /api/step` → `{ game: view, memory, turn }`, or 409 once over or while a step is running. `GET /api/state`.
-- **Bigger maps:** the board is a camera viewport that follows the explorer, with fixed-size cells (~18 px) centred on the explorer and clamped to map edges. It must not shrink a 150×150 map to fit. Add a small minimap of known cells, with the explorer, the chest when known and visible adversaries, in a corner of the board or the pane.
-- **Taller board:** the board pane stretches down to the bottom of the window (`height: calc(100dvh - <header>)` or flex). The control pane sits beside it and scrolls on its own. On narrow screens the board takes about 70dvh.
-- Adversaries are red circles, drawn only when `visible` (or always, dimmed, with "Reveal map"). A chasing one gets a ring. The HUD adds the map size (`W×H`) and a status chip (Safe / Chased). The pane shows `memory.danger`, and turn events go into a short log.
-- Overlay: "Treasure found" (win) or "Caught by an adversary" (loss), with steps, explored %, approaches used, time, and a Reload button that starts a new level automatically.
-- **Look (v3): isometric 8-bit.** Spec below; `public/sprites.js` holds the pixel art (sprites agent), `public/app.js` + `style.css` the renderer (UI agent).
-  - Projection: `sx = (x-y)*TW/2`, `sy = (x+y)*TH/2`, `TW = 2*TH`. Floor = diamond tile; wall = raised block (~0.6 tile tall) with a lit top and two darker side faces, stone-brick texture. Drawn in `x+y` order with entities inserted at their cell's depth.
+- Uses `newGame`, `newTestGame` from `./src/turn.js` only, and holds one `Run`. `POST /api/new` → `{ game: run.view(), memory }`; an optional body `{ testbed: {...} }` builds a testbed arena (400 on a bad config). `POST /api/step` → `{ game, memory, turn }`, or 409 once over, with no game, or while a step is running. `GET /api/state` → `{ game: view|null, memory|null }`. Static files come from the `STATIC` whitelist in server.js: a new file in `public/` must be registered there. `TESTBED=<query or JSON>` makes the server a testbed. `GET /settings` serves `public/settings.html`; `GET /api/settings` → `{ schema, values, defaults, pending }`; `POST /api/settings` with `{ values }` saves `settings-<PORT>.json` and applies the live knobs now (the `next` knobs, `pending` until a new game, apply on the next `POST /api/new`); 400 with `{ error }` on a bad value. The schema is `SCHEMA` in `src/settings.js`.
+- **Settings page:** the `⚙ Settings` button (next to Start and Reload) goes to `/settings`, a standalone page (`public/settings.html`, inline CSS and JS) that builds its rows from `GET /api/settings`: a slider plus number field per numeric knob, a checkbox per toggle, a `live` / `next game` badge on each, **Save** (disabled until something changed) and **✕** (closes, asking before it discards unsaved edits). A save applies live knobs at once; knobs marked `next game` show "saved" until the next `POST /api/new`.
+- **Bigger maps:** the board is a camera viewport that follows the explorer, centred and clamped to map edges. It must not shrink a 90×90 map to fit. A minimap of known cells (explorer, chest when known, visible adversaries, viewport outline) sits in a corner of the board or the pane.
+- **Taller board:** the board stretches down to the bottom of the window. The control pane sits beside it and scrolls on its own. On narrow screens the board takes about 70dvh.
+- Ghosts are drawn only when `visible` (or always, dimmed, with "Reveal map"). A chasing one has a red glow, one with its brain on a cyan marker. The HUD adds the map size (`W×H`), hearts for `health`/`max_health` and a status chip (Safe / Chased / Caught, derived from the game view, not from memory). The pane shows explorer memory (UI pane: events / encounters / landmarks / recent, plus the approach thought and mind; the UI agent owns the details), and turn events go into a short log (a `hit` event logs in red and flashes the board; the knight blinks while `invulnerable`).
+- Overlay: "Treasure found" (win) or "Jev lost all lives" (loss), with steps, explored %, approaches used, time, and a Reload button that starts a new level automatically.
+- **Look (v3): isometric 8-bit.** `public/sprites.js` holds the pixel art, `public/app.js` + `style.css` the renderer.
+  - Projection: `TW = 32`, `TH = 16` art px; `sx = (x-y)*TW/2`, `sy = (x+y)*TH/2`, measured at the cell centre. Floor = diamond tile; wall = raised block (`WALL_H = 11`, about 0.69 of a tile) with a lit top and two darker side faces. Drawn in `x+y` order with entities inserted at their cell's depth.
   - Pixel look: render to a low-res offscreen buffer, blit at integer scale with smoothing off, camera snapped to whole art pixels.
-  - Palette: known cells ramp by `light` (0.2..1) from cold navy stone (0.2) to warm amber/ochre torchlit stone (1.0, where the explorer walked). Unknown cells get a navy floor glow by distance to the nearest known cell, fading to black over ~5 cells, with no wall shapes (fog of war; Reveal map overrides). Quantized to ~6-8 bands.
-  - No props (superseded by v4: props and wall decor). The chest stays (gameplay). Trail is warm-tinted and subtle.
-  - Characters: explorer = 8-bit knight with an oversized helmet (red plume, shield, red cape). Adversary = grey, red-eyed ghost with a torn cloth body, hovering (bob + floor shadow); chasing adds a red glow. Every character mirrors left/right by its latest screen-x direction of travel (`right`/`up` = faces right, `left`/`down` = faces left), keeping the last facing when it didn't move.
+  - Palette: known cells map `light` to 8 bands from cold navy stone (the lit edge) to warm amber torchlit stone (where the explorer walked). With `LIGHT_RADIUS = 7`, `light` runs 0.13..1.0 and the renderer clamps everything below 0.2 into the coldest band. Unknown cells get a navy floor glow by distance to the nearest known cell, fading to black over ~5 cells, with no wall shapes (fog of war; Reveal map overrides).
+  - Characters: explorer = 8-bit knight with an oversized helmet (red plume, shield, red cape). Adversary = grey, red-eyed ghost, hovering (bob + floor shadow). Every character mirrors left/right by its latest screen-x direction of travel (`right`/`up` = faces right, `left`/`down` = faces left), keeping the last facing when it didn't move.
   - `sprites.js`: `export function buildSprites()` -> `{ knight, ghost, chest }`, each `{ canvas, w, h, anchorX, anchorY }` (anchor at the feet / hover point, art drawn facing right). Optional `frames: [...]` of the same shape for idle animation.
+  - The chest may be absent (`treasure === null`) in a testbed arena; the renderer and minimap skip it.
 
 ## Deviations agreed during the v2 build
 
-- `game.knownFloor` is a running count of known floor cells. `game.litOutside` is a **Set** of lit cells beyond the map edge, so never JSON-clone a game, because that breaks `isKnown` near the edges.
-- Lit cells outside the map count as known `'#'` (rock), so neither `unexplored_by_direction` nor the "would reveal" counts give away where the map ends. `unexplored_by_direction` uses a fixed 12-cell window.
+- `game.knownFloor` is a running count of known floor cells. `game.litOutside` is a **Set** of lit cells beyond the map edge, so never JSON-clone or spread a game (use `game.twin`), because that breaks `isKnown` near the edges.
+- `unexplored_by_direction` uses a fixed 12-cell window.
 - Line of sight is supercover: a line passing exactly through a corner needs both side cells open, so you can't see through a diagonal gap between walls.
-- Memory adds `approach.interrupted: { id, approach, since_step, reason } | null`, which holds the approach parked during an escape. Escape interruptions never go into `tried`.
-- ExplorerTurn adds `policy: { from, to, reason } | null` for code-driven approach switches, separate from `review`.
-- `stepAdversaries` itself detects the explorer stepping onto an adversary. Patrol routes are cached in a WeakMap.
-- Findings eviction never drops the treasure-chest finding.
+- Memory adds `approach.interrupted: { id, approach, since_step, reason } | null`, which holds the approach parked during an encounter tactic. Tactic interruptions never go into `tried`.
+- `stepAdversaries` itself detects the explorer stepping onto an adversary (the touch check runs before anything moves). Patrol routes are cached on the `Adversary`.
 
 # v3: bigger rooms, and adversaries with their own Jev brains
 
-The **current values in the code take precedence** over numbers written earlier in this file. For example, `ADVERSARY_SPEED` is now 0.65, a deliberate edit by the user. Don't revert values you find in the code.
-
-## Ownership (v3)
-
-| Files | Owner |
-| --- | --- |
-| `src/dungeon.js`, `scripts/check-dungeon.mjs` | world agent |
-| `src/characters/adversary/*` (new: `brain.js`, `memory.js`, `perception.js`; changed: `adversary.js`), `src/turn.js`, `scripts/check-adversaries.mjs` | adversary-brain agent |
-| `server.js`, `public/*` | UI agent |
-
-The explorer files (`src/characters/explorer/*`) and `src/jev.js` stay unchanged. The adversary brain reuses `askJev`/`shuffle` from `src/jev.js`.
-
 ## Rooms
 
-Room width and height are each a random integer from 4 to 15, chosen independently. The room count per area drops to match. A 35×35 map must still fit at least 4 rooms, so the 35×35 case may allow overlap retries or fewer rooms. Every other generation guarantee stays as before, and adversary spawns stay feasible.
+Room width and height are each a random integer from 4 to 15, chosen independently. The room count per area drops to match. The minimum map must still fit at least 4 rooms, so generation may allow overlap retries or fewer rooms. Every other generation guarantee stays as before, and adversary spawns stay feasible.
 
 ## Adversary brains (fully agentic)
 
 Every adversary has its own Jev brain, and **the brain is on only while the adversary is hunting**:
-- **off (patrol):** the code wanders exactly as now, with no Jev calls.
+- **off (patrol):** the code wanders, with no Jev calls.
 - **on:** it switches on when `startsChase` fires (event `brain_on`). While on, every adversary step is a Jev Choice over its legal directions. Each tick the adversary is either in sight of the explorer (`mode: 'chase'`) or hunting from memory (`mode: 'search'`).
-- While searching, the brain also gets a `keep_hunting` Noul each step: "Is it still worth hunting the explorer?" If the answer is below 0.5, the brain switches off (event `brain_off`, reason recorded). The adversary stops chasing and goes back to code patrol. Code also switches it off after `MAX_SEARCH_TICKS` (12) without sight.
-- Movement keeps the speed budget, at most 1 step per tick. Only adversaries whose brain is on and that have a step this tick make a Jev call. Their calls for one tick are **made in parallel** from the state after the explorer's move, then applied in id order with a catch check after each step. Two adversaries may share a cell.
+- While searching, the brain also gets a `keep_hunting` Noul each step: "Is it still worth hunting the explorer?" If the answer is below 0.5 (`KEEP_HUNTING_MIN`), the brain switches off (event `brain_off`, reason recorded). The adversary stops chasing and goes back to code patrol. Code also switches it off after `MAX_SEARCH_TICKS` (18) without sight. Alerted ghosts count `ALERT_STEPS` (24) in path steps.
+- **Pack hunting.** When an adversary spots the explorer (`startsChase`), every patrolling adversary within `ALERT_STEPS` (24) path steps joins in `search` mode with `last_seen` at the explorer's cell (events `alerted` with `by`, then `brain_on`; only while `PACK_ALERT` is on, and alerted ghosts do not alert further). While hunting, an adversary also tracks the explorer through any hunting packmate's sight (team sight, `TEAM_SIGHT`), so it stays in `chase` mode and gets the explorer's position while a packmate sees it. In sight, each move option states how many of the explorer's reachable cells (within 12 steps) the move cuts off, and how many of those no other adversary covers.
+- Movement keeps the speed budget, at most 1 step per tick. Only adversaries whose brain is on and that have a step this tick make a Jev call. Their calls for one tick are **made in parallel** from the state after the explorer's move, then applied in id order with a touch check after each step. Two adversaries may share a cell, but never the living explorer's.
 - **Adversary fog of war:** adversaries know the real map (tiles, rooms, their own position and the other adversaries' positions). They know the explorer's position **only while `seesExplorer` is true**. Otherwise they know only `last_seen` (cell + ticks ago + the direction the explorer was heading when last seen). They never know the treasure location or what the explorer has explored.
-- **Per-adversary memory** keeps the explorer's shape: `{ objective, approach: { id, current, since_step, tried }, findings, progress: { ticks_hunting, ticks_since_seen, distance_trend }, latest_action }`. The objective is "Catch the explorer before it finds the treasure". There are 3 approaches: `direct_pursuit` (close the path distance), `cut_off` (head for the junction or corridor the explorer is most likely to pass through next, judged from its heading and the map), and `sweep_last_seen` (search outward from the last-seen cell). Code sets `direct_pursuit` while the explorer is in sight. When sight is lost, Jev picks between `cut_off` and `sweep_last_seen` with a Choice on the first search tick.
-- Move descriptions are plain language and come from real-map facts plus the adversary fog of war. They cover: path distance to the explorer (or to the last-seen cell or approach target) before → after, whether the move keeps or gains line of sight, whether it blocks a corridor or junction, and whether it catches the explorer.
-- Memories are kept on the server. All of them are written together to `dungeon-game/adversaries.json` each tick (no per-adversary md file needed). `view(game)` exposes them.
+- **Per-adversary memory** (`createMemory` in adversary/memory.js, validated by `validateMemory`): `{ id, objective, brain: { on, since_tick, last_reason }, approach: { id | null, current, since_step, tried[{ id, steps, reason }] }, tally: { sightings, lost_sight, hits, alerts_heard }, events[{ tick, text }], progress: { ticks_hunting, ticks_since_seen, distance_trend }, latest_action: null | { choice, confidence, forced, fallback } }`. `findings` is gone: `tally` (counters) and `events` (at most 5: first sighting, called for help, a hit, "Gave up: reason"; text ≤ 200, the tick never repeated in the text) describe the **current hunt** and are reset when the brain switches on. `approach.id` is `null` exactly while the brain is off, and `tried` holds only the outcomes of search approaches. `latest_action` has **no probabilities** (validation rejects the key); they sit in the private hunt state and `brainView` still returns them for the UI. The objective is "Catch the explorer before it finds the treasure". There are 3 approaches: `direct_pursuit` (close the path distance), `cut_off` (head for the junction or corridor the explorer is most likely to pass through next, judged from its heading and the map), and `sweep_last_seen` (search outward from the last-seen cell). Code sets `direct_pursuit` while the explorer is in sight. When sight is lost, Jev picks between `cut_off` and `sweep_last_seen` with a Choice on the first search tick. `noteHit(a, tick)` (adversary/brain.js) is called from `touchCheck` in adversary.js when the ghost hits the explorer: it bumps `tally.hits` and adds an event.
+- **Jev state (adversary)** (`jevState` in adversary/brain.js): `{ game, tick, self: { id, position, mode, approach, latest_action }, surroundings, explorer, last_seen, [approach_target, checked_cells_near_last_seen], team: [{ id, direction, path_steps, role }], recent: { tally, events, progress } }`. `explorer` holds a position, direction, `path_steps` and `heading` only while in sight (else `{ in_sight: false }`); `last_seen` is `{ cell, ticks_ago, heading, direction, path_steps } | null`; `approach_target` and `checked_cells_near_last_seen` appear only while searching; `team[].role` is `pursuing`, `searching` or `patrolling`.
+- Move descriptions are plain language and come from real-map facts plus the adversary fog of war: path distance to the explorer (or to the last-seen cell or approach target) before → after, whether the move keeps or gains line of sight, whether it blocks a corridor or junction, and whether it hits the explorer.
+- Memories live on each `Adversary` (`a.memory`) and are all written together to `dungeon-game/adversaries.json` each tick. `Run.view()` exposes them.
 
-## `view(game).adversaries[]` (v3)
+## `view().adversaries[]` (v3)
 
-`{ id, pos, mode, visible, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }`
+`{ id, pos, mode, visible, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs }] }`. The new event types are `brain_on` and `brain_off` (with `reason`), alongside the existing ones.
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs }] }`. The event types are `spotted`, `lost_sight`, `hit`, `caught`, `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 
-Read `AGENTS.md` first; it is the current guide and overrides older numbers here.
-
-## Ownership (v4)
-| Files | Owner |
-| --- | --- |
-| `src/characters/explorer/{brain,memory,perception}.js`, `scripts/check-dungeon.mjs` | explorer agent |
-| `public/{index.html,app.js,style.css}` (and `server.js` only if needed) | UI agent |
-Adversary files, `src/turn.js`, `src/dungeon.js`, `src/jev.js` stay unchanged.
+Read `AGENTS.md` first; it is the current guide.
 
 ## Behaviour
-- **Encounter decision replaces the reflex.** The code policy "visible chaser → escape" goes away. When an encounter starts (an adversary becomes visible, or a visible one switches patrol→chase), and when the current tactic stops being viable (e.g. its target is unreachable or the gap fell below the sentiment's minimum), the explorer runs a **decision step**: Jev picks a **tactic** (a new approach). Tactics (ids, each with a short first-person `thought`):
+- **Encounter decision replaces the reflex.** When an encounter starts (an adversary becomes visible, or a visible one switches patrol→chase), and when the current tactic stops being viable (e.g. its target is unreachable or the gap fell below the sentiment's minimum), the explorer runs a **decision step**: Jev picks a **tactic** (a new approach). Tactics (ids, each with a short first-person `thought`):
   - `slip_past` "I can slip past!": a known route past/around the adversary toward the frontier/chest that never comes closer than the sentiment's minimum gap, using the speed edge.
-  - `run_away` "Run away!": the old `escape`, renamed.
+  - `run_away` "Run away!": get away, keep escape routes open, avoid dead ends. The escape spot is sticky: kept until reached or no route keeps a gap of 2. A new one is picked among cells reachable at the mood's min gap (then 2, then any) at least 4 steps away, preferring the edge of the known map and corridor/junction cells beyond a room exit. It keeps its goal when the adversary is out of sight, then continues from the frozen chasing sighting, so it can have a target with no adversary visible. Known issue: in a closed room with a close ghost it can still shuttle corner to corner; the answer there is `slip_past` / `face_off`, which `run_away` doesn't decide.
   - `face_off` "Face off.": hold ground in open space, keep a safe gap, and dodge around it as it commits (2× speed), then continue.
   - `hide` "Duck out of sight.": reach a known cell outside the adversary's line of sight before it arrives (LOS over known tiles only).
   - `race_to_chest` "Go for the chest!": only when the chest is seen.
   - `carry_on` "It hasn't seen me, keep going.": only while every visible adversary is patrolling; keep exploring but avoid its sight.
-  Code computes each tactic's feasibility as plain-language facts from **known cells + visible adversaries only**: size/shape of the known space around the explorer (room W×H, corridor, junction, exits), adversary distance and bearing, speed (`ADVERSARY_SPEED`, read the constant), whether a slip-past route exists and its closest approach, the nearest hide cell and whether it is reached first, dead ends, and chest distance. Infeasible tactics are left out of the options.
-- **Sentiment.** Jev picks a sentiment **with every approach decision** (encounter tactics, exploration approach switches after reviews, chest spotted, chase over): `courageous`, `risk_averse`, `scared`, `calculated`, `aggressive`, `cautious` (the explorer agent may refine the list). Each sentiment has a code **profile** that directly changes behaviour, e.g. `min_gap` used by tactic feasibility and move descriptions, how many ticks without sight end an encounter, and a priority sentence injected into `next_move`. It is not just a label.
-- **Ordering and cost.** A decision step is one extra **sequential** request made just before the normal tick request: request 1 asks `sentiment` (Choice; it sees memory, situation and the encounter facts). Request 2 is the normal tick request with the chosen sentiment in memory, plus `tactic` (Choice), whose answer becomes the approach. `next_move` in that same request is asked speculatively per tactic, or the move follows the tactic's best move on the next tick. The explorer agent picks the cleaner option and documents it. Ordinary ticks make no extra call.
+  Code computes each tactic's feasibility as plain-language facts from **known cells + visible adversaries only**: size/shape of the known space around the explorer (room W×H, corridor, junction, exits), adversary distance and bearing, speed (`ADVERSARY_SPEED`), whether a slip-past route exists and its closest approach, the nearest hide cell and whether it is reached first, dead ends, and chest distance. Infeasible tactics are left out of the options.
+- **Sentiment.** Jev picks a sentiment **with every approach decision** (encounter tactics, exploration approach switches after reviews, chest spotted, chase over): `scared`, `risk_averse`, `cautious` (default), `curious` (its opposite: drawn to the unknown), `courageous`, `aggressive`. Each sentiment has a code **profile** (`SENTIMENTS`: `min_gap`, `end_ticks`, `priority`, `move_priority`) that directly changes behaviour: tactic feasibility and targets, the gap warning in move descriptions, how many ticks without sight end an encounter, and a priority sentence injected into `next_move`. It is not just a label.
+- **Ordering and cost.** A decision step is one extra **sequential** request made just before the normal tick request: request 1 asks `sentiment` (Choice; it sees the state and the encounter facts, and each option says which tactics its minimum gap leaves open here). Coinciding triggers share one sentiment call. Request 2 is the normal tick request with the chosen sentiment in memory, plus `tactic` (Choice), whose answer becomes the approach. `next_move` in that same request is asked speculatively per tactic (`move_if_<tactic>`), so the move on the decision tick already follows the chosen tactic. Ordinary ticks make no extra call.
 - **Never** log an encounter tactic as a failed approach in `approach.tried`. Keep the interrupt/resume mechanism.
 
 ## Shapes the UI relies on
 - `memory.approach.thought`: string ≤ 60 chars, first person, set for **every** approach, exploration ones too (e.g. `nearest_frontier` "Let's check the closest dark edge.").
-- `memory.sentiment = { id, since_step, profile_note }`, where `profile_note` is a short code-written description of what the sentiment changes. `memory.sentiment_history`: last 5 `[{ id, step }]`.
-- `turn.decision = null | { trigger: 'encounter'|'tactic_failed'|'chase_over'|'chest'|'review'|'start', sentiment: { choice, probabilities }, tactic: { choice, probabilities, options } | null, apiMs }`.
-- The bubble key for the explorer becomes `${approach.id}@${approach.since_step}`. Its text is `approach.thought`, with the sentiment shown as a tag.
+- `memory.sentiment = { id, since_step }` (the old `profile_note` is gone; the profile text comes from `SENTIMENTS`). `memory.sentiment_history`: last 5 `[{ id, step }]`. Also in memory for the pane: `events`, `encounters`, `landmarks`, `recent` (see the memory shape above).
+- `turn.decision = null | { trigger: 'encounter'|'tactic_failed'|'chase_over'|'chest'|'review'|'start', sentiment: { choice, probabilities }, tactic: { choice, probabilities, options } | null, apiMs }`. `turn.move_decision = { choice, probabilities, confidence, options } | null`.
+- The bubble key for the explorer is `${approach.id}@${approach.since_step}`. Its text is `approach.thought`, with the sentiment shown as a tag.
 
 # v4: props and wall decor
 
@@ -210,7 +320,7 @@ The **current values in the code take precedence** over numbers in this file. v3
 ```
 src/props/catalog.js        prop kinds, placement rules, weights (DOM-free, no imports)        -> props-world agent
 src/props/place.js          placeProps(dungeon, rand) -> { tiles, props, decor }              -> props-world agent
-src/dungeon.js              generateDungeon calls placeProps; publicView adds props, decor     -> props-world agent (only these two edits)
+src/dungeon.js              generateDungeon calls placeProps; Game.publicView adds props, decor -> props-world agent (only these two edits)
 scripts/check-props.mjs     placement checks over many seeds (no Jev, no DOM)                 -> props-world agent
 public/props/floor-art.js   FLOOR_ART: pixel art for the 7 floor props (DOM-free)              -> floor-art agent
 public/props/wall-art.js    WALL_ART: pixel art for the 4 wall decor kinds (DOM-free)          -> wall-art agent

@@ -1,19 +1,20 @@
-// The explorer's memory: the only state Jev sees between steps.
+// The explorer's memory: the persistent part of what Jev reads between steps. Jev's `state` is
+// built from this plus perception's per-tick facts (brain.js), never sent verbatim.
 //
-// memory.json is the source of truth (structured, validated, size-capped, and what
-// Jev reads; questions point at fields like `memory.approach.current`). memory.md is a
-// readable rendering of the same thing for people; nothing reads it back.
+// memory.json is the source of truth (structured, validated, size-capped); memory.md is a
+// readable rendering for people, nothing reads it back.
 //
-//   objective      - what the explorer is trying to do
-//   approach       - how it is currently exploring, plus approaches tried and dropped
-//                    (Jev reviews it every few steps)
-//   findings       - notable facts discovered on the way (e.g. the chest was spotted)
-//   progress       - counters the approach review is judged from
-//   latest_action  - Jev's last next_move answer, verbatim (or the forced move)
-//   danger         - safe or chased (since which step) and how many adversaries were seen
-//   sentiment      - the mood Jev picked at the latest approach decision ({ id, since_step,
-//                    profile_note }); its code profile changes behaviour (see brain.js)
+//   approach          - how it is currently exploring, plus approaches tried and dropped
+//                       (Jev reviews it every few steps)
+//   progress          - counters the approach review is judged from
+//   sentiment         - the mind Jev picked at the latest approach decision ({ id, since_step }); its code profile changes behaviour (see brain.js)
 //   sentiment_history - the last few picks, [{ id, step }]
+//   recent            - the last 6 moves and 8 positions (a ping-pong shows as back_and_forth)
+//   encounters        - counters: { count, escaped, hits, last_at_step }
+//   events            - up to 6 short milestones [{ step, text }] (chest seen, hit, switch, win)
+//   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the chest is
+//                       pinned, the oldest of the rest is evicted. Perception turns them into
+//                       relative direction/distance each tick.
 //
 // `approach.thought` is a short first-person line for the current approach (the UI's thought
 // bubble). An encounter tactic (slip_past, run_away, ...) is not a verdict on the approach it
@@ -24,40 +25,57 @@
 import { writeFile } from 'node:fs/promises';
 
 export const LIMITS = {
-  objective: 400, // characters
   approach: 240,
   triedApproaches: 5,
-  findings: 12, // oldest dropped first
-  fact: 200,
   thought: 60,
-  profileNote: 200,
   sentimentHistory: 5,
+  events: 6, // oldest dropped first
+  eventText: 200,
+  landmarks: 8, // the chest is never evicted
+  landmarkNote: 120,
+  recentMoves: 6,
+  recentCells: 8, // 6 moves plus the two positions before them, so every move can be judged
 };
+
+export const LANDMARK_KINDS = ['chest', 'dead_end_explored', 'hit_here', 'hiding_spot_used'];
 
 const WINDOW = 10; // revisits_last_10
 // The rolling window of revisit flags lives outside the memory object, so it never
 // reaches JSON.stringify (Jev's state, memory.json, the browser).
 const revisitWindows = new WeakMap();
 
-export function createMemory({ objective, approachId, approachText, thought, sentiment }) {
+export function createMemory({ approachId, approachText, thought, sentiment, start }) {
   const memory = {
-    objective: objective.slice(0, LIMITS.objective),
     approach: {
       id: approachId, current: approachText.slice(0, LIMITS.approach), thought: thought.slice(0, LIMITS.thought), since_step: 1, tried: [], interrupted: null,
     },
-    findings: [],
     progress: { steps: 0, known_floor_cells: 0, revealed_since_approach: 0, steps_since_approach: 0, revisits_last_10: 0 },
-    latest_action: null,
-    danger: { status: 'safe', since_step: 0, adversaries_seen: 0 },
-    sentiment: { id: sentiment.id, since_step: 0, profile_note: sentiment.profile_note.slice(0, LIMITS.profileNote) },
+    sentiment: { id: sentiment.id, since_step: 0 },
     sentiment_history: [],
+    recent: { moves: [], cells: [[...start]], back_and_forth: 0 },
+    encounters: { count: 0, escaped: 0, hits: 0, last_at_step: 0 },
+    events: [],
+    landmarks: [],
   };
   revisitWindows.set(memory, []);
   return memory;
 }
 
-// Called once per step, after the move was applied.
-export function recordStep(memory, { step, dir, revealed, revisit, known_floor_cells, decision, forced }) {
+// Moves in the recent window that returned to the cell two positions back (A -> B -> A). Standing
+// still never counts: the position must differ from the one just left.
+export function backAndForth(cells, moves) {
+  let n = 0;
+  for (let t = 0; t < moves; t++) {
+    const i = cells.length - 1 - t;
+    if (i < 2) break;
+    const here = cells[i], one = cells[i - 1], two = cells[i - 2];
+    if (here[0] === two[0] && here[1] === two[1] && (here[0] !== one[0] || here[1] !== one[1])) n++;
+  }
+  return n;
+}
+
+// Called once per step, after the move was applied. `pos` is where the explorer stands now.
+export function recordStep(memory, { step, dir, pos, revealed, revisit, known_floor_cells }) {
   const p = memory.progress;
   p.steps = step;
   p.known_floor_cells = known_floor_cells;
@@ -68,22 +86,38 @@ export function recordStep(memory, { step, dir, revealed, revisit, known_floor_c
   if (window.length > WINDOW) window.shift();
   revisitWindows.set(memory, window);
   p.revisits_last_10 = window.filter(Boolean).length;
-  memory.latest_action = forced || !decision
-    ? { choice: dir, confidence: null, probabilities: null, forced: true }
-    : { choice: decision.choice, confidence: decision.confidence, probabilities: decision.probabilities, forced: false };
+  const r = memory.recent;
+  r.moves = [...r.moves, dir].slice(-LIMITS.recentMoves);
+  r.cells = [...r.cells, [...pos]].slice(-LIMITS.recentCells);
+  r.back_and_forth = backAndForth(r.cells, LIMITS.recentMoves);
 }
 
-// Adds a fact unless it is already known, and keeps the newest LIMITS.findings.
-export function addFinding(memory, fact, step) {
-  const text = String(fact).trim().slice(0, LIMITS.fact);
-  if (!text) return;
-  if (memory.findings.some((f) => f.fact.toLowerCase() === text.toLowerCase())) return;
-  memory.findings.push({ fact: text, step });
-  // Evict the oldest finding, but never the chest one: repeated chase findings would otherwise push it out.
-  while (memory.findings.length > LIMITS.findings) {
-    const i = memory.findings.findIndex((f) => !/treasure chest/i.test(f.fact));
-    memory.findings.splice(i === -1 ? 0 : i, 1);
+// Appends a short milestone and keeps the newest LIMITS.events. The step is its own field: never
+// repeat it inside `text`.
+export function addEvent(memory, step, text) {
+  const t = String(text).trim().slice(0, LIMITS.eventText);
+  if (!t) return;
+  memory.events.push({ step, text: t });
+  memory.events = memory.events.slice(-LIMITS.events);
+}
+
+// encounters counters: 'count' (a new encounter began), 'escaped' (it ended unhurt) or 'hits'.
+export function countEncounter(memory, field, step) {
+  memory.encounters[field] += 1;
+  memory.encounters.last_at_step = step;
+}
+
+// Adds a located fact. One entry per kind + cell (a repeat refreshes its step and note and makes
+// it the newest). Over the limit the oldest non-chest landmark goes.
+export function addLandmark(memory, { kind, cell, step, note }) {
+  const text = String(note).trim().slice(0, LIMITS.landmarkNote);
+  const list = memory.landmarks.filter((l) => !(l.kind === kind && l.cell[0] === cell[0] && l.cell[1] === cell[1]));
+  list.push({ kind, cell: [...cell], step, note: text });
+  while (list.length > LIMITS.landmarks) {
+    const i = list.findIndex((l) => l.kind !== 'chest');
+    list.splice(i === -1 ? 0 : i, 1);
   }
+  memory.landmarks = list;
 }
 
 // Drops the current approach (with why) and starts a new one from the next step.
@@ -139,20 +173,14 @@ function startApproach(memory, id, text, thought, step) {
 
 // Records the sentiment picked at a decision step. since_step moves only when the mood changes;
 // every pick goes into the history.
-export function setSentiment(memory, { id, profile_note }, step) {
+export function setSentiment(memory, { id }, step) {
   const s = memory.sentiment;
   if (s.id !== id) {
     s.id = id;
     s.since_step = step;
   }
-  s.profile_note = String(profile_note).slice(0, LIMITS.profileNote);
   memory.sentiment_history.push({ id, step });
   memory.sentiment_history = memory.sentiment_history.slice(-LIMITS.sentimentHistory);
-}
-
-export function setDanger(memory, status, step) {
-  memory.danger.status = status;
-  memory.danger.since_step = step;
 }
 
 // A memory that breaks the schema is a bug: fail loudly.
@@ -162,8 +190,8 @@ export function validateMemory(m) {
   };
   const isStr = (v, max) => typeof v === 'string' && v.length <= max;
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const isCell = (c) => Array.isArray(c) && c.length === 2 && c.every(Number.isInteger);
   if (!m || typeof m !== 'object') fail('not an object');
-  if (!isStr(m.objective, LIMITS.objective)) fail('objective');
   const a = m.approach;
   if (!a || typeof a !== 'object') fail('approach');
   if (!isStr(a.id, 64)) fail('approach.id');
@@ -182,54 +210,59 @@ export function validateMemory(m) {
       fail('approach.interrupted');
     }
   }
-  if (!Array.isArray(m.findings) || m.findings.length > LIMITS.findings) fail('findings');
-  m.findings.forEach((f, i) => {
-    if (!f || !isStr(f.fact, LIMITS.fact) || !isNum(f.step)) fail(`findings[${i}]`);
-  });
   const p = m.progress;
   if (!p || typeof p !== 'object') fail('progress');
   for (const k of ['steps', 'known_floor_cells', 'revealed_since_approach', 'steps_since_approach', 'revisits_last_10']) {
     if (!isNum(p[k])) fail(`progress.${k}`);
   }
-  const l = m.latest_action;
-  if (l !== null) {
-    if (typeof l !== 'object' || typeof l.choice !== 'string' || typeof l.forced !== 'boolean') fail('latest_action');
-    if (l.confidence !== null && !isNum(l.confidence)) fail('latest_action.confidence');
-    if (l.probabilities !== null && typeof l.probabilities !== 'object') fail('latest_action.probabilities');
-  }
-  const d = m.danger;
-  if (!d || typeof d !== 'object') fail('danger');
-  if (d.status !== 'safe' && d.status !== 'chased') fail('danger.status');
-  if (!isNum(d.since_step)) fail('danger.since_step');
-  if (!Number.isInteger(d.adversaries_seen) || d.adversaries_seen < 0) fail('danger.adversaries_seen');
   const s = m.sentiment;
-  if (!s || typeof s !== 'object' || !isStr(s.id, 32) || !s.id || !isNum(s.since_step) || !isStr(s.profile_note, LIMITS.profileNote)) fail('sentiment');
+  if (!s || typeof s !== 'object' || !isStr(s.id, 32) || !s.id || !isNum(s.since_step)) fail('sentiment');
   if (!Array.isArray(m.sentiment_history) || m.sentiment_history.length > LIMITS.sentimentHistory) fail('sentiment_history');
   m.sentiment_history.forEach((h, i) => {
     if (!h || !isStr(h.id, 32) || !isNum(h.step)) fail(`sentiment_history[${i}]`);
+  });
+  const r = m.recent;
+  if (!r || typeof r !== 'object') fail('recent');
+  if (!Array.isArray(r.moves) || r.moves.length > LIMITS.recentMoves || r.moves.some((d) => !isStr(d, 16))) fail('recent.moves');
+  if (!Array.isArray(r.cells) || !r.cells.length || r.cells.length > LIMITS.recentCells || !r.cells.every(isCell)) fail('recent.cells');
+  if (!Number.isInteger(r.back_and_forth) || r.back_and_forth < 0 || r.back_and_forth > LIMITS.recentMoves) fail('recent.back_and_forth');
+  const e = m.encounters;
+  if (!e || typeof e !== 'object') fail('encounters');
+  for (const k of ['count', 'escaped', 'hits', 'last_at_step']) {
+    if (!Number.isInteger(e[k]) || e[k] < 0) fail(`encounters.${k}`);
+  }
+  if (!Array.isArray(m.events) || m.events.length > LIMITS.events) fail('events');
+  m.events.forEach((ev, i) => {
+    if (!ev || !isNum(ev.step) || !isStr(ev.text, LIMITS.eventText) || !ev.text) fail(`events[${i}]`);
+  });
+  if (!Array.isArray(m.landmarks) || m.landmarks.length > LIMITS.landmarks) fail('landmarks');
+  const seen = new Set();
+  m.landmarks.forEach((l, i) => {
+    if (!l || !LANDMARK_KINDS.includes(l.kind) || !isCell(l.cell) || !isNum(l.step) || !isStr(l.note, LIMITS.landmarkNote)) fail(`landmarks[${i}]`);
+    const id = `${l.kind}@${l.cell}`;
+    if (seen.has(id)) fail(`landmarks[${i}] duplicates ${id}`);
+    seen.add(id);
   });
   return m;
 }
 
 export function renderMarkdown(m) {
   const p = m.progress;
-  const lines = [`# Explorer memory`, '', `## Objective`, m.objective, '', `## Approach`, `**Now (since step ${m.approach.since_step}):** ${m.approach.current} _(${m.approach.id})_`, `> “${m.approach.thought}”`];
+  const lines = [`# Explorer memory`, '', `## Approach`, `**Now (since step ${m.approach.since_step}):** ${m.approach.current} _(${m.approach.id})_`, `> “${m.approach.thought}”`];
   const i = m.approach.interrupted;
   if (i) lines.push(`**Interrupted (resumes when the encounter is over):** ${i.approach} _(${i.id}, since step ${i.since_step}; ${i.reason})_`);
   for (const t of m.approach.tried) lines.push(`- ~~${t.approach}~~ _(steps ${t.steps}: ${t.reason})_`);
-  const d = m.danger;
-  lines.push(
-    '',
-    '## Danger',
-    d.status === 'chased' ? `**Chased** since step ${d.since_step}` : d.since_step ? `**Safe** since step ${d.since_step}` : '**Safe**',
-    `- Adversaries seen: ${d.adversaries_seen}`,
-  );
   const s = m.sentiment;
-  lines.push('', '## Sentiment', `**${s.id}**${s.since_step ? ` since step ${s.since_step}` : ' (default, not yet picked)'}: ${s.profile_note}`);
+  lines.push('', '## Mind', `**${s.id}**${s.since_step ? ` since step ${s.since_step}` : ' (default, not yet picked)'}`);
   if (m.sentiment_history.length) lines.push(`- Recent picks: ${m.sentiment_history.map((h) => `${h.id} (step ${h.step})`).join(', ')}`);
-  lines.push('', '## Findings');
-  if (!m.findings.length) lines.push('_None yet._');
-  for (const f of m.findings) lines.push(`- ${f.fact} — _step ${f.step}_`);
+  const e = m.encounters;
+  lines.push('', '## Encounters', `- ${e.count} met, ${e.escaped} escaped, ${e.hits} hit${e.hits === 1 ? '' : 's'}${e.last_at_step ? `, last at step ${e.last_at_step}` : ''}`);
+  lines.push('', '## Events');
+  if (!m.events.length) lines.push('_None yet._');
+  for (const ev of m.events) lines.push(`- ${ev.text} — _step ${ev.step}_`);
+  lines.push('', '## Landmarks');
+  if (!m.landmarks.length) lines.push('_None yet._');
+  for (const l of m.landmarks) lines.push(`- **${l.kind}** at ${l.cell.join(',')}: ${l.note} — _step ${l.step}_`);
   lines.push(
     '',
     '## Progress',
@@ -237,13 +270,8 @@ export function renderMarkdown(m) {
     `- Known floor cells: ${p.known_floor_cells}`,
     `- Since this approach: ${p.steps_since_approach} steps, ${p.revealed_since_approach} cells revealed`,
     `- Revisits in the last 10 steps: ${p.revisits_last_10}`,
-    '',
-    '## Latest action (Jev)',
+    `- Last moves: ${m.recent.moves.join(', ') || 'none'} (back and forth ${m.recent.back_and_forth}x)`,
   );
-  const l = m.latest_action;
-  if (!l) lines.push('_None yet._');
-  else if (l.forced) lines.push(`**${l.choice}** (forced: the only legal move)`);
-  else lines.push(`**${l.choice}** (confidence ${l.confidence?.toFixed?.(2)})`);
   return lines.join('\n') + '\n';
 }
 

@@ -1,7 +1,7 @@
 // Placement checks for props and wall decor (CONTRACT.md, v4), over a few hundred seeds.
 // Run from the dungeon-game directory: node scripts/check-props.mjs [seeds]
 
-import { generateDungeon, publicView, createGame, hasLineOfSight, MIN_SIZE, MAX_SIZE, SIGHT_RANGE } from '../src/dungeon.js';
+import { generateDungeon, Game, hasLineOfSight, MIN_SIZE, MAX_SIZE, SIGHT_RANGE } from '../src/dungeon.js';
 import { KINDS, SOLID_KINDS, SMALL_KINDS, BIG_DECOR_KINDS, TORCH_MAX, BIG_MIN_RUN, CLUSTER_SIZE_MIN, CLUSTER_SIZE_MAX, CLUSTER_MAX, SMALL_MAX, TREASURE_FRACTION } from '../src/props/catalog.js';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -56,7 +56,7 @@ for (let seed = 1; seed <= SEEDS; seed++) {
   for (const p of solids) restored[p.y][p.x] = '.';
   if (restored.map((r) => r.join('')).join('\n') !== bare.tiles.join('\n')) fail(`${id}: layout differs from a no-props generation`);
   if (JSON.stringify([d.start, d.treasure, d.rooms, d.width, d.height]) !== JSON.stringify([bare.start, bare.treasure, bare.rooms, bare.width, bare.height])) fail(`${id}: start/treasure/rooms differ from a no-props generation`);
-  const pv = publicView(createGame(d));
+  const pv = new Game(d).publicView();
   if (pv.props !== d.props || pv.decor !== d.decor) fail(`${id}: publicView does not pass props/decor through`);
 
   const base = bare.tiles; // original layout

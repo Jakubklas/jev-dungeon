@@ -5,18 +5,24 @@
 //   objective      - "Catch the explorer before it finds the treasure"
 //   brain          - on/off, since which tick, and why it last switched
 //   approach       - how it is hunting now (null id while the brain is off), plus approaches dropped
-//   findings       - notable facts (spotted the explorer, lost sight, gave up)
+//   tally          - counters for this hunt: sightings, lost_sight, hits, alerts_heard
+//   events         - at most 5 notable moments { tick, text } (first sighting, a hit, called for help,
+//                    gave up); the tick is never repeated inside the text
 //   progress       - ticks_hunting, ticks_since_seen, distance_trend
-//   latest_action  - Jev's last next_move answer, verbatim (or the forced/fallback move)
+//   latest_action  - Jev's last next_move answer: choice, confidence, forced, fallback (no
+//                    probabilities: the UI reads those from the private hunt state, see brain.js)
 //
 // All memories are written together to dungeon-game/adversaries.json each tick (turn.js).
 // FOG: nothing here may hold the explorer's position except as it was when seen.
 // Zero dependencies: hand-written validation.
 import { writeFile } from 'node:fs/promises';
 
-export const LIMITS = { objective: 200, approach: 240, triedApproaches: 5, findings: 10, fact: 200, reason: 200, trend: 160 };
+export const LIMITS = { objective: 200, approach: 240, triedApproaches: 5, events: 5, event: 200, reason: 200, trend: 160 };
 export const OBJECTIVE = 'Catch the explorer before it finds the treasure.';
 const OFF_TEXT = 'Brain off: patrolling the dungeon by code.';
+const SEARCH_IDS = ['cut_off', 'sweep_last_seen']; // the only approaches whose outcome goes into `tried`
+export const TALLY_KEYS = ['sightings', 'lost_sight', 'hits', 'alerts_heard'];
+const newTally = () => ({ sightings: 0, lost_sight: 0, hits: 0, alerts_heard: 0 });
 
 export function createMemory(id) {
   return {
@@ -24,25 +30,34 @@ export function createMemory(id) {
     objective: OBJECTIVE,
     brain: { on: false, since_tick: 0, last_reason: null },
     approach: { id: null, current: OFF_TEXT, since_step: 0, tried: [] },
-    findings: [],
+    tally: newTally(),
+    events: [],
     progress: { ticks_hunting: 0, ticks_since_seen: 0, distance_trend: 'not hunting' },
     latest_action: null,
   };
 }
 
-export function addFinding(memory, fact, tick) {
-  const text = String(fact).trim().slice(0, LIMITS.fact);
-  if (!text || memory.findings.some((f) => f.fact === text)) return;
-  memory.findings.push({ fact: text, tick });
-  while (memory.findings.length > LIMITS.findings) memory.findings.shift();
+// A notable moment (at most LIMITS.events kept, oldest dropped; an identical repeat is ignored).
+export function addEvent(memory, text, tick) {
+  const t = String(text).trim().slice(0, LIMITS.event);
+  if (!t || memory.events.at(-1)?.text === t) return;
+  memory.events.push({ tick, text: t });
+  while (memory.events.length > LIMITS.events) memory.events.shift();
 }
 
-// Drops the current approach (into `tried`, unless it was the brain-off placeholder) and starts `id`.
+export function count(memory, key) {
+  memory.tally[key] += 1;
+  return memory.tally[key];
+}
+
+// Drops the current approach and starts `id`. Only the outcome of a search approach is kept in
+// `tried` (when it is replaced by another search approach or by giving up), not the hops between
+// direct_pursuit and searching, and not an approach dropped the tick it was set.
 export function setApproach(memory, { id, text }, reason, tick) {
   const a = memory.approach;
   if (a.id === id) return;
-  if (a.id) {
-    a.tried.push({ id: a.id, approach: a.current, steps: `${a.since_step}–${tick}`, reason: String(reason).slice(0, LIMITS.approach) });
+  if (SEARCH_IDS.includes(a.id) && id !== 'direct_pursuit' && tick > a.since_step) {
+    a.tried.push({ id: a.id, steps: `${a.since_step}–${tick}`, reason: String(reason).slice(0, LIMITS.approach) });
     a.tried = a.tried.slice(-LIMITS.triedApproaches);
   }
   a.id = id;
@@ -52,6 +67,8 @@ export function setApproach(memory, { id, text }, reason, tick) {
 
 export function brainOn(memory, tick, reason) {
   memory.brain = { on: true, since_tick: tick, last_reason: String(reason).slice(0, LIMITS.reason) };
+  memory.tally = newTally(); // counters and events describe the current hunt
+  memory.events = [];
   memory.progress.ticks_hunting = 0;
   memory.progress.ticks_since_seen = 0;
 }
@@ -64,8 +81,8 @@ export function brainOff(memory, tick, reason) {
 
 export function recordAction(memory, { dir, decision, forced, fallback }) {
   memory.latest_action = decision
-    ? { choice: decision.choice, confidence: decision.confidence, probabilities: decision.probabilities, forced: false, fallback: false }
-    : { choice: dir, confidence: null, probabilities: null, forced: Boolean(forced), fallback: Boolean(fallback) };
+    ? { choice: decision.choice, confidence: decision.confidence, forced: false, fallback: false }
+    : { choice: dir, confidence: null, forced: Boolean(forced), fallback: Boolean(fallback) };
 }
 
 // A memory that breaks the schema is a bug: fail loudly.
@@ -88,11 +105,14 @@ export function validateMemory(m) {
   if (!isNum(a.since_step)) fail('approach.since_step');
   if (!Array.isArray(a.tried) || a.tried.length > LIMITS.triedApproaches) fail('approach.tried');
   a.tried.forEach((t, i) => {
-    if (!t || !isStr(t.id, 64) || !isStr(t.approach, LIMITS.approach) || typeof t.steps !== 'string' || !isStr(t.reason, LIMITS.approach)) fail(`approach.tried[${i}]`);
+    if (!t || !isStr(t.id, 64) || !SEARCH_IDS.includes(t.id) || typeof t.steps !== 'string' || !isStr(t.reason, LIMITS.approach)) fail(`approach.tried[${i}]`);
   });
-  if (!Array.isArray(m.findings) || m.findings.length > LIMITS.findings) fail('findings');
-  m.findings.forEach((f, i) => {
-    if (!f || !isStr(f.fact, LIMITS.fact) || !isNum(f.tick)) fail(`findings[${i}]`);
+  const ty = m.tally;
+  if (!ty || typeof ty !== 'object' || Object.keys(ty).join() !== TALLY_KEYS.join() || !TALLY_KEYS.every((k) => Number.isInteger(ty[k]) && ty[k] >= 0)) fail('tally');
+  if (!Array.isArray(m.events) || m.events.length > LIMITS.events) fail('events');
+  m.events.forEach((e, i) => {
+    if (!e || !isStr(e.text, LIMITS.event) || !isNum(e.tick) || Object.keys(e).length !== 2) fail(`events[${i}]`);
+    if (e.text.includes(`tick ${e.tick}`)) fail(`events[${i}] repeats its tick in the text`);
   });
   const p = m.progress;
   if (!p || !Number.isInteger(p.ticks_hunting) || !Number.isInteger(p.ticks_since_seen) || !isStr(p.distance_trend, LIMITS.trend)) fail('progress');
@@ -100,7 +120,7 @@ export function validateMemory(m) {
   if (l !== null) {
     if (typeof l !== 'object' || typeof l.choice !== 'string' || typeof l.forced !== 'boolean' || typeof l.fallback !== 'boolean') fail('latest_action');
     if (l.confidence !== null && !isNum(l.confidence)) fail('latest_action.confidence');
-    if (l.probabilities !== null && typeof l.probabilities !== 'object') fail('latest_action.probabilities');
+    if ('probabilities' in l) fail('latest_action.probabilities (kept in the hunt state, not in memory)');
   }
   return m;
 }

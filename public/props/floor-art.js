@@ -10,60 +10,60 @@
 // anchorX/anchorY = the pixel that lands on the cell centre (u=8, w=8, z=0).
 
 const WOOD = {
-  o: '#1c0f07', // outline
-  k: '#2a170b', // shelf interior / deep shadow
-  w: '#5a3418', // dark wood
-  W: '#8a5428', // wood
-  L: '#b8783a', // wood light
-  h: '#d49a55', // wood highlight
-  s: '#46566c', // iron shade
-  S: '#7d8fa5', // iron (blue-grey)
-  t: '#b4c4d6', // iron highlight
-  c: '#7a4a3a', // clay
-  C: '#a0674f', // clay light
-  d: '#4e2c22', // clay dark
-  b: '#26305a', // dark blue
-  B: '#3e4f8a', // blue
-  n: '#6f84c4', // blue highlight
-  a: '#b89a62', // sack light
-  A: '#8a7142', // sack
-  Z: '#5c4a2c', // sack shade
-  y: '#c9a24a', // grain
-  g: '#5f8a78', // glass bottle
-  G: '#8fbfa8', // glass highlight
+  o: '#1e0f05', // outline
+  k: '#2d1608', // shelf interior / deep shadow
+  w: '#603312', // dark wood
+  W: '#93531f', // wood
+  L: '#c4782e', // wood light
+  h: '#df9b4a', // wood highlight
+  s: '#3c5476', // iron shade
+  S: '#708eb2', // iron (blue-grey)
+  t: '#aec4dc', // iron highlight
+  c: '#844530', // clay
+  C: '#ad6242', // clay light
+  d: '#54291c', // clay dark
+  b: '#1f2c61', // dark blue
+  B: '#344994', // blue
+  n: '#657fce', // blue highlight
+  a: '#c49e56', // sack light
+  A: '#957437', // sack
+  Z: '#634c25', // sack shade
+  y: '#d5a73e', // grain
+  g: '#51987a', // glass bottle
+  G: '#85c9a8', // glass highlight
 };
 
 const BONE_PAL = {
-  o: '#1c1d24', // outline
-  e: '#ddd6ad', // bone
-  E: '#a9a17b', // bone shade
-  k: '#16161c', // eye socket
-  h: '#f1ecce', // bone highlight
+  o: '#181a28', // outline
+  e: '#e3daa7', // bone
+  E: '#b6a96e', // bone shade
+  k: '#13131f', // eye socket
+  h: '#f4eecb', // bone highlight
 };
 
 const STEEL_PAL = {
-  o: '#1b252d', // outline
-  D: '#4a5964', // dark steel
-  M: '#7f8c95', // mid steel
-  L: '#b3bec6', // light steel
-  W: '#eef3f6', // highlight
-  w: '#5a3418', // dark wood
-  H: '#8a5428', // wood
-  l: '#b8783a', // wood light
-  r: '#8a2a2a', // fletching dark
-  R: '#c4262c', // fletching
-  f: '#d9d2b4', // feather
+  o: '#172531', // outline
+  D: '#3f5b6f', // dark steel
+  M: '#6f8fa5', // mid steel
+  L: '#abbfce', // light steel
+  W: '#edf3f7', // highlight
+  w: '#603312', // dark wood
+  H: '#93531f', // wood
+  l: '#c4782e', // wood light
+  r: '#932121', // fletching dark
+  R: '#d11920', // fletching
+  f: '#dfd6ae', // feather
 };
 
 const POT_PAL = {
-  o: '#1c0f07', // outline
-  c: '#7a4a3a', // clay
-  C: '#a0674f', // clay light
-  d: '#4e2c22', // clay dark
-  b: '#26305a', // dark blue
-  B: '#3e4f8a', // blue
-  n: '#6f84c4', // blue highlight
-  v: '#171d38', // blue deep shade
+  o: '#1e0f05', // outline
+  c: '#844530', // clay
+  C: '#ad6242', // clay light
+  d: '#54291c', // clay dark
+  b: '#1f2c61', // dark blue
+  B: '#344994', // blue
+  n: '#657fce', // blue highlight
+  v: '#131a3c', // blue deep shade
 };
 
 // ------------------------------------------------------------------ painter

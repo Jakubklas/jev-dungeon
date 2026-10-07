@@ -8,10 +8,10 @@ const withRows = (base, rows) => base.map((r, i) => (i in rows ? rows[i] : r));
 
 // ---------------------------------------------------------------- torch 5x10
 const TORCH_PAL = {
-  o: '#1b1520', // outline
-  i: '#4a4350', // dark iron
-  I: '#7d7488', // iron highlight
-  R: '#d9501c', // flame edge (red-orange)
+  o: '#1b1223', // outline
+  i: '#4b395a', // dark iron
+  I: '#7b6399', // iron highlight
+  R: '#e74a0e', // flame edge (red-orange)
   O: '#ff9a2e', // flame orange
   y: '#ffe27a', // flame core
   w: '#fff6c8', // hot centre
@@ -37,16 +37,16 @@ const TORCH_FRAMES = [
 
 // ---------------------------------------------------------------- fireplace 14x17
 const FIRE_PAL = {
-  o: '#1b1520', // outline
-  S: '#9a90a6', // stone light
-  s: '#766d82', // stone
-  d: '#4d4558', // stone shade
-  k: '#150a0a', // firebox dark
-  b: '#3a1a12', // firebox brick, warm-lit
-  W: '#8a5428', // log
-  w: '#5a3418', // log dark
+  o: '#1b1223', // outline
+  S: '#9983b3', // stone light
+  s: '#745d92', // stone
+  d: '#4b3b62', // stone shade
+  k: '#170808', // firebox dark
+  b: '#3e180e', // firebox brick, warm-lit
+  W: '#93531f', // log
+  w: '#603312', // log dark
   c: '#ff5a1a', // coals
-  R: '#d9501c', // flame edge
+  R: '#e74a0e', // flame edge
   O: '#ff9a2e', // flame orange
   y: '#ffe27a', // flame core
   h: '#fff6c8', // hot centre
@@ -81,12 +81,12 @@ const FIRE_FRAMES = [
 
 // ---------------------------------------------------------------- arch 14x14
 const ARCH_PAL = {
-  o: '#1b1520', // outline
-  S: '#9a90a6', // stone light
-  s: '#766d82', // stone
-  d: '#4d4558', // stone shade
-  k: '#0b0710', // dark opening
-  K: '#171221', // opening edge shade
+  o: '#1b1223', // outline
+  S: '#9983b3', // stone light
+  s: '#745d92', // stone
+  d: '#4b3b62', // stone shade
+  k: '#0b0611', // dark opening
+  K: '#160f24', // opening edge shade
 };
 const ARCH = [
   '....oSSSSo....',
@@ -107,16 +107,16 @@ const ARCH = [
 
 // ---------------------------------------------------------------- gate 12x13
 const GATE_PAL = {
-  o: '#1b1520', // outline
-  S: '#9a90a6', // stone light
-  s: '#766d82', // stone
-  d: '#4d4558', // stone shade
-  i: '#3d3846', // iron bars
-  I: '#625b6e', // bar highlight
-  k: '#2a140c', // dark behind
+  o: '#1b1223', // outline
+  S: '#9983b3', // stone light
+  s: '#745d92', // stone
+  d: '#4b3b62', // stone shade
+  i: '#3b304e', // iron bars
+  I: '#5e4e7b', // bar highlight
+  k: '#2d1309', // dark behind
   O: '#ff9a2e', // warm light
   y: '#ffd266', // bright light
-  R: '#c4561c', // dim warm light
+  R: '#d1520f', // dim warm light
 };
 const GATE_A = [
   '...oSSSSo...',

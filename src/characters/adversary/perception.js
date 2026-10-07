@@ -1,13 +1,12 @@
 // What an adversary's brain is allowed to see, written as plain-language facts.
 // Code observes; Jev decides.
 //
-// ADVERSARY FOG OF WAR. Adversaries know the real map (tiles, rooms), their own position and the
-// other adversaries' positions. They know the explorer's position ONLY while seesExplorer is true.
+// ADVERSARY FOG OF WAR. Adversaries know the real map (tiles, rooms), their own position, the
+// other adversaries' positions and what each is doing (pursuing, searching or patrolling). They know the explorer's position ONLY while seesExplorer is true.
 // Out of sight they know `last_seen` only: the cell, how many ticks ago, and the heading frozen at
 // that moment (hunt.heading, never recomputed from game.trail). Everything below that reads
 // game.pos is guarded by `hunt.inSight`, which brain.js sets from seesExplorer for this tick.
-// Never read here: the treasure, the explorer's light/visits/trail, other adversaries' modes or
-// sightings.
+// Never read here: the treasure, the explorer's light/visits/trail, other adversaries' sightings.
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor } from '../../dungeon.js';
 
 export const APPROACHES = {
@@ -131,9 +130,23 @@ function trend(before, after, what) {
   return `Path distance to ${what} ${before} → ${after}.`;
 }
 
+const COVER_RADIUS = 12; // explorer path steps around it that "coverage" looks at
+
+// Cells the explorer can reach within COVER_RADIUS steps where `ghost` (at `at`) would be waiting:
+// it gets there no later than the explorer does (1/speed ticks per step against 1). Returns a Set.
+function coveredCells(dungeon, at, explorerDist, speed) {
+  const mine = floorDistances(dungeon, at);
+  const out = new Set();
+  for (const [k, e] of explorerDist) {
+    const m = mine.get(k);
+    if (e <= COVER_RADIUS && m !== undefined && m / speed <= e) out.add(k);
+  }
+  return out;
+}
+
 // Plain-language facts about each legal move, for Jev to judge. `approachIds` are the approaches
 // to judge against: the current one, or both search approaches on the step that picks one.
-export function describeMoves(game, a, hunt, approachIds) {
+export function describeMoves(game, a, hunt, approachIds, speed = 0.6) {
   const d = game.dungeon;
   const here = a.pos;
   const fromMe = floorDistances(d, here);
@@ -146,6 +159,17 @@ export function describeMoves(game, a, hunt, approachIds) {
     .map((x) => ({ ...x, dist: floorDistances(d, x.t.cell) }));
   const unchecked = (c) => cellsInView(d, c).filter((v) => !hunt.swept.has(key(v))).length;
   const out = {};
+  // In sight: which of the explorer's reachable cells the other adversaries already cover, so a
+  // move can be judged by the escape routes it newly cuts (a pincer) rather than by distance alone.
+  let reach = null, others = null;
+  if (hunt.inSight) {
+    reach = new Map([...floorDistances(d, game.pos)].filter(([, e]) => e <= COVER_RADIUS));
+    others = new Set();
+    for (const o of game.adversaries ?? []) {
+      if (o.id === a.id) continue;
+      for (const k of coveredCells(d, o.pos, reach, speed)) others.add(k);
+    }
+  }
 
   for (const dir of adversaryMoves(d, here)) {
     const dest = stepCell(here, dir);
@@ -158,6 +182,9 @@ export function describeMoves(game, a, hunt, approachIds) {
       facts.push(trend(toExplorer.get(key(here)), toExplorer.get(key(dest)), 'the explorer'));
       const sees = euclid(dest, game.pos) <= SIGHT_RANGE && hasLineOfSight(d, dest, game.pos);
       facts.push(sees ? 'Keeps the explorer in sight.' : 'Loses sight of the explorer.');
+      const cover = coveredCells(d, dest, reach, speed);
+      const fresh = [...cover].filter((k) => !others.has(k)).length;
+      facts.push(`Cuts off ${cover.size} of the ${reach.size} cells the explorer can reach within ${COVER_RADIUS} steps (you get there first), ${fresh} of them not already covered by other adversaries.`);
     } else {
       if (toSeen) facts.push(trend(toSeen.get(key(here)), toSeen.get(key(dest)), 'the last-seen cell'));
       for (const { id, t, dist } of targets) {
@@ -178,15 +205,49 @@ export function describeMoves(game, a, hunt, approachIds) {
   return out;
 }
 
-// The situation Jev reads. In search mode nothing here depends on game.pos.
-export function situation(game, a, hunt, tick) {
+const NEAR_DEAD_END = 5; // path steps that dead_ends_within_5 looks at
+
+// The place around the adversary, from the real map (adversaries know it): what its cell is, how many
+// ways lead out, the nearest doorway or junction and how many dead ends lie within a few steps.
+export function surroundings(dungeon, pos, fromMe = floorDistances(dungeon, pos)) {
+  const here = cellKind(dungeon, pos);
+  let near = null, deadEnds = 0;
+  for (const [k, steps] of fromMe) {
+    if (steps === 0 || steps > CUT_MAX) continue;
+    const c = k.split(',').map(Number);
+    const kind = cellKind(dungeon, c).kind;
+    if (kind === 'dead end' && steps <= NEAR_DEAD_END) deadEnds++;
+    if ((kind === 'doorway' || kind === 'junction') && (!near || steps < near.steps)) near = { cell: c, steps, kind };
+  }
+  return {
+    here: here.kind,
+    exits: here.exits,
+    nearest_junction_or_doorway: near && { direction: compass8(pos, near.cell), path_steps: near.steps },
+    dead_ends_within_5: deadEnds,
+  };
+}
+
+// The other adversaries. Their role is shared on purpose (the pack already calls for help); their
+// sightings and the explorer's position are not.
+export function team(game, a, fromMe) {
+  return (game.adversaries ?? [])
+    .filter((o) => o.id !== a.id)
+    .map((o) => ({
+      id: o.id,
+      direction: compass8(a.pos, o.pos),
+      path_steps: fromMe.get(key(o.pos)) ?? null,
+      role: o.hunt.on ? (o.hunt.inSight ? 'pursuing' : 'searching') : 'patrolling',
+    }));
+}
+
+// The facts Jev reads that come from the map (brain.js adds the memory part). In search mode nothing
+// here depends on game.pos.
+export function situation(game, a, hunt) {
   const d = game.dungeon;
   const fromMe = floorDistances(d, a.pos);
-  const k = cellKind(d, a.pos);
   const s = {
-    tick,
-    you: { id: a.id, position: [...a.pos], here: k.kind, exits: k.exits },
-    map: { width: d.width, height: d.height, rooms: (d.rooms ?? []).length },
+    position: [...a.pos],
+    surroundings: surroundings(d, a.pos, fromMe),
     explorer: hunt.inSight
       ? {
           in_sight: true,
@@ -205,10 +266,7 @@ export function situation(game, a, hunt, tick) {
           path_steps: fromMe.get(key(a.lastSeen)) ?? null,
         }
       : null,
-    // Positions only: another adversary's mode or sightings would leak what it knows.
-    other_adversaries: (game.adversaries ?? [])
-      .filter((o) => o.id !== a.id)
-      .map((o) => ({ id: o.id, position: [...o.pos], path_steps: fromMe.get(key(o.pos)) ?? null })),
+    team: team(game, a, fromMe),
   };
   const t = approachTarget(game, a, hunt, hunt.memory.approach.id, fromMe);
   if (!hunt.inSight) {

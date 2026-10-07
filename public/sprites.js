@@ -4,36 +4,36 @@
 // All art faces RIGHT; the renderer mirrors around anchorX.
 
 const KNIGHT_PAL = {
-  o: '#1b252d', // dark slate outline
-  k: '#0a0e12', // visor slit
-  D: '#4a5964', // dark steel
-  M: '#7f8c95', // mid steel
-  L: '#b3bec6', // light steel
-  W: '#eef3f6', // highlight
-  r: '#6e1216', // dark red (cape shade)
-  R: '#c4262c', // red (plume, cape, belt)
+  o: '#172531', // dark slate outline
+  k: '#080e14', // visor slit
+  D: '#3f5b6f', // dark steel
+  M: '#6f8fa5', // mid steel
+  L: '#abbfce', // light steel
+  W: '#edf3f7', // highlight
+  r: '#750b0f', // dark red (cape shade)
+  R: '#d11920', // red (plume, cape, belt)
 };
 
 const GHOST_PAL = {
-  o: '#1c1d24', // outline
-  d: '#4c4e57', // dark cloth
-  g: '#787a83', // cloth
-  l: '#a6a8b0', // light cloth
-  h: '#d0d2d8', // hood highlight
-  b: '#ddd6ad', // bone
-  B: '#a9a17b', // bone shade
-  k: '#16161c', // eye socket
+  o: '#181a28', // outline
+  d: '#414762', // dark cloth
+  g: '#666f95', // cloth
+  l: '#9aa1bc', // light cloth
+  h: '#cacfde', // hood highlight
+  b: '#e3daa7', // bone
+  B: '#b6a96e', // bone shade
+  k: '#13131f', // eye socket
   e: '#ff3b30', // glowing red eye
 };
 
 const CHEST_PAL = {
-  o: '#1c0f07', // outline
-  w: '#5a3418', // dark wood
-  W: '#8a5428', // wood
-  L: '#b8783a', // lid highlight
-  y: '#f0c03a', // gold
-  Y: '#a87a1c', // dark gold
-  k: '#140a04', // keyhole
+  o: '#1e0f05', // outline
+  w: '#603312', // dark wood
+  W: '#93531f', // wood
+  L: '#c4782e', // lid highlight
+  y: '#fec62c', // gold
+  Y: '#b37e11', // dark gold
+  k: '#150a03', // keyhole
 };
 
 // ---------------------------------------------------------------- knight 18x24

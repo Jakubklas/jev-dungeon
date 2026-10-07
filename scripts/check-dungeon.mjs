@@ -4,20 +4,25 @@
 //              and times perception per tick on a 150x150 map.
 
 import {
-  generateDungeon, createGame, legalMoves, availableMoves, STAY, applyMove, isKnown, rng, hasLineOfSight, floorDistances,
-  publicView, DIRS, damageExplorer, EXPLORER_LIVES, SIGHT_RANGE, MIN_SIZE, MAX_SIZE,
+  generateDungeon, Game, STAY, rng, hasLineOfSight, floorDistances,
+  DIRS, EXPLORER_LIVES, SIGHT_RANGE, MIN_SIZE, MAX_SIZE,
 } from '../src/dungeon.js';
 import {
   APPROACHES, TACTICS, isTactic, situation, describeMoves, approachTarget, availableApproaches, treasureSeen,
-  tacticFeasibility, tacticOptions, knownLineOfSight,
+  tacticFeasibility, tacticOptions, avoidZone,
 } from '../src/characters/explorer/perception.js';
-import { SENTIMENTS, newRun, takeTurn, setAsker, setMemoryDir } from '../src/characters/explorer/brain.js';
-import { validateMemory } from '../src/characters/explorer/memory.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
+import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
+import { KnownWorld } from '../src/characters/explorer/known-world.js';
+import { LIMITS, addEvent, addLandmark, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { visibleAdversaries, spawnAdversaries } from '../src/characters/adversary/adversary.js';
+import { Adversary, visibleAdversaries, spawnAdversaries } from '../src/characters/adversary/adversary.js';
+
+// Tripwire: the brain checks inject stubs; a missed one would call the paid Jev API.
+globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 const MEASURE = process.argv.includes('--measure');
 let failures = 0;
@@ -29,6 +34,48 @@ const euclid = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const inRoom = (d, [x, y]) => d.rooms.some((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
 // Sight exactly as the contract defines it (independent of adversary.js).
 const sees = (dungeon, a, b) => euclid(a, b) <= SIGHT_RANGE && hasLineOfSight(dungeon, a, b);
+
+// 0. Static fog guard: explorer code reads the game only through KnownWorld (known-world.js is the
+//    one file allowed to hold a Game). Catches `game.x`, `game[...]`, `.dungeon` and imports of
+//    anything beyond the allowlist, so a hidden-state read cannot slip in unnoticed.
+const ALLOWED_IMPORTS = {
+  './perception.js': null, './memory.js': null, './encounter.js': null, './known-map.js': null,
+  '../../jev.js': null, 'node:fs/promises': null,
+  // SIGHT_RANGE is a constant, not hidden state: brain.js uses it to expire a remembered sighting once
+  // the explorer stands within sight range of the frozen cell with a known line of sight to it.
+  '../../dungeon.js': ['DIRS', 'LIGHT_RADIUS', 'STAY', 'EXPLORER_LIVES', 'SIGHT_RANGE'],
+  '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
+};
+function fogViolations(name, source) {
+  const out = [];
+  const code = source.replace(/(^|[^:'"\\])\/\/.*$/gm, '$1'); // line comments may talk about the game
+  if (/\bgame\s*\??\.[A-Za-z_$#]/.test(code)) out.push(`${name}: reads a game property`);
+  if (/\bgame\s*\[/.test(code)) out.push(`${name}: indexes a game`);
+  if (/\.dungeon\b/.test(code)) out.push(`${name}: reads .dungeon`);
+  if (/\bimport\s*\(/.test(code)) out.push(`${name}: dynamic import`);
+  if (/\bimport\s*\*/.test(code)) out.push(`${name}: namespace import`);
+  // Re-exports count too: `export { x } from` would hand a hidden-state helper to explorer code.
+  for (const m of code.matchAll(/\b(?:import|export)\s+([^'"]*?)\s+from\s+['"]([^'"]+)['"]/g)) {
+    const [, names, spec] = m;
+    if (!(spec in ALLOWED_IMPORTS)) { out.push(`${name}: imports ${spec}`); continue; }
+    const allowed = ALLOWED_IMPORTS[spec];
+    if (allowed) {
+      const wanted = names.replace(/[{}]/g, '').split(',').map((n) => n.trim()).filter(Boolean);
+      for (const n of wanted) if (!allowed.includes(n)) out.push(`${name}: imports ${n} from ${spec}`);
+    }
+  }
+  return out;
+}
+{
+  const self = fogViolations('synthetic', "const t = game.dungeon.tiles;\nimport { isFloor } from '../../dungeon.js';");
+  if (self.length < 2) fail(`fog guard self-test found ${self.length} violations in a bad snippet`);
+  const reexport = fogViolations('synthetic', 'export { isFloor } from "../../dungeon.js";');
+  if (reexport.length < 1) fail('fog guard self-test missed a re-export of a hidden-state helper');
+  const dirUrl = new URL('../src/characters/explorer/', import.meta.url);
+  const files = readdirSync(dirUrl).filter((f) => f.endsWith('.js') && f !== 'known-world.js');
+  if (!files.includes('brain.js') || !files.includes('perception.js')) fail('fog guard: explorer files not found');
+  for (const f of files) for (const v of fogViolations(f, readFileSync(new URL(f, dirUrl), 'utf8'))) fail(`static fog guard: ${v}`);
+}
 
 // 1. Generation: ~200 seeds.
 const SEEDS = 200;
@@ -127,17 +174,17 @@ const MODES = ['patrol', 'chase', 'search'];
 // Encounter facts and tactic options are checked for the two extreme minimum gaps
 // (aggressive and scared), so sentiment-dependent output is covered too.
 const GAPS = [...new Set([SENTIMENTS.aggressive.min_gap, SENTIMENTS.scared.min_gap])];
-function perceive(game) {
-  const out = { seen: treasureSeen(game), available: availableApproaches(game), situation: situation(game) };
+function perceive(world) {
+  const out = { seen: treasureSeen(world), available: availableApproaches(world), situation: situation(world) };
   for (const id of Object.keys(APPROACHES)) {
     if (isTactic(id)) continue;
-    out[id] = { target: approachTarget(game, id), moves: describeMoves(game, id) };
+    out[id] = { target: approachTarget(world, id), moves: describeMoves(world, id) };
   }
   out.tactics = {};
-  const inSight = out.situation.threats.length > 0;
+  const inSight = out.situation.threats.visible.length > 0;
   for (const minGap of inSight ? GAPS : [GAPS[0]]) {
-    const t = { feasible: tacticFeasibility(game, minGap), options: tacticOptions(game, minGap) };
-    for (const id of TACTICS) t[id] = { target: approachTarget(game, id, { minGap }), moves: describeMoves(game, id, { minGap }) };
+    const t = { feasible: tacticFeasibility(world, minGap), options: tacticOptions(world, minGap) };
+    for (const id of TACTICS) t[id] = { target: approachTarget(world, id, { minGap }), moves: describeMoves(world, id, { minGap }) };
     out.tactics[minGap] = t;
   }
   return out;
@@ -174,8 +221,8 @@ function placeAdversaries(game, rand) {
     const c = [game.pos[0] + Math.floor(rand() * 15) - 7, game.pos[1] + Math.floor(rand() * 15) - 7];
     if (floor(c) && c.join() !== game.pos.join() && sees(d, game.pos, c)) { list.push(c); got++; }
   }
-  game.adversaries = list.map((pos, i) => ({
-    id: `a${i + 1}`, pos, mode: MODES[Math.floor(rand() * 3)], budget: 0, lastSeen: null, goal: null,
+  game.adversaries = list.map((pos, i) => new Adversary({
+    id: `a${i + 1}`, pos, mode: MODES[Math.floor(rand() * 3)],
   }));
 }
 
@@ -196,8 +243,8 @@ function twin(game, rand, pad) {
     const row = [], lrow = [];
     for (let x = 0; x < W; x++) {
       const inside = x < d.width && y < d.height;
-      if (inside && isKnown(game, [x, y])) { row.push(d.tiles[y][x]); lrow.push(game.light[y][x]); continue; }
-      if (!inside && isKnown(game, [x, y])) { row.push('#'); lrow.push(0.5); continue; } // lit rock past the edge
+      if (inside && game.isKnown([x, y])) { row.push(d.tiles[y][x]); lrow.push(game.light[y][x]); continue; }
+      if (!inside && game.isKnown([x, y])) { row.push('#'); lrow.push(0.5); continue; } // lit rock past the edge
       lrow.push(0);
       if (inside && frozen.has(`${x},${y}`)) { row.push(d.tiles[y][x]); continue; }
       unknown.push([x, y]);
@@ -207,7 +254,7 @@ function twin(game, rand, pad) {
     light.push(lrow);
   }
   let treasure = d.treasure;
-  if (!isKnown(game, treasure) && unknown.length > 1) {
+  if (!game.isKnown(treasure) && unknown.length > 1) {
     do treasure = unknown[Math.floor(rand() * unknown.length)];
     while (treasure.join() === d.treasure.join());
     tiles[treasure[1]][treasure[0]] = '.';
@@ -221,16 +268,16 @@ function twin(game, rand, pad) {
   const floorCells = [];
   dungeon.tiles.forEach((r, y) => [...r].forEach((c, x) => c === '.' && floorCells.push([x, y])));
   const adversaries = game.adversaries.map((a) => {
-    if (visible.includes(a)) return { ...a, pos: [...a.pos] };
+    if (visible.includes(a)) return new Adversary({ ...a, pos: [...a.pos] });
     let pos;
     do pos = floorCells[Math.floor(rand() * floorCells.length)];
     while (pos.join() === game.pos.join() || sees(dungeon, game.pos, pos));
-    return { ...a, pos: [...pos], mode: MODES[Math.floor(rand() * 3)] };
+    return new Adversary({ ...a, pos: [...pos], mode: MODES[Math.floor(rand() * 3)] });
   });
-  const copy = {
-    ...game, dungeon, light, litOutside, adversaries,
+  const copy = game.twin({
+    dungeon, light, litOutside, adversaries,
     floorCount: Math.floor(rand() * 1e5),
-  };
+  });
   // Sanity of the twin itself: same adversaries visible.
   const v1 = JSON.stringify(visibleAdversaries(game)), v2 = JSON.stringify(visibleAdversaries(copy));
   if (v1 !== v2) fail(`twin changed the visible adversaries: ${v1} vs ${v2}`);
@@ -253,7 +300,7 @@ const mentionsChest = /treasure|chest/i;
 let walks = 0, unseenSteps = 0, twinChecks = 0, padded = 0, withVisible = 0, withChaser = 0, visMismatch = 0;
 const tacticSeen = new Map(); // tactic id -> times offered in the twin walks
 for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
-  const game = createGame(generateDungeon(seed));
+  const game = new Game(generateDungeon(seed));
   const rand = rng(seed * 7919);
   const [tx, ty] = game.dungeon.treasure;
   const coord = new RegExp(`(^|[^\\d])${tx}\\s*,\\s*${ty}([^\\d]|$)`);
@@ -263,7 +310,7 @@ for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
     const mine = game.adversaries.filter((a) => sees(game.dungeon, game.pos, a.pos)).map((a) => a.id).join();
     const vis = visibleAdversaries(game);
     if (vis.map((a) => a.id).join() !== mine) visMismatch++;
-    const seen = perceive(game);
+    const seen = perceive(new KnownWorld(game));
     if (vis.length) withVisible++;
     for (const t of Object.values(seen.tactics)) for (const id of Object.keys(t.options)) tacticSeen.set(id, (tacticSeen.get(id) ?? 0) + 1);
     if (vis.some((a) => a.mode === 'chase')) withChaser++;
@@ -271,17 +318,19 @@ for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
       const ids = Object.keys(t.options);
       if (vis.length ? !ids.includes('run_away') : ids.length) fail(`seed ${seed} gap ${g}: tactic options ${ids} with ${vis.length} in sight`);
       if (ids.includes('carry_on') && vis.some((a) => a.mode === 'chase')) fail(`seed ${seed}: carry_on offered while chased`);
-      if (ids.includes('race_to_chest') && !treasureSeen(game)) fail(`seed ${seed}: race_to_chest offered before the chest is seen`);
+      if (ids.includes('race_to_chest') && !treasureSeen(new KnownWorld(game))) fail(`seed ${seed}: race_to_chest offered before the chest is seen`);
       if (ids.some((id) => !isTactic(id))) fail(`seed ${seed}: non-tactic option ${ids}`);
     }
     if (seen.available.some((id) => isTactic(id))) fail(`seed ${seed}: tactic in availableApproaches`);
-    if (!!seen.situation.encounter !== vis.length > 0) fail(`seed ${seed}: situation.encounter ${!!seen.situation.encounter} with ${vis.length} in sight`);
-    if (seen.situation.threats.length !== vis.length) fail(`seed ${seed}: threats count ${seen.situation.threats.length} vs ${vis.length}`);
-    if (!treasureSeen(game)) {
+    if (!!seen.situation.threats.encounter !== vis.length > 0) fail(`seed ${seed}: threats.encounter ${!!seen.situation.threats.encounter} with ${vis.length} in sight`);
+    if (seen.situation.threats.visible.length !== vis.length) fail(`seed ${seed}: threats count ${seen.situation.threats.visible.length} vs ${vis.length}`);
+    if (seen.situation.threats.remembered.length) fail(`seed ${seed}: situation alone reports remembered threats`);
+    if (!treasureSeen(new KnownWorld(game))) {
       unseenSteps++;
       if (seen.available.includes('go_to_treasure')) fail(`seed ${seed} step ${game.steps}: go_to_treasure offered early`);
-      if (seen.situation.treasure !== 'not seen yet') fail(`seed ${seed}: situation.treasure = ${seen.situation.treasure}`);
-      const { treasure, ...rest } = seen.situation;
+      if (seen.situation.surroundings.chest !== 'not seen yet') fail(`seed ${seed}: surroundings.chest = ${seen.situation.surroundings.chest}`);
+      const { chest: _chest, ...surroundings } = seen.situation.surroundings;
+      const rest = { ...seen.situation, surroundings };
       // The tactic id race_to_chest is a key, not text sent while unseen (it is never offered then).
       const texts = [JSON.stringify(rest), JSON.stringify(seen.tactics).replace(/race_to_chest/g, 'race_tactic')];
       for (const id of Object.keys(APPROACHES)) if (!isTactic(id)) texts.push(JSON.stringify(seen[id]));
@@ -294,14 +343,14 @@ for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
       twinChecks++;
       const pad = k === 1;
       if (pad) padded++;
-      const other = JSON.stringify(perceive(twin(game, rand, pad)));
+      const other = JSON.stringify(perceive(new KnownWorld(twin(game, rand, pad))));
       if (other !== JSON.stringify(seen)) {
         fail(`seed ${seed} step ${game.steps}: output depends on hidden state${pad ? " (padded map)" : ""}: ${firstDiff(seen, JSON.parse(other))}`);
       }
     }
     game.adversaries = [];
-    const moves = legalMoves(game);
-    applyMove(game, moves[Math.floor(rand() * moves.length)]);
+    const moves = game.legalMoves();
+    game.applyMove(moves[Math.floor(rand() * moves.length)]);
   }
 }
 if (visMismatch) fail(`visibleAdversaries disagrees with SIGHT_RANGE + hasLineOfSight on ${visMismatch} steps`);
@@ -313,23 +362,23 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 
 // 3b. STAY is a first-class option: offered, described, and leaves the position unchanged.
 {
-  const g = createGame(generateDungeon(7));
+  const g = new Game(generateDungeon(7));
   const pos = [...g.pos], steps = g.steps, trail = g.trail.length;
-  if (!availableMoves(g).includes(STAY) || legalMoves(g).includes(STAY)) fail('availableMoves must add stay to legalMoves');
-  if (!(STAY in describeMoves(g, Object.keys(APPROACHES)[0]))) fail('describeMoves lacks stay');
-  const r = applyMove(g, STAY);
+  if (!g.availableMoves().includes(STAY) || g.legalMoves().includes(STAY)) fail('availableMoves must add stay to legalMoves');
+  if (!(STAY in describeMoves(new KnownWorld(g), Object.keys(APPROACHES)[0]))) fail('describeMoves lacks stay');
+  const r = g.applyMove(STAY);
   if (!r.stayed || r.moved || r.revealed !== 0 || g.pos.join() !== pos.join() || g.steps !== steps + 1 || g.trail.length !== trail) fail('stay changed position or did not tick');
 }
 
 // 4. Won/lost games are frozen; publicView shape.
 {
-  const g = createGame(generateDungeon(5));
+  const g = new Game(generateDungeon(5));
   g.lost = true; g.caughtBy = 'a1';
   const before = JSON.stringify(g.pos);
-  if (legalMoves(g).length) fail('legalMoves not empty once lost');
-  if (applyMove(g, 'stay').stayed || g.steps !== 0) fail('stay acted after loss');
-  if (applyMove(g, 'up').moved || applyMove(g, 'down').moved || JSON.stringify(g.pos) !== before) fail('applyMove moved after loss');
-  const v = publicView(g);
+  if (g.legalMoves().length) fail('legalMoves not empty once lost');
+  if (g.applyMove('stay').stayed || g.steps !== 0) fail('stay acted after loss');
+  if (g.applyMove('up').moved || g.applyMove('down').moved || JSON.stringify(g.pos) !== before) fail('applyMove moved after loss');
+  const v = g.publicView();
   if (v.lost !== true) fail('publicView.lost missing');
   if (v.light.flat().some((b) => Math.round(b * 100) / 100 !== b)) fail('publicView.light not rounded to 2 decimals');
   if (!Array.isArray(g.adversaries) || g.caughtBy !== 'a1') fail('Game shape');
@@ -350,33 +399,33 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
     '###########',
   ];
   const d = { seed: 0, width: 11, height: 9, tiles, start: [2, 5], treasure: [9, 7], rooms: [{ x: 1, y: 1, w: 3, h: 3 }] };
-  const g = createGame(d);
+  const g = new Game(d);
   g.light = g.light.map((row) => row.map(() => 1));
-  const adv = (pos, mode) => ({ id: 'a1', pos, mode, budget: 0, lastSeen: null, goal: null });
+  const adv = (pos, mode) => new Adversary({ id: 'a1', pos, mode });
 
   g.adversaries = [adv([3, 5], 'chase')];
-  const caught = describeMoves(g, 'run_away');
+  const caught = describeMoves(new KnownWorld(g), 'run_away');
   if (!caught.right?.startsWith(`Steps into the adversary: costs 1 life (${EXPLORER_LIVES - 1} of ${EXPLORER_LIVES} left)`)) fail(`touch sentence missing: ${caught.right}`);
   g.health = 1;
-  if (!describeMoves(g, 'run_away').right?.startsWith('Steps into the adversary: costs your last life and the game is lost.')) fail('last-life touch sentence missing');
+  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: costs your last life and the game is lost.')) fail('last-life touch sentence missing');
   g.graceTicks = 2;
-  if (!describeMoves(g, 'run_away').right?.startsWith('Steps into the adversary: no life lost while your hit protection lasts')) fail('grace touch sentence missing');
-  const sit = situation(g);
-  if (sit.lives !== 1 || sit.hit_protection_steps !== 2) fail(`situation lives/protection: ${sit.lives}/${sit.hit_protection_steps}`);
+  if (!describeMoves(new KnownWorld(g), 'run_away').right?.startsWith('Steps into the adversary: no life lost while your hit protection lasts')) fail('grace touch sentence missing');
+  const sit = situation(new KnownWorld(g));
+  if (sit.self.lives !== 1 || sit.self.max_lives !== EXPLORER_LIVES || sit.self.hit_protection_steps !== 2) fail(`situation self: ${JSON.stringify(sit.self)}`);
   g.health = g.maxHealth; g.graceTicks = 0;
 
   g.adversaries = [adv([6, 5], 'chase')];
-  const cornered = describeMoves(g, 'run_away');
+  const cornered = describeMoves(new KnownWorld(g), 'run_away');
   if (!cornered.up?.includes('Leads into a known dead end: risk of being cornered.')) fail(`cornered sentence missing: ${cornered.up}`);
   if (cornered.left?.includes('cornered')) fail(`loop move flagged as cornered: ${cornered.left}`);
   if (!cornered.left?.includes('Moves away from the chasing adversary')) fail(`away sentence missing: ${cornered.left}`);
-  const esc = approachTarget(g, 'run_away');
+  const esc = approachTarget(new KnownWorld(g), 'run_away');
   const exits = esc && Object.values(DIRS).filter(([dx, dy]) => tiles[esc.cell[1] + dy][esc.cell[0] + dx] === '.').length;
   if (!esc || esc.cell.join() === g.pos.join() || exits < 2) fail(`bad run_away target ${JSON.stringify(esc)}`);
-  if (situation(g).threats[0]?.direction !== 'east' || situation(g).threats[0]?.distance !== 4) fail(`threat entry ${JSON.stringify(situation(g).threats)}`);
+  if (situation(new KnownWorld(g)).threats.visible[0]?.direction !== 'east' || situation(new KnownWorld(g)).threats.visible[0]?.distance !== 4) fail(`threat entry ${JSON.stringify(situation(new KnownWorld(g)).threats.visible)}`);
 
   g.adversaries = [adv([9, 7], 'patrol')]; // out of sight
-  if (approachTarget(g, 'run_away') !== null || Object.keys(tacticOptions(g)).length) fail('run_away offered with nothing in sight');
+  if (approachTarget(new KnownWorld(g), 'run_away') !== null || Object.keys(tacticOptions(new KnownWorld(g))).length) fail('run_away offered with nothing in sight');
   console.log('threat sentences: touch (life/last life/grace), cornered, loop, run_away target ok');
   console.log('  touch sample    right:', caught.right);
   console.log('  cornered sample up:   ', cornered.up);
@@ -388,11 +437,11 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
 const handGame = (tiles, pos, litCols = Infinity) => {
   // The chest sits off the map, never lit, so it stays unseen.
   const d = { seed: 0, width: tiles[0].length, height: tiles.length, tiles, start: pos, treasure: [-9, -9], rooms: [] };
-  const g = createGame(d);
+  const g = new Game(d);
   g.light = g.light.map((row) => row.map((_, x) => (x <= litCols ? 1 : 0)));
   return g;
 };
-const chaser = (pos, mode = 'chase', id = 'a1') => ({ id, pos, mode, budget: 0, lastSeen: null, goal: null });
+const chaser = (pos, mode = 'chase', id = 'a1') => new Adversary({ id, pos, mode });
 const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 {
   // (a) Big room, adversary off to the side, unexplored corridor on the far side: a route past exists.
@@ -411,20 +460,20 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const g = handGame(room, [2, 2], 16); // the corridor beyond x = 16 is dark
   g.adversaries = [chaser([5, 8])];
-  const aggro = tacticFeasibility(g, AGGRO), scared = tacticFeasibility(g, SCARED);
+  const aggro = tacticFeasibility(new KnownWorld(g), AGGRO), scared = tacticFeasibility(new KnownWorld(g), SCARED);
   if (!aggro.slip_past) fail(`room: slip_past not feasible for aggressive: ${JSON.stringify(Object.keys(aggro))}`);
   if (scared.slip_past) fail(`room: slip_past feasible for scared (min gap ${SCARED}): ${scared.slip_past.fact}`);
   if (!aggro.face_off) fail('room: face_off not feasible in a 14x9 room');
   if (!aggro.run_away || !scared.run_away) fail('room: run_away missing');
   if (aggro.carry_on) fail('room: carry_on offered while chased');
-  const enc = situation(g).encounter;
+  const enc = situation(new KnownWorld(g)).threats.encounter;
   if (!/Open room, about 14×9/.test(enc?.space)) fail(`room: space fact ${enc?.space}`);
   if (!/closest approach/.test(enc?.slip_past)) fail(`room: slip fact ${enc?.slip_past}`);
-  const moves = describeMoves(g, 'slip_past', { minGap: AGGRO });
-  const movesScared = describeMoves(g, 'run_away', { minGap: 9 });
+  const moves = describeMoves(new KnownWorld(g), 'slip_past', { minGap: AGGRO });
+  const movesScared = describeMoves(new KnownWorld(g), 'run_away', { minGap: 9 });
   if (!Object.values(movesScared).some((m) => m.includes('below your minimum gap of 9'))) fail('min gap warning missing in move facts');
   g.adversaries = [chaser([5, 8], 'patrol')];
-  if (!tacticFeasibility(g, AGGRO).carry_on) fail('room: carry_on not offered for a patroller');
+  if (!tacticFeasibility(new KnownWorld(g), AGGRO).carry_on) fail('room: carry_on not offered for a patroller');
   console.log('encounter (room): slip_past feasible for aggressive, not for scared; face_off, run_away, carry_on ok');
   console.log('  encounter facts:', JSON.stringify(enc));
   console.log('  slip_past (aggressive):', aggro.slip_past.fact);
@@ -434,10 +483,10 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   const corridor = ['############', '#..........#', '############'];
   const c = handGame(corridor, [2, 1], 8);
   c.adversaries = [chaser([6, 1])];
-  const cf = tacticFeasibility(c, AGGRO);
+  const cf = tacticFeasibility(new KnownWorld(c), AGGRO);
   if (cf.slip_past || cf.face_off || cf.hide) fail(`corridor: ${Object.keys(cf)} offered`);
   if (!cf.run_away) fail('corridor: run_away missing');
-  if (!/Narrow corridor/.test(situation(c).encounter?.space)) fail(`corridor space ${situation(c).encounter?.space}`);
+  if (!/Narrow corridor/.test(situation(new KnownWorld(c)).threats.encounter?.space)) fail(`corridor space ${situation(new KnownWorld(c)).threats.encounter?.space}`);
 
   // (c) Room whose only exit (toward the dark) is blocked by the adversary standing in it.
   const blocked = [
@@ -451,7 +500,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const b = handGame(blocked, [2, 3], 9);
   b.adversaries = [chaser([7, 3])];
-  if (tacticFeasibility(b, AGGRO).slip_past) fail('blocked exit: slip_past offered');
+  if (tacticFeasibility(new KnownWorld(b), AGGRO).slip_past) fail('blocked exit: slip_past offered');
   console.log('encounter (corridor, blocked exit): slip_past not offered; run_away only');
 
   // (d) Hide: a side passage around a corner, out of the adversary's sight.
@@ -467,14 +516,14 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const h = handGame(alcove, [5, 2]);
   h.adversaries = [chaser([1, 6])];
-  const hf = tacticFeasibility(h, SCARED);
+  const hf = tacticFeasibility(new KnownWorld(h), SCARED);
   if (!hf.hide) fail(`hide not feasible: ${JSON.stringify(Object.keys(hf))}`);
-  else if (knownLineOfSight(h, [1, 6], hf.hide.target.cell)) fail(`hide cell ${hf.hide.target.cell} is in sight`);
+  else if (knownLineOfSight(new KnownWorld(h), [1, 6], hf.hide.target.cell)) fail(`hide cell ${hf.hide.target.cell} is in sight`);
   // Unknown cells block known-tile LOS: darken the passage and the same pair is "out of sight".
   const h2 = handGame(alcove, [5, 2]);
-  if (!knownLineOfSight(h2, [1, 1], [6, 6])) fail('known LOS blocked in an open lit room');
+  if (!knownLineOfSight(new KnownWorld(h2), [1, 1], [6, 6])) fail('known LOS blocked in an open lit room');
   h2.light[3][3] = 0; h2.light[4][4] = 0;
-  if (knownLineOfSight(h2, [1, 1], [6, 6])) fail('unknown cells do not block known LOS');
+  if (knownLineOfSight(new KnownWorld(h2), [1, 1], [6, 6])) fail('unknown cells do not block known LOS');
   console.log('encounter (alcove): hide ->', hf.hide?.fact);
 }
 
@@ -482,10 +531,9 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
 //     parked approach resumes, and the turn/memory shapes hold. No network, temp memory dir.
 {
   const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
-  setMemoryDir(pathToFileURL(dir + '/'));
   const asked = [];
-  let mood = 'calculated';
-  setAsker(async ({ kind, questions }) => {
+  let mood = 'curious';
+  const ask = async ({ kind, questions }) => {
     asked.push({ kind, questions: Object.keys(questions) });
     const first = (q) => Object.keys(q.criteria)[0];
     const answers = {};
@@ -499,7 +547,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
       } else answers[k] = { choice: first(q), probabilities: { [first(q)]: 1 }, confidence: 1 };
     }
     return answers;
-  });
+  };
   const room = [
     '######################',
     '#..............#######',
@@ -515,8 +563,9 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   ];
   const g = handGame(room, [2, 2], 16);
   g.knownFloor = 1; g.visits = { '2,2': 1 };
-  const memory = newRun(g);
-  const t1 = await takeTurn(g, memory);
+  const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+  const memory = brain.memory;
+  const t1 = await brain.takeTurn();
   if (t1.decision?.trigger !== 'start' || t1.decision.tactic !== null) fail(`first turn decision ${JSON.stringify(t1.decision)}`);
   if (!asked[0] || asked[0].kind !== 'sentiment') fail('decision tick did not ask sentiment first');
   if (!('move_decision' in t1)) fail('turn.move_decision missing');
@@ -531,7 +580,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   g.adversaries = [chaser(inSightOf(5)[0])];
   asked.length = 0;
   mood = 'aggressive';
-  const t2 = await takeTurn(g, memory);
+  const t2 = await brain.takeTurn();
   if (t2.decision?.trigger !== 'encounter' || !t2.decision.tactic?.choice) fail(`encounter decision ${JSON.stringify(t2.decision)?.slice(0, 300)}`);
   if (asked.map((a) => a.kind).join() !== 'sentiment,tick') fail(`decision tick requests ${JSON.stringify(asked)}`);
   if (!isTactic(memory.approach.id) || memory.approach.interrupted?.id !== 'nearest_frontier') fail(`tactic not parked properly: ${JSON.stringify(memory.approach)}`);
@@ -540,13 +589,13 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   // An ordinary tick in the encounter (same adversary, in sight): one request, no decision.
   g.adversaries = [chaser(inSightOf(5)[0])];
   asked.length = 0;
-  const t3 = await takeTurn(g, memory);
+  const t3 = await brain.takeTurn();
   if (t3.decision !== null || asked.length !== 1) fail(`ordinary encounter tick made a decision: ${JSON.stringify(t3.decision)} ${asked.length}`);
   // Out of sight long enough for the aggressive profile (end_ticks 1): encounter over, approach resumes.
   g.adversaries = [];
   let over = null;
   for (let i = 0; i < 6 && !over; i++) {
-    const t = await takeTurn(g, memory);
+    const t = await brain.takeTurn();
     if (t.decision?.trigger === 'chase_over') over = t;
   }
   if (!over) fail('encounter never ended');
@@ -556,9 +605,428 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   if (memory.approach.thought !== APPROACHES.nearest_frontier.thought) fail(`thought ${memory.approach.thought}`);
   validateMemory(memory);
   console.log(`brain (stub Jev): start -> encounter (${t2.decision.tactic.choice}, aggressive) -> chase_over at step ${over?.step}; tried has no tactics`);
-  setAsker(null);
-  setMemoryDir(null);
   rmSync(dir, { recursive: true, force: true });
+}
+
+// 4e. Memory of what was seen (stub Jev, no network, temp memory dir): remembered threats and their
+//     twin, move facts and the avoid zone, back-and-forth and tactic_failed, landmarks, events and
+//     encounter counters, one sentiment call when an adversary is already in sight, request size.
+{
+  const room = [
+    '######################',
+    '#..............#######',
+    '#..............#######',
+    '#..............#######',
+    '#..............#######',
+    '#..................###',
+    '#..............#######',
+    '#..............#######',
+    '#..............#######',
+    '#..............#######',
+    '######################',
+  ];
+  const makeRoom = () => {
+    const g = handGame(room, [2, 2], 16);
+    g.knownFloor = 1; g.visits = { '2,2': 1 };
+    return g;
+  };
+  const dirOf = (q) => Object.keys(q.criteria);
+  const answerWith = (pick) => async ({ kind, questions, body }) => {
+    sizes.push({ kind, bytes: Buffer.byteLength(body, 'utf8'), tactics: Object.keys(questions.tactic?.criteria ?? {}).length });
+    const answers = {};
+    for (const [k, q] of Object.entries(questions)) {
+      if (q.type === 'noul') answers[k] = { noul: 0.9 };
+      else {
+        const c = pick(k, dirOf(q));
+        answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
+      }
+    }
+    return answers;
+  };
+  const sizes = [];
+  const withSeed = async (n, fn) => {
+    const real = Math.random;
+    Math.random = rng(n);
+    try { return await fn(); } finally { Math.random = real; }
+  };
+
+  // (a) Remembered threats: frozen at the sighting, gone from the request's dependence on hidden state.
+  {
+    const run = async (hiddenCell) => {
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const g = makeRoom();
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), memoryDir: pathToFileURL(dir + '/') });
+      g.adversaries = [chaser([8, 2])];
+      const asked0 = sizes.length;
+      const t1 = await withSeed(1, () => brain.takeTurn());
+      const kinds1 = sizes.slice(asked0).map((s) => s.kind).join();
+      g.pos = [14, 9]; // far from the sighting, so the frozen cell is not "seen empty"
+      g.adversaries = [chaser(hiddenCell)];
+      if (visibleAdversaries(g).length) fail('remembered twin: the hidden adversary is visible');
+      await withSeed(2, () => brain.takeTurn());
+      const second = JSON.stringify(brain.lastRequests());
+      const state = brain.lastRequest().state;
+      rmSync(dir, { recursive: true, force: true });
+      return { t1, kinds1, second, state };
+    };
+    const hidden = [];
+    const probe = makeRoom();
+    probe.pos = [14, 9];
+    for (let y = 0; y < room.length; y++) for (let x = 0; x < room[0].length; x++) {
+      if (room[y][x] === '.' && !sees(probe.dungeon, probe.pos, [x, y])) hidden.push([x, y]);
+    }
+    const A = await run(hidden[0]);
+    const B = await run(hidden.at(-1));
+    const rem = A.state.threats.remembered;
+    if (rem.length !== 1 || rem[0].id !== 'a1' || rem[0].last_seen_steps_ago !== 1 || rem[0].was_chasing !== true) fail(`remembered threat: ${JSON.stringify(rem)}`);
+    else if (rem[0].direction !== 'north-west' || !(rem[0].distance >= 9)) fail(`remembered threat direction/distance: ${JSON.stringify(rem[0])}`);
+    if (A.state.threats.visible.length) fail('remembered: an unseen adversary is listed as visible');
+    if (A.second !== B.second) fail('remembered twin: requests changed when the hidden adversary moved after the sighting');
+    if (A.t1.decision?.trigger !== 'encounter' || A.kinds1 !== 'sentiment,tick') fail(`start with an adversary in sight: trigger ${A.t1.decision?.trigger}, requests ${A.kinds1} (want one merged encounter decision)`);
+    console.log(`remembered threats: frozen at the sighting (${JSON.stringify(rem[0])}), twin requests byte-identical; start + encounter merged into one sentiment call`);
+  }
+
+  // (a2) A remembered sighting expires: seen empty from within sight range, or after 30 steps.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = makeRoom();
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), memoryDir: pathToFileURL(dir + '/') });
+    g.adversaries = [chaser([8, 2])];
+    await brain.takeTurn();
+    g.pos = [14, 9];
+    g.adversaries = [];
+    await brain.takeTurn();
+    if (brain.lastRequest().state.threats.remembered.length !== 1) fail('remembered threat missing right after the sighting');
+    g.pos = [6, 2]; // 2 cells from the frozen cell, clear line of sight: it is empty now
+    await brain.takeTurn();
+    if (brain.lastRequest().state.threats.remembered.length) fail('remembered threat not dropped after its cell was seen empty');
+    // Age: re-sight, walk away out of range, wait past 30 steps.
+    g.adversaries = [chaser([8, 2])]; g.pos = [3, 2];
+    await brain.takeTurn();
+    g.adversaries = [];
+    g.pos = [14, 9];
+    await brain.takeTurn();
+    if (brain.lastRequest().state.threats.remembered.length !== 1) fail('second sighting not remembered');
+    g.steps += 31;
+    await brain.takeTurn();
+    if (brain.lastRequest().state.threats.remembered.length) fail('remembered threat not dropped after 30 steps');
+    rmSync(dir, { recursive: true, force: true });
+    console.log('remembered threats expire: seen empty, 30 steps');
+  }
+
+  // (b) Move facts toward / away from a sighting, and exploration targets that avoid it.
+  {
+    const strip = ['#'.repeat(32), '#' + '.'.repeat(30) + '#', '#'.repeat(32)];
+    const g = handGame(strip, [6, 1]);
+    g.steps = 10;
+    const sighting = { id: 'a1', cell: [3, 1], step: 7, chasing: true };
+    const moves = describeMoves(new KnownWorld(g), 'nearest_frontier', { remembered: [sighting] });
+    if (!/^.*Heads toward where a chasing adversary was last seen 3 steps ago \(2 steps from that spot after this\)\./.test(moves.left)) fail(`sighting fact (toward): ${moves.left}`);
+    if (!/Moves away from where a chasing adversary was last seen 3 steps ago \(4 steps from that spot after this\)\./.test(moves.right)) fail(`sighting fact (away): ${moves.right}`);
+    const far = describeMoves(new KnownWorld(g), 'nearest_frontier', { remembered: [{ ...sighting, cell: [28, 1] }] });
+    if (/last seen/.test(far.left + far.right)) fail('sighting fact for a spot more than 8 steps away');
+
+    // Two equally near edges; the one by the sighting is skipped while the other exists.
+    const w = handGame(strip, [14, 1]);
+    // Lit columns 4..24: both edges are 10 steps away, so the 10-step zone round one leaves the other.
+    for (let x = 0; x < 32; x++) w.light[1][x] = x >= 4 && x <= 24 ? 1 : 0;
+    w.light[0] = w.light[0].map((v, x) => (x >= 4 && x <= 24 ? 1 : 0));
+    w.light[2] = w.light[2].map((v, x) => (x >= 4 && x <= 24 ? 1 : 0));
+    const world = new KnownWorld(w);
+    const base = approachTarget(world, 'nearest_frontier');
+    const spot = { id: 'a1', cell: base.cell, step: w.steps, chasing: false };
+    const zone = avoidZone(world, [spot]);
+    for (const id of ['nearest_frontier', 'largest_unexplored', 'far_side']) {
+      const t = approachTarget(world, id, { avoid: zone });
+      if (zone.has(`${t.cell}`)) fail(`${id} headed into a recent sighting zone: ${t.cell}`);
+    }
+    const old = avoidZone(world, [{ ...spot, step: w.steps - 16 }]);
+    if (old.size) fail('a sighting older than 15 steps still steers targets');
+    const everything = new Set(Array.from({ length: 32 }, (_, x) => `${x},1`));
+    if (!approachTarget(world, 'nearest_frontier', { avoid: everything })) fail('with every edge in the zone, no target is left (must fall back to the edges)');
+    console.log('sighting move facts (toward / away / >8 steps silent) and avoid zone for the three exploration approaches ok');
+  }
+
+  // (c) Back and forth: the fact on the undoing move, and tactic_failed with the cooldown.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = makeRoom();
+    let turnNo = 0;
+    const ask = answerWith((k, ds) => {
+      if (k === 'sentiment') return 'courageous';
+      if (k === 'tactic') return ds.find((d) => d !== 'run_away') ?? ds[0];
+      const want = turnNo % 2 === 1 ? 'right' : 'left';
+      return ds.includes(want) ? want : ds[0];
+    });
+    g.adversaries = [chaser([9, 2])];
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const triggers = [];
+    let factSeen = null, preFail = null;
+    for (turnNo = 1; turnNo <= 8; turnNo++) {
+      const before = brain.memory.recent.back_and_forth;
+      const t = await withSeed(turnNo, () => brain.takeTurn());
+      if (t.decision) triggers.push(`${turnNo}:${t.decision.trigger}`);
+      if (t.decision?.trigger === 'tactic_failed' && preFail === null) preFail = before;
+      for (const q of Object.values(brain.lastRequests().at(-1).questions)) {
+        for (const text of Object.values(q.criteria ?? {})) if (/Goes back to the cell you left 2 steps ago \(back-and-forth/.test(text)) factSeen = text;
+      }
+      if (!g.adversaries.length) break;
+    }
+    if (!factSeen) fail('back-and-forth fact never shown on the undoing move');
+    if (preFail === null) fail(`tactic_failed never raised by back-and-forth: ${triggers}`);
+    else if (preFail < 3) fail(`tactic_failed raised with back_and_forth ${preFail} < 3`);
+    const gaps = triggers.filter((t) => t.endsWith('tactic_failed')).map((t) => Number(t.split(':')[0]));
+    if (gaps.some((n, i) => i && n - gaps[i - 1] < 3)) fail(`tactic_failed ignored the re-decision cooldown: ${triggers}`);
+    const rec = brain.lastRequest().state.recent;
+    if (!Array.isArray(rec.path) || rec.path.length > 6 || !rec.path.every((w) => ['north', 'south', 'east', 'west', 'stay'].includes(w))) fail(`recent.path ${JSON.stringify(rec.path)}`);
+    if (!(rec.back_and_forth >= 3)) fail(`recent.back_and_forth ${rec.back_and_forth}`);
+    rmSync(dir, { recursive: true, force: true });
+    console.log(`back-and-forth: fact on the undoing move, tactic_failed after ${preFail} undone moves (decisions ${triggers.join(' ')})`);
+  }
+
+  // (d) Landmarks: dedupe by kind + cell, chest pinned, oldest other evicted; events and counters.
+  {
+    const mem = createMemory({ approachId: 'nearest_frontier', approachText: 'x', thought: 'x', sentiment: { id: 'cautious' }, start: [1, 1] });
+    addLandmark(mem, { kind: 'chest', cell: [9, 9], step: 1, note: 'chest' });
+    addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 2, note: 'first' });
+    addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 5, note: 'again' });
+    if (mem.landmarks.length !== 2 || mem.landmarks.at(-1).step !== 5 || mem.landmarks.at(-1).note !== 'again') fail(`landmark dedupe: ${JSON.stringify(mem.landmarks)}`);
+    for (let i = 0; i < 12; i++) addLandmark(mem, { kind: 'dead_end_explored', cell: [i + 3, 3], step: 10 + i, note: `d${i}` });
+    if (mem.landmarks.length !== LIMITS.landmarks) fail(`landmark cap ${mem.landmarks.length}`);
+    if (!mem.landmarks.some((l) => l.kind === 'chest')) fail('chest landmark was evicted');
+    if (mem.landmarks.some((l) => l.kind === 'hit_here') || mem.landmarks.some((l) => l.note === 'd0')) fail('oldest non-chest landmarks were not evicted first');
+    if (mem.landmarks.at(-1).note !== 'd11') fail('newest landmark missing');
+    validateMemory(mem);
+    for (let i = 0; i < 10; i++) addEvent(mem, i + 1, `event ${i}`);
+    if (mem.events.length !== LIMITS.events || mem.events[0].text !== 'event 4') fail(`events cap: ${JSON.stringify(mem.events)}`);
+    validateMemory(mem);
+    const g = makeRoom();
+    const sit = situation(new KnownWorld(g), { landmarks: [{ kind: 'chest', cell: [2, 2], step: 0, note: 'The treasure chest.' }, { kind: 'hit_here', cell: [6, 2], step: 0, note: 'Took a hit here.' }] });
+    const lm = sit.surroundings.landmarks;
+    if (lm[0].direction !== 'here' || lm[1].direction !== 'east' || lm[1].distance !== 4 || lm[1].steps_ago !== g.steps) fail(`landmark view ${JSON.stringify(lm)}`);
+    console.log('landmarks: dedupe, 8-cap with the chest pinned, relative view; events capped at 6');
+  }
+
+  // (e) Brain: encounter counters, events (no spam, no repeated step), hit landmark, request size.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = makeRoom();
+    sizes.length = 0;
+    const ask = answerWith((k, ds) => (k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (ds.find((d) => d !== 'run_away') ?? ds[0]) : ds[0]));
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const m = brain.memory;
+    await brain.takeTurn();
+    g.adversaries = [chaser([g.pos[0] + 5 > 14 ? g.pos[0] - 5 : g.pos[0] + 5, g.pos[1]])];
+    for (let i = 0; i < 3; i++) await brain.takeTurn();
+    g.adversaries = [];
+    for (let i = 0; i < 8; i++) await brain.takeTurn();
+    if (m.encounters.count !== 1 || m.encounters.escaped !== 1 || m.encounters.last_at_step < 1) fail(`encounters ${JSON.stringify(m.encounters)}`);
+    if (m.events.some((e) => /spotted|got away/i.test(e.text))) fail(`event spam: ${JSON.stringify(m.events)}`);
+    await brain.noteHit('a1');
+    await brain.noteHit('a1');
+    if (m.encounters.hits !== 2) fail(`hits ${m.encounters.hits}`);
+    if (m.landmarks.filter((l) => l.kind === 'hit_here').length !== 1) fail(`hit_here not deduped: ${JSON.stringify(m.landmarks)}`);
+    if (!m.events.some((e) => /^Hit by a1/.test(e.text))) fail('hit event missing');
+    for (const e of m.events) if (new RegExp(`\\bstep ${e.step}\\b`).test(e.text)) fail(`event repeats its step: ${JSON.stringify(e)}`);
+    validateMemory(m);
+    for (const k of ['latest_action', 'findings', 'danger', 'objective']) if (k in m) fail(`memory still has ${k}`);
+    const state = brain.lastRequest().state;
+    if (Object.keys(state).join() !== 'game,self,surroundings,threats,plan,recent') fail(`state keys ${Object.keys(state)}`);
+    const max = Math.max(...sizes.map((s) => s.bytes));
+    const maxTactics = Math.max(...sizes.map((s) => s.tactics));
+    if (max > 9500) fail(`largest stubbed request is ${max} bytes (> 9500)`);
+    // The busiest decision ticks on a hand-built map where almost every tactic is feasible: a seen chest
+    // behind a corner, a side room to hide in, an adversary that is chasing (5 tactics) or patrolling (6).
+    {
+      const hall = [
+        '###########################',
+        '#........########.........#',
+        '#........########.........#',
+        '#.........................#',
+        '#........####.....#########',
+        '#........####.....#########',
+        '#........####.....#########',
+        '###########################',
+      ];
+      for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+        const big = handGame(hall, [5, 3], 12);
+        big.dungeon.treasure = [1, 1];
+        big.adversaries = [chaser([1, 5], mode)];
+        sizes.length = 0;
+        const bd = mkdtempSync(join(tmpdir(), 'jev-check-'));
+        const bb = new ExplorerBrain(new KnownWorld(big), { ask: answerWith((k, ds) => (k === 'sentiment' ? 'aggressive' : ds[0])), memoryDir: pathToFileURL(bd + '/') });
+        for (let i = 0; i < 3; i++) await bb.takeTurn();
+        const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
+        if (most < wantTactics) fail(`size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
+        if (peak > bound) fail(`busiest decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
+        console.log(`  busiest decision tick (${mode}): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        rmSync(bd, { recursive: true, force: true });
+      }
+    }
+    console.log(`encounter counters ${JSON.stringify(m.encounters)}, events ${m.events.length}; ${sizes.length} requests, largest ${max} bytes (up to ${maxTactics} tactics offered)`);
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// 4f. Two behaviours with a SMART stub Jev (deterministic, no network): it reads the move sentences the
+//     way the priorities tell Jev to. (a) Under run_away in a room the explorer must not bounce between two
+//     cells (the escape spot is kept until reached or unsafe, and a new one is picked by distance, not
+  //     the next cell over). (b) After
+//     chase_over the explorer must not walk back toward the frozen sighting while another frontier exists.
+{
+  const BAD = /Moves toward|below your minimum|Steps into/;
+  const smartAsk = (mood) => async ({ questions }) => {
+    const answers = {};
+    for (const [k, q] of Object.entries(questions)) {
+      if (q.type === 'noul') { answers[k] = { noul: 0.9 }; continue; }
+      const ids = Object.keys(q.criteria);
+      let c = ids[0];
+      if (k === 'sentiment') c = mood;
+      else if (k === 'tactic') c = ids.includes('run_away') ? 'run_away' : ids[0];
+      else {
+        // Not a step into or toward an adversary, then toward the approach target, then the largest gap, then no undoing.
+        const score = (t) => {
+          const away = /Moves away from the chasing adversary[^.]*\((\d+) steps? between/.exec(t);
+          const same = /Keeps the same distance from the chasing adversary[^.]*\((\d+) steps? between/.exec(t);
+          return (BAD.test(t) ? -1000 : 0) +
+            (/Closer to the target|Reaches the target/.test(t) ? 100 : 0) + (away ? +away[1] : same ? +same[1] - 0.5 : 0) - (/Goes back/.test(t) ? 1 : 0);
+        };
+        const moves = ids.filter((d) => d !== STAY);
+        c = moves.reduce((best, d) => (score(q.criteria[d]) > score(q.criteria[best]) ? d : best), moves[0]);
+      }
+      answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
+    }
+    return answers;
+  };
+  const withSeed = async (n, fn) => {
+    const real = Math.random;
+    Math.random = rng(n);
+    try { return await fn(); } finally { Math.random = real; }
+  };
+  // The scripted ghost: a known-map-free BFS over the real tiles at ADVERSARY_SPEED, stopping next to the explorer.
+  const walkToward = (g, a, state) => {
+    state.budget += 0.6;
+    if (state.budget < 1) return;
+    state.budget -= 1;
+    const tiles = g.dungeon.tiles;
+    const to = g.pos, seen = new Map([[a.pos.join(), null]]), queue = [a.pos];
+    for (let i = 0; i < queue.length && !seen.has(to.join()); i++) {
+      for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+        const n = [queue[i][0] + dx, queue[i][1] + dy];
+        if (tiles[n[1]]?.[n[0]] !== '.' || seen.has(n.join())) continue;
+        seen.set(n.join(), queue[i]);
+        queue.push(n);
+      }
+    }
+    let c = to;
+    while (seen.get(c.join()) && seen.get(seen.get(c.join()).join())) c = seen.get(c.join());
+    if (seen.has(to.join()) && Math.abs(a.pos[0] - to[0]) + Math.abs(a.pos[1] - to[1]) > 1) a.pos = c;
+  };
+
+  // (a) Ping-pong under run_away. A 12x5 room with a corridor out of its south wall; the explorer starts
+  //     near a wall, the ghost in sight and walking at it (scripted, ADVERSARY_SPEED). Counted over 15 ticks.
+  const room = [
+    '##############',
+    '#............#',
+    '#............#',
+    '#............#',
+    '#............#',
+    '#............#',
+    '#######.######',
+    '#######.######',
+    '#######.######',
+    '#######.......',
+    '##############',
+  ];
+  const pingPongRuns = [];
+  for (const [me, ghost] of [[[12, 1], [9, 2]], [[10, 5], [8, 3]], [[6, 1], [7, 3]], [[6, 1], [9, 4]]]) {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = handGame(room, me);
+    g.visits = { [me.join(',')]: 1 };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('scared'), memoryDir: pathToFileURL(dir + '/') });
+    const a = chaser(ghost);
+    g.adversaries = [a];
+    const cells = [[...g.pos]], ghostState = { budget: 0 }, tactics = new Set();
+    for (let t = 0; t < 15; t++) {
+      const turn = await withSeed(100 + t, () => brain.takeTurn());
+      if (turn.decision?.tactic?.choice) tactics.add(turn.decision.tactic.choice);
+      cells.push([...g.pos]);
+      walkToward(g, a, ghostState);
+    }
+    // Ping-pong = moves that step straight back to the cell just left (A-B-A), the count recent.back_and_forth
+    // keeps. Turning round once at the end of a run costs one.
+    let pp = 0;
+    for (let i = 2; i < cells.length; i++) if (cells[i].join() === cells[i - 2].join() && cells[i].join() !== cells[i - 1].join()) pp++;
+    pingPongRuns.push(pp);
+    if (pp >= 3) fail(`ping-pong under run_away: ${pp} undone moves in 15 ticks from ${me} with the ghost at ${ghost} (tactics ${[...tactics]}): ${cells.map((c) => c.join(',')).join(' ')}`);
+    validateMemory(brain.memory);
+    rmSync(dir, { recursive: true, force: true });
+  }
+  console.log(`run_away ping-pong (smart stub, 15 ticks, 4 room starts): undone moves (A-B-A) ${pingPongRuns.join(', ')} (bound < 3 each)`);
+
+  // (a2) The pieces behind it: the escape spot is sticky, a bounce rules cells out, and the run goes on
+  //      from the frozen sighting once the adversary is out of sight.
+  {
+    const g = handGame(room, [11, 3]);
+    const world = new KnownWorld(g);
+    const spots = [];
+    for (const ghost of [[6, 3], [6, 2], [7, 4], [6, 4]]) {
+      g.adversaries = [chaser(ghost)];
+      const first = approachTarget(world, 'run_away', { minGap: 3 });
+      const kept = approachTarget(world, 'run_away', { minGap: 3, goal: spots[0]?.cell ?? first.cell });
+      spots.push(first);
+      if (spots.length > 1 && `${kept.cell}` !== `${spots[0].cell}`) fail(`run_away goal not kept: ${spots[0].cell} became ${kept.cell} with the ghost at ${ghost}`);
+    }
+    const cell = spots[0].cell;
+    const other = approachTarget(world, 'run_away', { minGap: 3, goal: cell, exclude: new Set([`${cell}`]) });
+    if (!other || `${other.cell}` === `${cell}`) fail(`excluded escape spot ${cell} picked again`);
+    g.adversaries = [];
+    const frozen = { id: 'a1', cell: [6, 3], step: g.steps, chasing: true };
+    const carry = approachTarget(world, 'run_away', { minGap: 3, goal: cell, remembered: [frozen] });
+    if (`${carry?.cell}` !== `${cell}`) fail(`run_away did not keep its goal once the adversary was out of sight: ${JSON.stringify(carry)}`);
+    g.pos = [...cell];
+    const next = approachTarget(world, 'run_away', { minGap: 3, goal: cell, remembered: [frozen] });
+    if (!next || next.steps < 4 || `${next.cell}` === `${cell}`) fail(`after reaching the spot the run must go on from the frozen sighting: ${JSON.stringify(next)}`);
+    if (approachTarget(world, 'run_away', { minGap: 3, goal: cell }) !== null) fail('run_away with no adversary and no sighting must have no target');
+    console.log(`run_away target: kept over ${spots.length} ghost positions, excluded cell dropped, carried on from the frozen sighting`);
+  }
+
+  // (b) After chase_over, do not walk back toward the frozen sighting while another frontier exists.
+  {
+    const hall = ['#'.repeat(60), ...Array(3).fill('#' + '.'.repeat(58) + '#'), '#'.repeat(60)];
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const g = handGame(hall, [26, 2]);
+    // Lit columns 4..50: a west edge 22 steps away and an east edge 24 away (the west one is nearer).
+    g.light = g.light.map((row) => row.map((_, x) => (x >= 4 && x <= 50 ? 1 : 0)));
+    g.visits = { '26,2': 1 };
+    const world = new KnownWorld(g);
+    const brain = new ExplorerBrain(world, { ask: smartAsk('curious'), memoryDir: pathToFileURL(dir + '/') });
+    const spot = [20, 2];
+    g.adversaries = [chaser(spot)];
+    await withSeed(7, () => brain.takeTurn());
+    g.adversaries = []; // out of sight from now on: only the frozen sighting remains
+    const at = (c) => Math.abs(c[0] - spot[0]);
+    let over = null, d0 = null;
+    const after = [];
+    for (let t = 0; t < 14; t++) {
+      const turn = await withSeed(200 + t, () => brain.takeTurn());
+      if (over === null && turn.decision?.trigger === 'chase_over') { over = turn.step; d0 = at(g.pos); }
+      if (over !== null && after.length < 8) after.push(at(g.pos));
+    }
+    if (over === null) fail('chase_over never happened in the re-meeting scenario');
+    else if (after.length < 8 || Math.min(...after) < d0) fail(`after chase_over the explorer walked back toward the sighting: distance ${d0} then ${after}`);
+    // The move facts name the way back regardless of distance (the sighting is 10+ steps off, a chasing one < 15 steps old).
+    const sight = { id: 'a1', cell: spot, step: g.steps - 4, chasing: true };
+    const facts = describeMoves(world, 'nearest_frontier', { remembered: [sight] });
+    const toward = g.pos[0] > spot[0] ? 'left' : 'right';
+    if (!/^Heads back toward where a chasing adversary was 4 steps ago \(\d+ steps from that spot after this\)\./.test(facts[toward] ?? '')) fail(`no "heads back" fact on the move toward a far chasing sighting: ${facts[toward]}`);
+    const off = describeMoves(world, 'nearest_frontier', { remembered: [{ ...sight, step: g.steps - 16 }] });
+    if (/Heads back toward/.test(off.left + off.right)) fail('"heads back" fact for a sighting older than 15 steps');
+    const calm = describeMoves(world, 'nearest_frontier', { remembered: [{ ...sight, chasing: false }] });
+    if (/Heads back toward/.test(calm.left + calm.right)) fail('"heads back" fact for a sighting that was not chasing');
+    console.log(`after chase_over (step ${over}) the next ${after.length} moves stay at distance ${Math.min(...after)}+ from the sighting (was ${d0}); "heads back" fact on the way back`);
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // 5. Scripted follower: nearest_frontier until the chest is seen, then go_to_treasure,
@@ -569,23 +1037,23 @@ function knownStepTowards(game, target) {
   for (let i = 0; i < queue.length; i++) {
     for (const [dx, dy] of Object.values(DIRS)) {
       const n = [queue[i][0] + dx, queue[i][1] + dy];
-      if (dist.has(n.join()) || !isKnown(game, n) || game.dungeon.tiles[n[1]][n[0]] !== '.') continue;
+      if (dist.has(n.join()) || !game.isKnown(n) || game.dungeon.tiles[n[1]][n[0]] !== '.') continue;
       dist.set(n.join(), dist.get(queue[i].join()) + 1);
       queue.push(n);
     }
   }
   const here = dist.get(game.pos.join());
-  return legalMoves(game).find((dir) => dist.get([game.pos[0] + DIRS[dir][0], game.pos[1] + DIRS[dir][1]].join()) === here - 1) ?? null;
+  return game.legalMoves().find((dir) => dist.get([game.pos[0] + DIRS[dir][0], game.pos[1] + DIRS[dir][1]].join()) === here - 1) ?? null;
 }
 
 function follow(game, cap = 20000, onTick = null) {
   while (!game.won && game.steps < cap) {
     if (onTick) onTick(game);
-    const target = approachTarget(game, treasureSeen(game) ? 'go_to_treasure' : 'nearest_frontier');
+    const target = approachTarget(new KnownWorld(game), treasureSeen(new KnownWorld(game)) ? 'go_to_treasure' : 'nearest_frontier');
     if (!target) return false;
     const dir = knownStepTowards(game, target.cell);
     if (!dir) return false;
-    applyMove(game, dir);
+    game.applyMove(dir);
   }
   return game.won;
 }
@@ -603,7 +1071,7 @@ function seedsOfSize(lo, hi, count) {
 
 {
   const quick = seedsOfSize(35, 40, 2);
-  for (const s of quick) if (!follow(createGame(generateDungeon(s)))) fail(`follower did not win seed ${s}`);
+  for (const s of quick) if (!follow(new Game(generateDungeon(s)))) fail(`follower did not win seed ${s}`);
   console.log(`follower: won ${quick.length} quick games`);
 }
 
@@ -613,10 +1081,10 @@ if (MEASURE) {
   for (const [label, lo, hi] of [['~35x35', 35, 40], ['~150x150', 140, 150]]) {
     const rows = [];
     for (const s of seedsOfSize(lo, hi, 10)) {
-      const g = createGame(generateDungeon(s));
+      const g = new Game(generateDungeon(s));
       const t0 = performance.now();
       const won = follow(g);
-      rows.push({ s, size: `${g.dungeon.width}x${g.dungeon.height}`, steps: g.steps, won, explored: publicView(g).explored_pct, ms: Math.round(performance.now() - t0) });
+      rows.push({ s, size: `${g.dungeon.width}x${g.dungeon.height}`, steps: g.steps, won, explored: g.publicView().explored_pct, ms: Math.round(performance.now() - t0) });
       if (!won) fail(`follower did not win seed ${s}`);
       if (lo >= 140 && g.steps > longest.steps) longest = { s, steps: g.steps };
     }
@@ -628,14 +1096,14 @@ if (MEASURE) {
   // Per-tick perception cost late in a large game: describeMoves + situation + approachTarget.
   // Uses the longest large game, played to 90% of its winning run, when the known area is largest.
   const bigSeed = longest.s;
-  const g = createGame(generateDungeon(bigSeed));
+  const g = new Game(generateDungeon(bigSeed));
   follow(g, Math.floor(longest.steps * 0.9));
   const time = (fn) => { const t = performance.now(); fn(); return performance.now() - t; };
-  const tick = (approach) => time(() => { situation(g); approachTarget(g, approach); describeMoves(g, approach); });
+  const tick = (approach) => time(() => { situation(new KnownWorld(g)); approachTarget(new KnownWorld(g), approach); describeMoves(new KnownWorld(g), approach); });
   const calm = [], chased = [];
   const floorNear = [];
   for (let i = 0; i < 60 && !g.won; i++) {
-    const approach = treasureSeen(g) ? 'go_to_treasure' : 'nearest_frontier';
+    const approach = treasureSeen(new KnownWorld(g)) ? 'go_to_treasure' : 'nearest_frontier';
     g.adversaries = [];
     calm.push(tick(approach));
     // Put a chaser in sight, a few cells away.
@@ -645,14 +1113,14 @@ if (MEASURE) {
       if ((dx || dy) && g.dungeon.tiles[c[1]]?.[c[0]] === '.' && sees(g.dungeon, g.pos, c)) floorNear.push(c);
     }
     if (floorNear.length) {
-      g.adversaries = [{ id: 'a1', pos: floorNear.at(-1), mode: 'chase', budget: 0, lastSeen: null, goal: null }];
-      chased.push(time(() => { situation(g); approachTarget(g, 'run_away'); describeMoves(g, 'run_away'); tacticOptions(g, 3); }));
+      g.adversaries = [new Adversary({ id: 'a1', pos: floorNear.at(-1), mode: 'chase' })];
+      chased.push(time(() => { situation(new KnownWorld(g)); approachTarget(new KnownWorld(g), 'run_away'); describeMoves(new KnownWorld(g), 'run_away'); tacticOptions(new KnownWorld(g), 3); }));
     }
     g.adversaries = [];
-    const target = approachTarget(g, approach);
+    const target = approachTarget(new KnownWorld(g), approach);
     const dir = target && knownStepTowards(g, target.cell);
     if (!dir) break;
-    applyMove(g, dir);
+    g.applyMove(dir);
   }
   const stat = (xs) => { const s = [...xs].sort((a, b) => a - b); return `median ${s[s.length >> 1].toFixed(2)} ms, max ${s.at(-1).toFixed(2)} ms (${s.length} ticks)`; };
   console.log(`\nper-tick perception on seed ${bigSeed} (${g.dungeon.width}x${g.dungeon.height}), step ${g.steps}, ${g.knownFloor} known floor cells:`);
@@ -666,14 +1134,14 @@ if (MEASURE) {
 {
   const [small] = seedsOfSize(35, 35, 1);
   const d = generateDungeon(small);
-  const g = createGame(d);
+  const g = new Game(d);
   g.adversaries = spawnAdversaries(d);
   const render = (game, reveal) => game.dungeon.tiles.map((row, y) => [...row].map((c, x) => {
     if (x === game.pos[0] && y === game.pos[1]) return '@';
     const a = game.adversaries.find((v) => v.pos[0] === x && v.pos[1] === y);
     if (a) return a.mode === 'chase' ? 'C' : 'A';
     if (x === game.dungeon.treasure[0] && y === game.dungeon.treasure[1]) return 'T';
-    if (reveal || isKnown(game, [x, y])) return c;
+    if (reveal || game.isKnown([x, y])) return c;
     return c === '#' ? ' ' : ',';
   }).join('')).join('\n');
   console.log(`\nseed ${small} (${d.width}x${d.height}), full map (@ explorer, T chest, A adversary):`);
@@ -681,44 +1149,44 @@ if (MEASURE) {
 
   // Walk toward the chest's side, then put a chaser in sight and show what Jev would get.
   for (let i = 0; i < 12; i++) {
-    const t = approachTarget(g, 'far_side');
+    const t = approachTarget(new KnownWorld(g), 'far_side');
     const dir = t && knownStepTowards(g, t.cell);
-    if (dir) applyMove(g, dir);
+    if (dir) g.applyMove(dir);
   }
   const near = [];
   for (let dy = -7; dy <= 7; dy++) for (let dx = -7; dx <= 7; dx++) {
     const c = [g.pos[0] + dx, g.pos[1] + dy];
     if ((dx || dy) && d.tiles[c[1]]?.[c[0]] === '.' && sees(d, g.pos, c) && euclid(g.pos, c) >= 3) near.push(c);
   }
-  g.adversaries = [{ id: 'a1', pos: near[0] ?? g.pos, mode: 'chase', budget: 0, lastSeen: null, goal: null },
-    { id: 'a2', pos: near.at(-1) ?? g.pos, mode: 'patrol', budget: 0, lastSeen: null, goal: null }];
+  g.adversaries = [new Adversary({ id: 'a1', pos: near[0] ?? g.pos, mode: 'chase' }),
+    new Adversary({ id: 'a2', pos: near.at(-1) ?? g.pos })];
   console.log(`\nafter ${g.steps} steps with a chaser (C) and a patroller (A) in sight; blank/"," = unknown wall/floor:`);
   console.log(render(g, false));
-  console.log('\nsituation:', JSON.stringify(situation(g), null, 2));
-  console.log('availableApproaches:', availableApproaches(g).join(', '));
-  console.log('approachTarget(run_away):', JSON.stringify(approachTarget(g, 'run_away')));
-  console.log('describeMoves(run_away):', JSON.stringify(describeMoves(g, 'run_away'), null, 2));
-  for (const id of ['scared', 'calculated', 'aggressive']) {
-    console.log(`tacticOptions (${id}, min gap ${SENTIMENTS[id].min_gap}):`, JSON.stringify(tacticOptions(g, SENTIMENTS[id].min_gap), null, 2));
+  console.log('\nsituation:', JSON.stringify(situation(new KnownWorld(g)), null, 2));
+  console.log('availableApproaches:', availableApproaches(new KnownWorld(g)).join(', '));
+  console.log('approachTarget(run_away):', JSON.stringify(approachTarget(new KnownWorld(g), 'run_away')));
+  console.log('describeMoves(run_away):', JSON.stringify(describeMoves(new KnownWorld(g), 'run_away'), null, 2));
+  for (const id of ['scared', 'curious', 'aggressive']) {
+    console.log(`tacticOptions (${id}, min gap ${SENTIMENTS[id].min_gap}):`, JSON.stringify(tacticOptions(new KnownWorld(g), SENTIMENTS[id].min_gap), null, 2));
   }
 }
 
 // Health: 2 lives, lost only when all are gone.
 {
-  const g = createGame(generateDungeon(3));
+  const g = new Game(generateDungeon(3));
   if (!(g.health === EXPLORER_LIVES && g.maxHealth === 2)) fail('health: starts at 2/2');
-  const pv = publicView(g);
+  const pv = g.publicView();
   if (!(pv.health === 2 && pv.max_health === 2)) fail('health: publicView includes health and max_health');
-  const r1 = damageExplorer(g, 1, 'a1');
+  const r1 = g.damage(1, 'a1');
   if (!(r1.health === 1 && !r1.lost && !g.lost && g.caughtBy === null)) fail('health: first hit leaves 1 life');
-  if (!(publicView(g).health === 1)) fail('health: publicView follows damage');
-  const r2 = damageExplorer(g, 1, 'a2');
+  if (!(g.publicView().health === 1)) fail('health: publicView follows damage');
+  const r2 = g.damage(1, 'a2');
   if (!(r2.health === 0 && r2.lost && g.lost && g.caughtBy === 'a2')) fail('health: second hit loses the game');
-  const r3 = damageExplorer(g, 1, 'a3');
+  const r3 = g.damage(1, 'a3');
   if (!(r3.health === 0 && g.caughtBy === 'a2')) fail('health: no-op once lost');
-  const g2 = createGame(generateDungeon(3));
+  const g2 = new Game(generateDungeon(3));
   g2.won = true;
-  if (!(damageExplorer(g2, 1, 'a1').health === 2 && !g2.lost)) fail('health: no-op once won');
+  if (!(g2.damage(1, 'a1').health === 2 && !g2.lost)) fail('health: no-op once won');
 }
 
 if (failures) {

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Dungeon settings</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #070913; --panel: #0e162a; --panel-2: #131e3a; --ink: #ede4cb; --muted: #7e89b5;
+    --line: #202e56; --line-hi: #2c3d72; --accent: #f5a42f; --accent-ink: #1c1004; --warn: #ff6a52; --safe: #53bfa8;
+    --font: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; color: var(--ink); background: var(--bg); font: 14px/1.45 var(--font); }
+  main { max-width: 720px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  h1 { margin: 0; font-size: 20px; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  h2 { margin: 20px 0 6px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 4px 14px; align-items: center; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); margin-bottom: -1px; }
+  .row.changed { border-color: var(--accent); position: relative; z-index: 1; }
+  .name { font-weight: 600; }
+  .hint { grid-column: 1; color: var(--muted); font-size: 12px; }
+  .badge { font-size: 10px; padding: 1px 6px; margin-left: 6px; border: 1px solid var(--line-hi); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; vertical-align: middle; }
+  .badge.live { color: var(--safe); border-color: var(--safe); }
+  .badge.wait { color: var(--accent); border-color: var(--accent); }
+  .ctl { display: flex; align-items: center; gap: 10px; grid-row: 1 / span 2; grid-column: 2; }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  input[type=number] { width: 84px; padding: 4px 6px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line-hi); font: inherit; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+  button, a.btn { font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line-hi); padding: 6px 14px; cursor: pointer; text-decoration: none; }
+  button.primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+  button:disabled { opacity: .45; cursor: default; }
+  .close { padding: 2px 10px; font-size: 18px; line-height: 1.2; }
+  .bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 10px 0; background: var(--bg); border-top: 1px solid var(--line); }
+  #msg { color: var(--muted); font-size: 13px; }
+  #msg.ok { color: var(--safe); } #msg.err { color: var(--warn); }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } .ctl { grid-row: auto; grid-column: 1; } }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Settings</h1>
+    <button class="close" id="close" title="Close without saving" aria-label="Close without saving">✕</button>
+  </header>
+  <p class="sub" id="sub">Tunables for this server only. <span class="badge live">live</span> changes apply as soon as you save; <span class="badge wait">next game</span> ones from the next game.</p>
+  <div id="form"></div>
+  <div class="bar">
+    <button class="primary" id="save" disabled>Save</button>
+    <span id="msg"></span>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let schema = [], saved = {}, draft = {}, pending = [];
+
+const dirtyKeys = () => schema.filter((s) => draft[s.key] !== saved[s.key]).map((s) => s.key);
+const fmt = (s, v) => (s.type === 'toggle' ? v : Number(v));
+
+function render() {
+  const form = $('form');
+  form.textContent = '';
+  let group = null;
+  for (const s of schema) {
+    if (s.group !== group) {
+      group = s.group;
+      const h = document.createElement('h2');
+      h.textContent = group;
+      form.append(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.dataset.key = s.key;
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = s.label;
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (s.when === 'live' ? 'live' : 'wait');
+    badge.textContent = s.when === 'live' ? 'live' : 'next game';
+    badge.dataset.badge = s.key;
+    name.append(badge);
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = s.hint;
+    const ctl = document.createElement('div');
+    ctl.className = 'ctl';
+    if (s.type === 'toggle') {
+      const label = document.createElement('label');
+      label.className = 'switch';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = draft[s.key];
+      const word = document.createElement('span');
+      word.textContent = box.checked ? 'On' : 'Off';
+      box.addEventListener('change', () => { draft[s.key] = box.checked; word.textContent = box.checked ? 'On' : 'Off'; changed(); });
+      label.append(box, word);
+      ctl.append(label);
+    } else {
+      const range = document.createElement('input');
+      range.type = 'range';
+      const num = document.createElement('input');
+      num.type = 'number';
+      for (const el of [range, num]) { el.min = s.min; el.max = s.max; el.step = s.step; el.value = draft[s.key]; }
+      range.addEventListener('input', () => { num.value = range.value; draft[s.key] = Number(range.value); changed(); });
+      num.addEventListener('input', () => {
+        if (num.value === '' || Number.isNaN(Number(num.value))) return;
+        draft[s.key] = Number(num.value);
+        range.value = num.value;
+        changed();
+      });
+      ctl.append(range, num);
+    }
+    row.append(name, hint, ctl);
+    form.append(row);
+  }
+  changed();
+}
+
+function changed() {
+  const dirty = dirtyKeys();
+  for (const row of document.querySelectorAll('.row')) row.classList.toggle('changed', dirty.includes(row.dataset.key));
+  for (const b of document.querySelectorAll('[data-badge]')) {
+    const s = schema.find((x) => x.key === b.dataset.badge);
+    if (s.when === 'next') b.textContent = pending.includes(s.key) ? 'next game · saved' : 'next game';
+  }
+  $('save').disabled = dirty.length === 0;
+  if (dirty.length) say(`${dirty.length} unsaved change${dirty.length === 1 ? '' : 's'}`);
+}
+
+function say(text, cls = '') { const m = $('msg'); m.textContent = text; m.className = cls; }
+
+async function load() {
+  const r = await fetch('/api/settings');
+  const v = await r.json();
+  schema = v.schema; saved = v.values; draft = { ...saved }; pending = v.pending;
+  render();
+  say('');
+}
+
+$('save').addEventListener('click', async () => {
+  $('save').disabled = true;
+  try {
+    const r = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values: draft }) });
+    const v = await r.json();
+    if (!r.ok) throw new Error(v.error || 'Save failed');
+    const live = schema.filter((s) => s.when === 'live' && draft[s.key] !== saved[s.key]).length;
+    schema = v.schema; saved = v.values; draft = { ...saved }; pending = v.pending;
+    render();
+    say(live || pending.length ? `Saved. ${live ? 'Live changes are in force now.' : ''} ${pending.length ? `${pending.length} setting${pending.length === 1 ? '' : 's'} apply from the next game.` : ''}`.replace(/\s+/g, ' ').trim() : 'Saved.', 'ok');
+  } catch (err) {
+    say(err.message, 'err');
+    changed();
+  }
+});
+
+$('close').addEventListener('click', () => {
+  if (dirtyKeys().length && !confirm('Discard unsaved changes?')) return;
+  location.href = '/';
+});
+
+load().catch((err) => say('Could not load settings: ' + err.message, 'err'));
+</script>
+</body>
+</html>

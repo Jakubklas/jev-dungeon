@@ -31,30 +31,30 @@ if (LIVE) {
   if (!process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is missing from .env');
   console.warn(`LIVE: real Jev calls, up to ${TICKS} ticks. Each tick bills 1-2 explorer requests plus 1 per hunting adversary, each hedged x2.`);
 }
-const { newTestGame, playTurn } = await import('../src/turn.js');
-const { setAsker, setMemoryDir } = await import('../src/characters/explorer/brain.js');
-const { setDecider, seesExplorer } = await import('../src/characters/adversary/adversary.js');
+const { newTestGame } = await import('../src/turn.js');
+const { seesExplorer } = await import('../src/characters/adversary/adversary.js');
 const { TestbedError } = await import('../src/testbed.js');
 
 const dir = mkdtempSync(join(tmpdir(), 'testbed-run-'));
-setMemoryDir(pathToFileURL(dir + '/'));
+const url = pathToFileURL(dir + '/');
+let opts = { memoryDir: url, dir: url };
 if (!LIVE) {
   // Stub answers: first option of every Choice (the brain shuffles options, so this is a random pick).
   const first = (q) => Object.keys(q.criteria ?? {})[0];
   const stub = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) =>
     [k, q.type === 'noul' ? { noul: 0.9 } : { choice: first(q), probabilities: { [first(q)]: 1 }, confidence: 1 }]));
-  setAsker(stub);
-  setDecider(stub);
+  opts = { ask: stub, decide: stub, memoryDir: url, dir: url };
 }
 
-let game, memory;
+let run;
 try {
-  ({ game, memory } = newTestGame(flags));
+  run = newTestGame(flags, opts);
 } catch (err) {
   if (err instanceof TestbedError) { console.error(`Bad testbed config: ${err.message}`); process.exit(2); }
   throw err;
 }
 
+const { game } = run;
 const draw = () => {
   const ghosts = new Map(game.adversaries.map((a) => [a.pos.join(), a]));
   const t = game.dungeon.treasure;
@@ -73,13 +73,13 @@ console.log(`Testbed ${d.width}x${d.height}, seed ${d.seed}, chest ${d.treasure 
 console.log(draw());
 for (let tick = 1; tick <= TICKS && !game.won && !game.lost; tick++) {
   // playTurn, not takeTurn + stepAdversaries: it also records hits in the explorer's memory, as the game does.
-  const turn = await playTurn(game, memory, pathToFileURL(dir + '/'));
+  const turn = await run.playTurn();
   const { events } = turn;
   const dec = turn.decision;
   const parts = [`#${String(turn.step).padStart(3)} ${String(turn.dir).padEnd(5)} -> ${game.pos.join(',').padEnd(5)}`];
   if (turn.forced) parts.push('forced');
   if (dec) parts.push(`DECIDE[${dec.trigger}] mood=${dec.sentiment?.choice ?? '-'} tactic=${dec.tactic?.choice ?? '-'}`);
-  parts.push(`approach=${memory.approach.id} mood=${memory.sentiment.id}`);
+  parts.push(`approach=${run.memory.approach.id} mood=${run.memory.sentiment.id}`);
   if (turn.review) parts.push(`review=${JSON.stringify(turn.review)}`);
   if (turn.policy) parts.push(`policy=${JSON.stringify(turn.policy)}`);
   const seen = game.adversaries.filter((a) => seesExplorer(game, a)).map((a) => `${a.id}@${a.pos}(${a.mode})`);

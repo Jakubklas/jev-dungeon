@@ -4,6 +4,7 @@
 // `newTestGame(config)` turns it into a game. No Jev calls here. See AGENTS.md "Testbed".
 import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS } from './props/catalog.js';
+import { Adversary } from './characters/adversary/adversary.js';
 
 export const TESTBED_MIN = 3; // interior floor cells per side
 export const TESTBED_MAX = 60;
@@ -292,8 +293,8 @@ export function buildArena(rawConfig = {}) {
     }
     positions = shuffle(rand, pool).slice(0, cfg.numAdversaries);
   }
-  // Exactly the contracted Adversary shape (AGENTS.md: don't add fields).
-  const adversaries = positions.map((pos, i) => ({ id: `a${i + 1}`, pos, mode: 'patrol', budget: 0, lastSeen: null, goal: null }));
+  // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
+  const adversaries = positions.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos }));
 
   const dungeon = {
     seed: cfg.seed,
