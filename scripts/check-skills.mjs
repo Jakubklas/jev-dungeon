@@ -356,7 +356,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
       if (q.type === 'noul') return [k, { noul: 0.9 }];
       const keys = Object.keys(q.criteria);
-      const c = k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
+      const c = k === 'sentiment' ? 'bold' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
       return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
     }));
   };

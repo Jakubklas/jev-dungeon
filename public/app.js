@@ -1310,12 +1310,10 @@ function probRows(probs, chosen, { title, tint } = {}) {
 
 // Short static description per sentiment (the backend no longer sends a profile note).
 const SENTIMENT_NOTES = {
-  scared: 'Jittery: sees threats everywhere and prefers to hide or run.',
-  risk_averse: 'Avoids danger where it can and keeps well clear of adversaries.',
-  cautious: 'Careful: weighs the risk of each step and keeps its distance.',
-  curious: 'Drawn to the unknown and eager to see what lies ahead.',
-  courageous: 'Bold: willing to cut close past an adversary to get ahead.',
-  aggressive: 'Reckless: presses forward and stands its ground.',
+  wary: 'Wary: gets away first, keeps its distance and avoids dead ends.',
+  steady: 'Steady: sticks to the plan, explores and takes coins on the way.',
+  greedy: 'Greedy: after coins and unexplored rooms; detours are fine.',
+  bold: 'Bold: takes the fight, engaging lone or weak adversaries.',
 };
 
 // Landmarks (fog-safe: they are known cells). One colour and glyph per kind.

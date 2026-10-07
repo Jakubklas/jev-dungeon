@@ -57,59 +57,41 @@ const askReal = ({ state, questions, body }) => askJev(state, questions, body);
 //   when       - what Jev reads when picking it (concrete circumstances)
 //   skill_priority - the mind's rule for skills: in the `skill` question and, while a skill is offered, next_move's priorities
 export const SENTIMENTS = {
-  scared: {
-    min_gap: 5, end_ticks: 6,
-    move_priority: 'Scared: never move toward an adversary; take the move leaving the most steps between you; avoid dead ends.',
-    when: 'Pick when cornered: a chasing adversary within about 4 steps, in a corridor, dead end or small room (a side under 6), with no route past it whose closest approach is 3 or more.',
-    priority: 'Scared: getting away comes first. Never move toward an adversary; take the move that leaves the most steps between you and avoid every dead end.',
-    note: 'Flees first and never moves toward an adversary.',
+  wary: {
+    min_gap: 4, end_ticks: 5,
+    move_priority: 'Wary: never move toward an adversary; grow the distance, keep exits open, avoid dead ends.',
+    when: 'Upside: gets you out alive. Risk: gives up coins and progress. Pick when outnumbered (2+ adversaries in sight or remembered), or a chaser is within 3 steps with no route past it, or only 1 life is left.',
+    priority: 'Wary: getting away comes first. Never move toward an adversary; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it.',
+    note: 'Gets away first: runs, hides, never moves toward an adversary.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.',
   },
-  risk_averse: {
-    min_gap: 4, end_ticks: 5,
-    move_priority: 'Risk-averse: when in doubt grow the distance or keep more exits open.',
-    when: 'Pick when an adversary is in sight 5 or more steps away but the ground is uncertain: few known exits, a corridor, or the best route past it comes within 3 steps.',
-    priority: 'Risk-averse: keep at least 4 steps from adversaries; when in doubt take the move that grows the distance or keeps more exits open, even at the cost of progress.',
-    note: 'Prefers retreat or hiding over passing.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready; block when none is adjacent but one can reach you.',
-  },
-  cautious: {
+  steady: {
     min_gap: 3, end_ticks: 4,
-    move_priority: 'Cautious: favour well-connected ground over dead ends.',
-    when: 'Pick when danger is recent or near: fewer than the full lives left, a hit or chase in `recent.events`, an adversary seen a few steps ago (`threats.remembered`), or an adversary in sight that is far (6+ steps) or still patrolling and has not reacted.',
-    priority: 'Cautious: keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
-    note: 'Favours well-connected ground over dead ends and corridors.',
+    move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when none of the others clearly fits: nothing in sight, or an adversary far off (6+ steps) or patrolling and not yet chasing.',
+    priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
+    note: 'Sticks to the plan: explores, coins on the way, keeps a safe distance.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
   },
-  // The opposite of cautious: drawn to the unknown, it accepts corridors and side branches that
-  // still lead somewhere new. Same 3-step safety floor; it just gets back to exploring sooner.
-  curious: {
+  greedy: {
     min_gap: 3, end_ticks: 2,
-    move_priority: 'Curious: prefer the move revealing the most new cells or a never-visited cell.',
-    when: 'Pick when it is safe to explore boldly: full lives, no adversary in sight or remembered (`threats.remembered` empty), no recent chase, and plenty of unexplored space (`surroundings.unexplored_by_direction`).',
-    priority: 'Curious: the unknown comes first. Prefer the move that would reveal the most new cells or steps onto a never-visited cell; corridors and side branches are fine while they lead towards unexplored space. Still keep at least 3 steps from adversaries.',
-    note: 'Drawn to the unknown: goes for the most new cells, even down corridors.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on exploring.',
+    move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
+    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no chaser in sight and 2 lives or hit protection.',
+    priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from adversaries.',
+    note: 'Goes after coins and unexplored rooms; detours are fine.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on looting.',
   },
-  courageous: {
-    min_gap: 2, end_ticks: 2,
-    move_priority: 'Courageous: hold your nerve and keep making progress.',
-    when: 'Pick when an adversary is in sight but there is room to work with: a big room with several exits, a route past it toward unexplored space whose closest approach is only 2 steps, or a lone adversary low on hp.',
-    priority: 'Courageous: hold your nerve. Do not give up ground just because an adversary is in sight; engage one that blocks your way or is low on hp, else keep 2+ steps and keep making progress.',
-    note: 'Holds its nerve; fights when it pays.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one; else block if one can reach you.',
-  },
-  aggressive: {
+  bold: {
     min_gap: 2, end_ticks: 1,
-    move_priority: 'Aggressive: push for the fight or the goal; moving toward an adversary is fine.',
-    when: 'Pick when a fight or the goal is worth the risk: a life to spare or hit protection, the sword ready and a lone or weakened adversary in sight (a dispel may drop a coin); or the portal seen with a path keeping adversaries 2+ steps off.',
-    priority: 'Aggressive: take the fight or push for the goal. Engage an adversary you can beat; moving toward one is fine; take the move that makes the most progress.',
-    note: 'Takes fights it can win and pushes for the goal.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready.',
+    move_priority: 'Bold: take the fight; moving toward an adversary is fine.',
+    when: 'Upside: dispelling pays a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when you have full lives or hit protection, the sword is ready and one adversary is in sight (or a weakened one, `hp` below max).',
+    priority: 'Bold: take the fight. Engage a lone or weakened adversary you can beat; moving toward one is fine; keep at least 2 steps unless striking.',
+    note: 'Takes fights it can win: engages lone or weak adversaries.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
   },
 };
-const DEFAULT_SENTIMENT = 'cautious';
-const profileNote = (id) => `min gap ${SENTIMENTS[id].min_gap}; wary ${SENTIMENTS[id].end_ticks} tick${SENTIMENTS[id].end_ticks === 1 ? '' : 's'} after losing sight. ${SENTIMENTS[id].note}`;
+const DEFAULT_SENTIMENT = 'steady';
+const profileNote = (id) => `min gap ${SENTIMENTS[id].min_gap}; alert ${SENTIMENTS[id].end_ticks} tick${SENTIMENTS[id].end_ticks === 1 ? '' : 's'} after losing sight. ${SENTIMENTS[id].note}`;
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
 
 const TRIGGER_TEXT = {
@@ -118,6 +100,8 @@ const TRIGGER_TEXT = {
   tactic_failed: 'The current tactic stopped working: its target is gone or the adversary got closer than the minimum gap.',
   chase_over: 'No adversary has been in sight for a while: the encounter is over and exploring resumes.',
   exit: 'The portal (the way out) has just been seen.',
+  coins: 'Coins have just come into view nearby.',
+  dispelled: 'The explorer has just dispelled an adversary; others may remain.',
   review: 'The explorer just dropped an exploration approach that was not working and switched to another.',
   hit: 'The explorer just lost a life to an adversary: rethink whether to keep at it.',
 };
@@ -173,7 +157,7 @@ const withoutKeys = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k
 // the skill options carry the rest), so the request stays small.
 const skillStates = (summaries) => Object.fromEntries(summaries.map((k) => [k.id, k.ready ? 'ready' : `ready in ${k.cooldown_left}`]));
 
-// "cautious×3 → scared": the mind picks as runs, oldest first.
+// "steady×3 → wary": the mind picks as runs, oldest first.
 function mindRuns(history) {
   const runs = [];
   for (const h of history) {
@@ -433,6 +417,10 @@ export class ExplorerBrain {
     // encounter starts on the same tick as a pending decision (start, exit, review), the
     // encounter trigger wins and the pending one is dropped: one sentiment call, not two.
     let trigger = enc.trigger ?? info.pending;
+    // Coins in view with no other decision due: ask the mood first (greedy may fit), then next_approach below.
+    // Same gates as askCoins; the 10-step cap is #coinStep (set when a coin decision runs).
+    if (!trigger && this.#coinDue && !forced && !inSight && !isTactic(memory.approach.id) && memory.approach.id !== 'collect_coins' && !this.#leaving() && !this.#leaveDue &&
+      step - info.lastDecision >= REDECIDE_COOLDOWN && !(step - this.#review.step >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY)) trigger = 'coins';
     if (trigger && forced && !inSight) {
       info.pending = trigger;
       trigger = null;
@@ -518,9 +506,9 @@ export class ExplorerBrain {
       this.#leaveDue = false;
       questions.leave_now = this.#leaveQuestion(sit);
     }
-    // Coin decision: a new pile came into view nearby. next_approach, in this tick's request: no sentiment call
-    // (mood triggers are P4's). Not beside a tactic, a review or leave_now (they are the big requests); it waits.
-    const askCoins = this.#coinDue && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
+    // Coin decision: a new pile came into view nearby. next_approach, in this tick's request, after the sentiment call
+    // (only on a decision tick: the `coins` trigger asked the mood just before, or another trigger's call serves). Not beside a tactic, a review or leave_now (they are the big requests); it waits.
+    const askCoins = this.#coinDue && !!trigger && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
       approachId !== 'collect_coins' && !this.#leaving();
     if (askCoins) {
       this.#coinDue = false;
@@ -657,6 +645,7 @@ export class ExplorerBrain {
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
         this.#everSeen.delete(e.id); // so a lone survivor in sight may still be "the only one it knows of"
         this.#struck.delete(e.id);
+        this.#encounter.pending ??= 'dispelled'; // rethink the mood next tick (a win ends the game first)
       }
     }
     return key;
@@ -730,10 +719,9 @@ export class ExplorerBrain {
       sentiment: {
         type: 'choice',
         instructions:
-          `${TRIGGER_TEXT[trigger]} How should the explorer feel right now? The mood is not a label: it sets how close adversaries may come ` +
-          '(min gap), how long the explorer stays wary after losing sight of them, and how boldly it moves. Judge from `surroundings`, ' +
-          '`threats` (in sight, remembered, encounter: space, gap, routes, hiding, dead ends, portal), `recent` and `self.mind`. ' +
-          'Pick what the circumstances call for, not the last mood by habit.',
+          `${TRIGGER_TEXT[trigger]} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
+          'The mood sets how close adversaries may come (min gap) and how long it stays wary after losing sight of them. Judge from `surroundings`, ' +
+          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.',
         criteria,
       },
     };

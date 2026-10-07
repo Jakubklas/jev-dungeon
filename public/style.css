@@ -179,12 +179,10 @@ ul:empty { display: none; }
 /* v4 sentiment: one muted tint per mood, used by the chip, the bubble tag and the bars.
    Unknown ids keep the neutral default, so a refined sentiment list still looks fine. */
 [data-sentiment] { --senti: var(--muted); }
-[data-sentiment="courageous"] { --senti: #f4b43e; }
-[data-sentiment="aggressive"] { --senti: #f3684f; }
-[data-sentiment="curious"] { --senti: #88a5ef; }
-[data-sentiment="cautious"] { --senti: #64c3a9; }
-[data-sentiment="risk_averse"] { --senti: #b0bf73; }
-[data-sentiment="scared"] { --senti: #b38fe3; }
+[data-sentiment="bold"] { --senti: #f3684f; }
+[data-sentiment="greedy"] { --senti: #f4b43e; }
+[data-sentiment="steady"] { --senti: #64c3a9; }
+[data-sentiment="wary"] { --senti: #b38fe3; }
 .bubble.explorer[data-sentiment] { border-color: color-mix(in srgb, var(--accent) 55%, var(--senti)); }
 .senti-tag {
   display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 9px; line-height: 14px; vertical-align: 1px;
