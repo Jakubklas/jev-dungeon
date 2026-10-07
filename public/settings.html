@@ -17,6 +17,13 @@
   header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
   h1 { margin: 0; font-size: 20px; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
   .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .tabs { display: flex; gap: 0; margin-bottom: 4px; border-bottom: 1px solid var(--line-hi); overflow-x: auto; }
+  .tab { flex: 0 0 auto; margin-bottom: -1px; padding: 8px 16px; color: var(--muted); background: transparent; border: 1px solid transparent; border-bottom-color: var(--line-hi); letter-spacing: .08em; text-transform: uppercase; font-size: 12px; }
+  .tab[aria-selected=true] { color: var(--accent); background: var(--panel); border-color: var(--line-hi); border-bottom-color: var(--panel); }
+  .tab .dot { display: inline-block; min-width: 16px; margin-left: 6px; padding: 0 4px; color: var(--accent-ink); background: var(--accent); font-size: 10px; line-height: 16px; text-align: center; }
+  .tab .dot:empty { display: none; }
+  .panel[hidden] { display: none; }
+  .panel > h2:first-child { margin-top: 12px; }
   h2 { margin: 20px 0 6px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
   .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 4px 14px; align-items: center; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); margin-bottom: -1px; }
   .row.changed { border-color: var(--accent); position: relative; z-index: 1; }
@@ -60,16 +67,66 @@ let schema = [], saved = {}, draft = {}, pending = [];
 const dirtyKeys = () => schema.filter((s) => draft[s.key] !== saved[s.key]).map((s) => s.key);
 const fmt = (s, v) => (s.type === 'toggle' ? v : Number(v));
 
+// Tabs bundle the schema's groups; a group not listed here lands in an 'Other' tab.
+const TABS = [
+  { id: 'ghosts', label: 'Ghosts', groups: ['Adversaries', 'Pack'] },
+  { id: 'combat', label: 'Combat', groups: ['Skills', 'Damage'] },
+  { id: 'world', label: 'World', groups: ['Explorer', 'Map', 'Spawn'] },
+];
+const tabOf = (group) => (TABS.find((t) => t.groups.includes(group)) || { id: 'other' }).id;
+let activeTab = location.hash.slice(1);
+
+function tabList() {
+  const tabs = TABS.map((t) => ({ ...t, items: [] }));
+  const other = { id: 'other', label: 'Other', groups: [], items: [] };
+  for (const s of schema) (tabs.find((t) => t.id === tabOf(s.group)) || other).items.push(s);
+  // Keep the schema's order within each tab, grouped by the listed group order.
+  for (const t of tabs) t.items.sort((a, b) => t.groups.indexOf(a.group) - t.groups.indexOf(b.group));
+  return [...tabs, other].filter((t) => t.items.length);
+}
+
+function showTab(id) {
+  activeTab = id;
+  for (const b of document.querySelectorAll('.tab')) b.setAttribute('aria-selected', String(b.dataset.tab === id));
+  for (const p of document.querySelectorAll('.panel')) p.hidden = p.dataset.tab !== id;
+  history.replaceState(null, '', '#' + id);
+}
+
 function render() {
   const form = $('form');
   form.textContent = '';
-  let group = null;
-  for (const s of schema) {
+  const tabs = tabList();
+  const bar = document.createElement('div');
+  bar.className = 'tabs';
+  bar.setAttribute('role', 'tablist');
+  form.append(bar);
+  for (const t of tabs) {
+    const b = document.createElement('button');
+    b.className = 'tab';
+    b.type = 'button';
+    b.setAttribute('role', 'tab');
+    b.dataset.tab = t.id;
+    b.textContent = t.label;
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.dataset.dot = t.id;
+    b.append(dot);
+    b.addEventListener('click', () => showTab(t.id));
+    bar.append(b);
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.setAttribute('role', 'tabpanel');
+    panel.dataset.tab = t.id;
+    form.append(panel);
+  }
+  let group = null, panel = null;
+  for (const t of tabs) for (const s of t.items) {
+    panel = form.querySelector(`.panel[data-tab="${t.id}"]`);
     if (s.group !== group) {
       group = s.group;
       const h = document.createElement('h2');
       h.textContent = group;
-      form.append(h);
+      panel.append(h);
     }
     const row = document.createElement('div');
     row.className = 'row';
@@ -114,8 +171,9 @@ function render() {
       ctl.append(range, num);
     }
     row.append(name, hint, ctl);
-    form.append(row);
+    panel.append(row);
   }
+  showTab(tabs.some((t) => t.id === activeTab) ? activeTab : tabs[0].id);
   changed();
 }
 
@@ -125,6 +183,10 @@ function changed() {
   for (const b of document.querySelectorAll('[data-badge]')) {
     const s = schema.find((x) => x.key === b.dataset.badge);
     if (s.when === 'next') b.textContent = pending.includes(s.key) ? 'next game · saved' : 'next game';
+  }
+  for (const d of document.querySelectorAll('[data-dot]')) {
+    const n = schema.filter((s) => tabOf(s.group) === d.dataset.dot && dirty.includes(s.key)).length;
+    d.textContent = n ? String(n) : '';
   }
   $('save').disabled = dirty.length === 0;
   if (dirty.length) say(`${dirty.length} unsaved change${dirty.length === 1 ? '' : 's'}`);
