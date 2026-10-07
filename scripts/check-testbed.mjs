@@ -337,6 +337,29 @@ check(explorerCalls > 0, 'stub explorer was asked');
   console.log(`coins: testbed option, ASCII map, 20 generated seeds (${spreadOk} spread over every room)`);
 }
 
+// 9. winOnClear: the game is won when the last ghost is gone (a dispel happens in the explorer's turn;
+// here the ghost is removed by hand, as resolveAttack does). Off by default; no ghost at the start never wins.
+{
+  check(normalizeConfig({}).winOnClear === false && normalizeConfig({ winOnClear: 'true' }).winOnClear === true, 'winOnClear: default off, URL string parses');
+  const mk = (cfg) => newTestGame({ size: '7x7', seed: 1, ...cfg }, { ask, decide, memoryDir: url, dir: url });
+  const on = mk({ numAdversaries: 2, winOnClear: true });
+  check(on.view().win_on_clear === true && !on.game.won, 'winOnClear: flag in the view, not won at the start');
+  on.game.adversaries.length = 1;
+  await on.playTurn();
+  check(!on.game.won, 'winOnClear: one ghost left is not a win');
+  on.game.adversaries.length = 0;
+  await on.playTurn();
+  check(on.game.won && on.view().over, 'winOnClear: the last ghost gone wins');
+  const off = mk({ numAdversaries: 1 });
+  off.game.adversaries.length = 0;
+  await off.playTurn();
+  check(!off.game.won && off.view().win_on_clear === false, 'winOnClear off: clearing the room does not win');
+  const none = mk({ numAdversaries: 0, winOnClear: true });
+  await none.playTurn();
+  check(!none.game.won, 'winOnClear: an arena with no ghosts never wins by clearing');
+  console.log('winOnClear: option, view flag, win on the last ghost');
+}
+
 console.log(`stub calls: explorer ${explorerCalls}, adversaries ${adversaryCalls} (no network)`);
 rmSync(dir, { recursive: true, force: true });
 

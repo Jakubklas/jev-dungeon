@@ -28,6 +28,7 @@ export const DEFAULTS = {
   explorerSkills: 'default', // 'default' | 'none' | a list of loadout ids (<= 4)
   ghostSkills: 'default', // 'default' (claw) | 'none' (harmless ghosts)
   ghostHp: null, // 1..5; null = the Skills setting
+  winOnClear: false, // true: the game is won when the last ghost is dispelled (needs at least one ghost at the start)
   coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
 export const TESTBED_MAX_COINS = 60;
@@ -160,6 +161,7 @@ export function normalizeConfig(raw = {}) {
       if (cfg.coins < 0 || cfg.coins > TESTBED_MAX_COINS) bad(`coins must be 0..${TESTBED_MAX_COINS} or a list of cells`);
     }
   }
+  if (given('winOnClear')) cfg.winOnClear = toBool(raw.winOnClear, 'winOnClear');
   if (given('ghostHp')) {
     cfg.ghostHp = toInt(raw.ghostHp, 'ghostHp');
     if (cfg.ghostHp < 1 || cfg.ghostHp > TESTBED_MAX_GHOST_HP) bad(`ghostHp must be 1..${TESTBED_MAX_GHOST_HP}`);
@@ -388,6 +390,7 @@ export function buildArena(rawConfig = {}) {
     props,
     decor: [],
     testbed: true,
+    winOnClear: !!cfg.winOnClear,
   };
   // Coins: explicit cells, or a count spread by src/coins.js on its own stream (the arena never changes).
   if (fixedCoins) {

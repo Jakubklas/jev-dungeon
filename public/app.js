@@ -561,6 +561,28 @@ function drawPortal(px, py, now, alpha) {
   b.globalAlpha = 1;
 }
 
+// A short golden glow around the knight when a coin is picked up: rings that swell and fade,
+// plus four sparkles drifting up. Visual only.
+function drawCoinGlow(px, py, now) {
+  const t = (now - coinGlowAt) / COIN_GLOW_MS;
+  if (t < 0 || t >= 1) return;
+  const fade = 1 - t;
+  b.save();
+  b.globalCompositeOperation = 'lighter';
+  b.fillStyle = '#ffc633';
+  for (const [k, a] of [[1, .12], [.7, .16], [.4, .22]]) {
+    b.globalAlpha = a * fade;
+    pixelEllipse(px, py - 10, Math.round((8 + 14 * t) * k), Math.round((10 + 12 * t) * k));
+  }
+  b.globalAlpha = .9 * fade;
+  b.fillStyle = '#fff1a8';
+  for (let i = 0; i < 4; i++) {
+    const a = i * 1.6 + 5 * t;
+    b.fillRect(Math.round(px + Math.cos(a) * (6 + 10 * t)), Math.round(py - 10 - 8 * t + Math.sin(a) * 6), 1, 1);
+  }
+  b.restore();
+}
+
 function draw(now) {
   b.fillStyle = PALETTE.void;
   b.fillRect(0, 0, buf.width, buf.height);
@@ -927,6 +949,7 @@ function drawEntity(en, now, cx, cy) {
     // Hit protection (grace after a hit): the knight blinks.
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
+    drawCoinGlow(px, py, now);
     if (game?.block) drawShield(px + (en.face < 0 ? -12 : 8), py - 16);
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
@@ -1543,9 +1566,13 @@ function logEvents(turn) {
   }
   eventLog.length = Math.min(eventLog.length, LOG_MAX);
   if ((turn.events ?? []).some((e) => e.type === 'hit')) flashHit();
+  if ((turn.events ?? []).some((e) => e.type === 'coin')) coinGlowAt = performance.now();
 }
 
 // Brief red flash over the board when Jev loses a life (restarts the CSS animation).
+let coinGlowAt = -1e9; // when the knight last picked up a coin (drives the golden glow)
+const COIN_GLOW_MS = 700;
+
 function flashHit() {
   const wrap = $('board-wrap');
   wrap.classList.remove('hit');
@@ -1739,8 +1766,8 @@ function endGame() {
   const lost = !!game.lost;
   setStatus(lost
     ? `Jev lost all lives after ${game.steps} steps.`
-    : `Jev found the treasure in ${game.steps} steps.`);
-  $('over-title').textContent = lost ? 'Jev lost all lives' : 'Treasure found';
+    : game.win_on_clear ? `Jev cleared the room in ${game.steps} steps.` : `Jev found the treasure in ${game.steps} steps.`);
+  $('over-title').textContent = lost ? 'Jev lost all lives' : game.win_on_clear ? 'Room cleared' : 'Treasure found';
   $('overlay').querySelector('.modal').classList.toggle('lost', lost);
   const stats = {
     Steps: game.steps,

@@ -19,11 +19,13 @@ export class Run {
   #dir;
   #memoryDir;
   #decide; // null = the real Jev
+  #winOnClear;
 
   constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer' } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;
+    this.#winOnClear = !!dungeon.winOnClear && adversaries.length > 0; // testbed: dispelling the last ghost wins
     this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills });
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
@@ -47,6 +49,7 @@ export class Run {
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
     const coinsBefore = game.coins;
     const explorer = await this.explorer.takeTurn();
+    if (this.#winOnClear && !game.lost && game.adversaries.length === 0) game.won = true; // the explorer's strike dispelled the last ghost
     // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
     // read from game.strikes (struck / dispelled need the brain's list).
     const skillEvents = explorer.skill_events ?? game.strikes.filter((s) => s.by === 'explorer').map((s) => ({ id: s.by, type: 'strike', cells: s.cells, result: s.result }));
@@ -75,6 +78,7 @@ export class Run {
       invulnerable: graceLeft(game) > 0,
       over: game.won || game.lost,
       testbed: !!game.dungeon.testbed,
+      win_on_clear: !!game.dungeon.winOnClear,
     };
   }
 }

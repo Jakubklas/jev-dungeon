@@ -389,6 +389,7 @@ The money system: coins lie around the dungeon from the start, and a dispelled g
 | `explorerSkills` | `'default'` | The explorer's skill set: `'default'` (sword strike + shield block), `'none'`, or a list of loadout ids, at most 4 (URL: `sword_strike;shield_block`). A bad id, a duplicate or more than 4 throws `TestbedError`. `buildArena` returns it in `config`; the Run builds the brain with `explorerSkillSetOf(config)`. |
 | `ghostSkills` | `'default'` | `'default'` (claw strike) or `'none'` (harmless ghosts, for exploring tests); `ghostSkillSetOf(config)` gives the `buildSkillSet` argument. |
 | `ghostHp` | `null` | 1..5 hit points per ghost; `null` = the Skills setting `ghostHp`. |
+| `winOnClear` | `false` | `true`: the game is won the moment the last ghost is dispelled (checked in `Run.playTurn` right after the explorer's turn; needs at least one ghost at the start, so a ghost-free arena never wins this way). `view().win_on_clear` drives the UI's "Room cleared" text. Jev's rules text still talks about the chest. |
 | `coins` | `0` | Coins lying around at the start: a count 0..60 (spread by `spawnCoins` on its own stream, so the arena is unchanged) or explicit cells `[[x, y], …]` (URL: `"x,y;x,y"`; not wall, not the start). ASCII `c` cells override it. Independent of the `maxCoins` / `floorPerCoin` settings. |
 
 Unknown keys, bad values and impossible placements throw `TestbedError` with a readable message (the server answers **400**).
