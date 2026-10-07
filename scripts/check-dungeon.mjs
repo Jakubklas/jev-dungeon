@@ -954,7 +954,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       const start = [5, 4], ghost = [1, 7];
       // The boldest mood (smallest min gap) by value, not by name, so a mood rename keeps every tactic open.
       const boldest = Object.entries(SENTIMENTS).sort((a, b) => a[1].min_gap - b[1].min_gap)[0][0];
-      for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
+      // are written into memory by hand, because a real noteHit would take C out of the neutral zone and close tactics.
+      for (const conf of [false, true]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -963,13 +965,17 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         const bb = new ExplorerBrain(new KnownWorld(big), {
           ask: answerWith((k, ds) => (k === 'sentiment' ? boldest : k === 'skill' ? 'none' : ds.includes('stay') ? 'stay' : ds[0])),
           memoryDir: pathToFileURL(bd + '/'),
+          confidence: conf,
         });
         await withSeed(1, async () => {
           big.pos = [5, 8]; big.adversaries = [chaser([11, 8], 'chase', 'a2')]; // seen, then remembered (out of sight from the start)
           await bb.takeTurn();
           big.pos = [...start]; big.adversaries = [];
           for (let i = 0; i < 4; i++) { await bb.takeTurn(); big.pos = [...start]; }
-          await bb.noteHit('a2'); await bb.noteHit('a2');
+          if (conf) {
+            bb.memory.encounters.hits = 2;
+            for (const step of [3, 4]) bb.memory.events.push({ step, text: 'Hit by a2: 1 of 2 lives left.' });
+          } else { await bb.noteHit('a2'); await bb.noteHit('a2'); }
           // A full plan.tried (5 review switches), as late in a long game; the tactic request leaves it out.
           bb.memory.approach.tried = Array.from({ length: LIMITS.triedApproaches }, (_, i) => ({ id: ['nearest_frontier', 'far_side', 'largest_unexplored'][i % 3], approach: 'x', steps: `${i * 9}–${i * 9 + 8}`, reason: 'Jev judged it not working (31%): 4 cells revealed in 8 steps, 2 revisits in the last 10.' }));
           big.adversaries = [chaser(ghost, mode)];
@@ -981,7 +987,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
         if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
         if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
-        console.log(`  worst-case decision tick (${mode}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        console.log(`  worst-case decision tick (${mode}${conf ? ', confidence ON' : ''}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
     }

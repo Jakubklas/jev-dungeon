@@ -9,7 +9,7 @@ the main source of hits today), and prove in free stubbed runs, with a new fight
 signal before any paid run. The first sketch had eight weaknesses (section 2). The most serious is that fights
 are rare, so a fight-driven score barely moves. The plan says plainly when to stop.
 
-Status: **C1, C0 and C2 built (module, duel harness, measurement, wiring with the toggle off, request-hash baseline); C3 onward is proposed.** Per AGENTS.md this plan is not code until the user approves a phase.
+Status: **C1, C0, C2 and C3 built (module, duel harness, measurement, wiring, request-hash baseline, gates and the word, UI meter; toggle off by default); C4 onward is proposed.** Per AGENTS.md this plan is not code until the user approves a phase.
 Code wins over this plan (rule 3).
 
 ## 1. The model (v3)

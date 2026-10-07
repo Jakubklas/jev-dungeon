@@ -2,6 +2,7 @@
 // calm drift, bands, neutral-zone identity, a quiet game's range, determinism, JSON round-trip, purity.
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
+import { SENTIMENTS, effectiveGap, effectiveSentiment, effectiveProfile, CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
 import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
@@ -114,6 +115,33 @@ ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: true }).va
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, engaging: true }).value === 50, 'engaging: not pressed');
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, stunned: ['a1'] }).value === 50, 'stunned: not pressed');
 ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40.3, 'calm turn drift');
+
+// 11. gate table (C3): C from 10 to 95 gives the gap delta and engage open/closed; the effective profile templates the mood lines.
+{
+  const want = (C) => (C < 30 ? 2 : C < 40 ? 1 : C < 80 ? 0 : -1);
+  for (let C = 10; C <= 95; C += 1) {
+    ok(gaps(C) === want(C), `gaps(${C}) = ${gaps(C)}, want ${want(C)}`);
+    ok(engageOpen(C) === (C >= 40), `engageOpen(${C})`);
+    for (const [id, s] of Object.entries(SENTIMENTS)) {
+      const g = effectiveGap(s.min_gap, C);
+      ok(g === Math.max(s.min_gap + want(C), want(C) < 0 ? 2 : 0), `${id} effective gap at C ${C}: ${g}`);
+      ok(g >= 2, `${id} gap never below 2 (C ${C})`);
+      const e = effectiveSentiment(id, C);
+      ok(e.min_gap === g, `${id} effectiveSentiment gap at C ${C}`);
+      if (want(C) === 0) ok(e === s, `${id}: neutral zone returns the SENTIMENTS entry itself (C ${C})`);
+      for (const k of ['priority', 'move_priority']) {
+        const m = /at least (\d+) steps/.exec(e[k]);
+        if (m) ok(Number(m[1]) === g, `${id}.${k} says ${m[1]}, effective gap ${g} (C ${C})`);
+        else ok(e[k] === s[k], `${id}.${k} has no gap number and stays unchanged`);
+      }
+    }
+  }
+  ok(effectiveGap(3, null) === 3 && effectiveSentiment('wary', null) === SENTIMENTS.wary, 'C null (toggle off) is the identity');
+  ok(effectiveProfile({ sentiment: { id: 'bold' } }, 35).min_gap === 3 && effectiveProfile({ sentiment: { id: 'bold' } }, 85).min_gap === 2, 'effectiveProfile: bold 2 -> 3 at 35, stays 2 at 85 (floor)');
+  ok(effectiveProfile({ sentiment: { id: 'wary' } }, 20).min_gap === 6 && effectiveProfile({ sentiment: { id: 'wary' } }, 85).min_gap === 3, 'effectiveProfile: wary 4 -> 6 at 20, 3 at 85');
+  ok(effectiveProfile({}, 50) === SENTIMENTS.steady, 'effectiveProfile without a mood falls back to steady');
+  ok(CONFIDENCE_SENTENCE.length < 160, 'the sentence stays short');
+}
 
 // 10. purity: no imports, no Math.random, no Date
 const src = readFileSync(new URL('../src/characters/explorer/confidence.js', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');

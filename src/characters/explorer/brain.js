@@ -29,7 +29,7 @@ import {
   LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
-import { PRESSED_RANGE, apply as applyConfidence, band as confidenceBand, closeEncounter, createConfidence, seeChase } from './confidence.js';
+import { PRESSED_RANGE, apply as applyConfidence, band as confidenceBand, closeEncounter, createConfidence, engageOpen, gaps as confidenceGaps, seeChase } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
 const REVIEW_EVERY = 8; // steps between approach reviews
@@ -94,8 +94,38 @@ export const SENTIMENTS = {
   },
 };
 const DEFAULT_SENTIMENT = 'steady';
-const profileNote = (id) => `min gap ${SENTIMENTS[id].min_gap}; alert ${SENTIMENTS[id].end_ticks} tick${SENTIMENTS[id].end_ticks === 1 ? '' : 's'} after losing sight. ${SENTIMENTS[id].note}`;
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
+
+// The gap a mood really keeps once the confidence model (PLAN-confidence C3) shifts it: base + delta from C,
+// never below 2 when it lowers a gap. C null (toggle off) or in the neutral zone gives the base unchanged.
+export function effectiveGap(base, C) {
+  if (C == null) return base;
+  const d = confidenceGaps(C);
+  return d < 0 ? Math.max(2, base + d) : base + d;
+}
+
+// One mood's profile with the effective gap; every reader of the gap (tactic feasibility, targets, move facts,
+// the failing test, the sentiment question, the mood lines below) takes it from here so Jev reads one number.
+// The mood lines hard-code "at least N steps": templated from the gap, byte-identical while the gap is the base.
+// C null (toggle off) returns the SENTIMENTS entry itself.
+export function effectiveSentiment(id, C) {
+  const base = SENTIMENTS[id];
+  if (C == null) return base;
+  const g = effectiveGap(base.min_gap, C);
+  if (g === base.min_gap) return base;
+  const fix = (t) => t.replace(/at least \d+ steps/, `at least ${g} steps`);
+  return { ...base, min_gap: g, priority: fix(base.priority), move_priority: fix(base.move_priority) };
+}
+
+// effectiveProfile(memory, C): the current mood's profile at confidence C.
+export const effectiveProfile = (memory, C) => effectiveSentiment(SENTIMENTS[memory.sentiment?.id] ? memory.sentiment.id : DEFAULT_SENTIMENT, C);
+const profileNote = (id, C = null) => {
+  const s = effectiveSentiment(id, C);
+  return `min gap ${s.min_gap}; alert ${s.end_ticks} tick${s.end_ticks === 1 ? '' : 's'} after losing sight. ${s.note}`;
+};
+
+// The one place Jev is told what self.confidence means (sentiment question only; rules() rides on every request).
+export const CONFIDENCE_SENTENCE = ' `self.confidence` sums up how your fights in this dungeon went; `threats` and the tactic facts say how this one stands.';
 
 const TRIGGER_TEXT = {
   start: 'The explorer is about to start exploring the dark dungeon.',
@@ -259,6 +289,21 @@ export class ExplorerBrain {
     this.#syncConfidence();
   }
 
+  // C for the gates: null with the toggle off (then every effective value is the plain SENTIMENTS one).
+  #C() {
+    return this.#csOn ? this.#cs.value : null;
+  }
+
+  // The current mood's profile at the current C (all gap readers below use it, never SENTIMENTS directly).
+  #profile() {
+    return effectiveProfile(this.#memory, this.#C());
+  }
+
+  // engage needs the sword ready and, with the model on, C >= ENGAGE_MIN.
+  #engageArmed() {
+    return this.#armed() && (!this.#csOn || engageOpen(this.#cs.value));
+  }
+
   #syncConfidence() {
     this.#memory.progress.confidence = { value: this.#cs.value, counts: { ...this.#cs.counts } };
   }
@@ -315,7 +360,7 @@ export class ExplorerBrain {
     const i = a.interrupted;
     return {
       game: rules(this.#skills.size > 0, this.#combat()),
-      self: { ...sit.self, ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
+      self: { ...sit.self, ...(this.#csOn ? { confidence: `${Math.floor(this.#cs.value)} ${confidenceBand(this.#cs.value)}` } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
@@ -517,10 +562,10 @@ export class ExplorerBrain {
       info.lastDecision = step;
       const sentiment = await this.#askSentiment(sit, trigger);
       apiMs += sentiment.ms;
-      const profile = profileOf(memory);
+      const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight() });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#engageArmed(), stunned: this.#stunnedIds(), fight: this.#fight() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -535,7 +580,7 @@ export class ExplorerBrain {
       }
     }
 
-    const profile = profileOf(memory);
+    const profile = this.#profile();
     this.#keepEscapeGoal(profile);
     const hasSkillOptions = Object.keys(skillOptions).length > 0;
     // engage hold: stay, no move question (P7a). A decision tick (tactic question) is not a hold tick, so it restarts
@@ -829,15 +874,16 @@ export class ExplorerBrain {
     const inSight = sit.threats.visible.length > 0;
     // With an adversary in sight, each mood also says which tactics its minimum gap leaves open here.
     const allowed = new Map();
+    const C = this.#C();
     if (inSight) {
-      for (const g of new Set(ids.map((id) => SENTIMENTS[id].min_gap))) {
-        allowed.set(g, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds() })).map((id) => id.replace(/_/g, ' ')));
+      for (const g of new Set(ids.map((id) => effectiveSentiment(id, C).min_gap))) {
+        allowed.set(g, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#engageArmed(), stunned: this.#stunnedIds() })).map((id) => id.replace(/_/g, ' ')));
       }
     }
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
-      const s = SENTIMENTS[id];
+      const s = effectiveSentiment(id, C);
       const here = inSight ? ` Tactics it leaves here: ${allowed.get(s.min_gap).join(', ') || 'none, only luck'}.` : '';
-      return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
+      return [id, `${s.when} Effect: ${profileNote(id, C)}${here}`];
     }));
     const questions = {
       sentiment: {
@@ -845,7 +891,8 @@ export class ExplorerBrain {
         instructions:
           `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
-          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.',
+          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
+          (this.#csOn ? CONFIDENCE_SENTENCE : ''),
         criteria,
       },
     };
@@ -1011,7 +1058,7 @@ export class ExplorerBrain {
     const visible = world.visibleAdversaries();
     const at = Math.max(prev, 1);
     const step = prev + 1;
-    const profile = profileOf(memory);
+    const profile = this.#profile();
     const a = memory.approach;
 
     if (visible.length && !info.active) {
