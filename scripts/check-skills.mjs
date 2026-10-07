@@ -13,7 +13,13 @@ import { MAX_SKILLS, SkillSet } from '../src/skills/skill-set.js';
 import { LOADOUTS, buildSkillSet } from '../src/skills/loadouts.js';
 import { SKILL_MIN, pickSkill, skillQuestion } from '../src/skills/question.js';
 import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
-import { skillConfig } from '../src/skills/config.js';
+import { skillConfig, configureSkills } from '../src/skills/config.js';
+import { describeMoves } from '../src/characters/explorer/perception.js';
+import { ExplorerBrain } from '../src/characters/explorer/brain.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 let failures = 0;
 const check = (ok, msg) => { if (!ok) { failures++; console.error('FAIL:', msg); } };
@@ -210,6 +216,99 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   check(pickSkill({ choice: 'ghost_dance', probabilities: { ghost_dance: 0.9 } }, o) === 'none', 'unknown key: none');
   check(pickSkill({ choice: 'none', probabilities: { none: 0.9 } }, o) === 'none', 'none stays none');
   check(pickSkill({ choice: 'shield_block', probabilities: null }, o) === 'none' && pickSkill(null, o) === 'none', 'no probabilities or answer: none');
+}
+
+// 10. Coins: drop on dispel (one roll each), pickup, determinism, twin safety, publicView, fog.
+{
+  const setChance = (p) => configureSkills({ ...skillConfig(), coinDropChance: p });
+  check(skillConfig().coinDropChance === 0.5, 'coinDropChance defaults to 0.5');
+  const MAP = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######'];
+  const dispel = (g) => { g.adversaries[0].takeHit(skillConfig().ghostHp - 1, [0, 0]); g.adversaries[0].pos = [4, 3]; return resolveAttack(g, EXPLORER, [[4, 3]], 1); };
+  try {
+    setChance(1);
+    const g = arena(MAP);
+    const ev = dispel(g);
+    check(ev.some((e) => e.type === 'dispelled') && ev.some((e) => e.type === 'coin_drop' && e.id === 'a1' && eq(e.at, [4, 3])), 'chance 1: coin_drop event after dispelled');
+    check(ev.findIndex((e) => e.type === 'coin_drop') === ev.findIndex((e) => e.type === 'dispelled') + 1, 'coin_drop follows dispelled');
+    check(eq(g.coinPiles, [[4, 3]]) && g.coins === 0, 'chance 1: pile at the death cell');
+    const r = g.applyMove('right');
+    check(g.coins === 1 && g.coinPiles.length === 0 && r.coins === 1, 'pickup: coins 1, pile gone, return has coins: 1');
+    check(g.applyMove('left').coins === 0, 'no pile: coins 0 in the return');
+
+    // Stacked pile: +1 per entry.
+    const g3 = arena(MAP);
+    g3.coinPiles = [[4, 3], [4, 3], [1, 1]];
+    check(g3.applyMove('right').coins === 2 && g3.coins === 2 && eq(g3.coinPiles, [[1, 1]]), 'stacked pile gives one coin per entry');
+
+    setChance(0);
+    const g0 = arena(MAP);
+    const ref = arena(MAP);
+    const ev0 = dispel(g0);
+    check(!ev0.some((e) => e.type === 'coin_drop') && g0.coinPiles.length === 0, 'chance 0: no drop');
+    ref.coinRandom();
+    check(g0.coinRandom() === ref.coinRandom(), 'chance 0: the coin stream still advanced once per dispel');
+
+    // Determinism: same seed, same sequence of dispels, same drops.
+    setChance(0.5);
+    const run = () => {
+      const g = arena(MAP);
+      const out = [];
+      for (let i = 0; i < 12; i++) {
+        g.adversaries = arena(MAP).adversaries;
+        out.push(dispel(g).some((e) => e.type === 'coin_drop'));
+      }
+      return out;
+    };
+    const d1 = run(), d2 = run();
+    check(eq(d1, d2) && d1.some(Boolean) && d1.some((x) => !x), 'same seed, same dispels: same drops (and both outcomes occur at 0.5)');
+
+    // Twin safety.
+    const gt = arena(MAP);
+    gt.coinPiles = [[4, 3]];
+    const tw = gt.twin();
+    gt.applyMove('right');
+    check(eq(tw.coinPiles, [[4, 3]]) && tw.coins === 0 && gt.coins === 1, 'pickup on the original leaves the twin\'s piles alone');
+
+    // publicView.
+    const gv = arena(MAP);
+    gv.coinPiles = [[1, 1], [1, 1]];
+    gv.coins = 3;
+    const v = gv.publicView();
+    check(eq(v.coin_piles, [[1, 1], [1, 1]]) && v.coins === 3 && v.coin_piles !== gv.coinPiles && v.coin_piles[0] !== gv.coinPiles[0], 'publicView has coin_piles (copies) and coins');
+
+    // Fog: a pile on a dark cell is not seen, does not change perception or the Jev request; a lit one adds the fact.
+    const BIG = ['#' + '#'.repeat(30) + '#', ...Array.from({ length: 5 }, (_, i) => '#' + (i === 2 ? '..@' + '.'.repeat(27) : '.'.repeat(30)) + '#'), '#'.repeat(32)];
+    const mk = (piles) => { const g = arena(BIG); g.coinPiles = piles; return g; };
+    const far = [28, 3];
+    const gA = mk([]), gB = mk([far]);
+    check(!gB.isKnown(far), 'fog setup: the far pile is on a dark cell');
+    check(eq(new KnownWorld(gB).seenCoins(), []), 'seenCoins hides a pile on an unknown cell');
+    const wa = new KnownWorld(gA), wb = new KnownWorld(gB);
+    check(eq(describeMoves(wa, 'nearest_frontier', {}), describeMoves(wb, 'nearest_frontier', {})), 'dark pile does not change the move facts');
+    const reqOf = async (g) => {
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.9 }];
+        const c = Object.keys(q.criteria)[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const rnd = Math.random; Math.random = () => 0.5;
+      try { await brain.takeTurn(); } finally { Math.random = rnd; }
+      const out = brain.lastRequests().map((r) => JSON.stringify(r));
+      rmSync(dir, { recursive: true, force: true });
+      return out.join('|');
+    };
+    check((await reqOf(mk([]))) === (await reqOf(mk([far]))), 'dark pile: explorer request byte-identical to the twin without it');
+    const lit = mk([[4, 3]]);
+    check(eq(new KnownWorld(lit).seenCoins(), [[4, 3]]), 'seenCoins shows a lit pile');
+    check(/Picks up a coin\./.test(describeMoves(new KnownWorld(lit), 'nearest_frontier', {}).right ?? ''), 'move onto a known pile says "Picks up a coin."');
+    const lit2 = mk([[4, 3], [4, 3]]);
+    check(/Picks up 2 coins\./.test(describeMoves(new KnownWorld(lit2), 'nearest_frontier', {}).right ?? ''), 'a two-coin pile says "Picks up 2 coins."');
+  } finally {
+    setChance(0.5);
+  }
+  check(skillConfig().coinDropChance === 0.5, 'coinDropChance restored');
 }
 
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }

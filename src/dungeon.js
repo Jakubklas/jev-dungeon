@@ -292,6 +292,9 @@ export class Game {
     this.block = null; // the explorer's shield stance: null | { effectiveness, until_step }
     this.strikes = []; // strikes this tick: { by, cells, result } (src/skills/resolve.js)
     this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
+    this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
+    this.coins = 0; // the explorer's total
+    this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
     lightAround(this, this.pos);
   }
 
@@ -319,6 +322,12 @@ export class Game {
   skillRandom() {
     this.skillRand ??= rng(((this.dungeon.seed ?? 1) ^ 0x2545f491) >>> 0);
     return this.skillRand();
+  }
+
+  // Drop-chance stream for coins; separate from the dungeon, spawn and block streams (rule 8).
+  coinRandom() {
+    this.coinRand ??= rng(((this.dungeon.seed ?? 1) ^ 0x3c6ef372) >>> 0);
+    return this.coinRand();
   }
 
   // Start-of-tick cleanup for skill state: strikes are per tick, a block lapses once steps passes until_step.
@@ -358,8 +367,13 @@ export class Game {
     this.steps++;
     this.trail.push([...next]);
     const revealed = lightAround(this, next);
+    const here = this.coinPiles.filter((c) => same(c, next)).length;
+    if (here) {
+      this.coinPiles = this.coinPiles.filter((c) => !same(c, next)); // replace: twin() shares the old array
+      this.coins += here;
+    }
     this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
-    return { moved: true, revealed, revisit, won: this.won };
+    return { moved: true, revealed, revisit, won: this.won, coins: here };
   }
 
   // Known = lit. Cells past the map edge are rock: known once lit, unknown otherwise,
@@ -398,6 +412,8 @@ export class Game {
       health: this.health,
       facing: this.facing,
       strikes: this.strikes,
+      coin_piles: this.coinPiles.map((c) => [...c]),
+      coins: this.coins,
       max_health: this.maxHealth,
       light: this.light.map((row) => row.slice()),
       visits: this.visits,

@@ -127,11 +127,24 @@ const CHEST_A = [
   'oooooooooooo',
 ];
 
+// ----------------------------------------------------------------- coin 7x7
+const COIN_PAL = { o: '#3a2406', y: '#ffc633', L: '#fff0a8', d: '#c98a14' };
+const COIN_A = [
+  '..ooo..',
+  '.oLyyo.',
+  'oLyddyo',
+  'oyydyyo',
+  'oyddyyo',
+  '.oyyyo.',
+  '..ooo..',
+];
+
 // Raw art data (DOM-free) so it can be validated / previewed in node.
 export const ART = {
   knight: { palette: KNIGHT_PAL, frames: [KNIGHT_A, KNIGHT_B], anchorX: 9, anchorY: 23 },
   ghost: { palette: GHOST_PAL, frames: [GHOST_A, GHOST_B], anchorX: 9, anchorY: 19 },
   chest: { palette: CHEST_PAL, frames: [CHEST_A], anchorX: 6, anchorY: 9 },
+  coin: { palette: COIN_PAL, frames: [COIN_A], anchorX: 3, anchorY: 5 },
 };
 
 function rasterise(grid, palette) {
@@ -171,5 +184,6 @@ export function buildSprites() {
     knight: build(ART.knight),
     ghost: build(ART.ghost),
     chest: build(ART.chest),
+    coin: build(ART.coin),
   };
 }

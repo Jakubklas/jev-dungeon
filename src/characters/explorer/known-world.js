@@ -37,6 +37,11 @@ export class KnownWorld {
     return t && this.#game.isKnown(t) ? t : null;
   }
 
+  // Coin piles on lit cells only (a pile on a dark cell must never leak).
+  seenCoins() {
+    return this.#game.coinPiles.filter((c) => this.#game.isKnown(c)).map((c) => [...c]);
+  }
+
   // The explorer's own step.
   move(dir) { return this.#game.applyMove(dir); }
 

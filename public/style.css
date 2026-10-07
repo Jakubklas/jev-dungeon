@@ -269,3 +269,14 @@ ul:empty { display: none; }
 .skill.used { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
 .skill-used { font-size: 10px; padding: 0 5px; color: var(--accent-ink); background: var(--accent); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
 .events li.struck { color: var(--accent); }
+
+/* Coins: gold counter with a small pixel coin, and gold log lines. */
+.coins { color: #ffc633; font-variant-numeric: tabular-nums; }
+.coins::before {
+  content: ''; display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
+  background: #ffc633; border: 2px solid #3a2406; box-shadow: inset -2px -2px 0 #c98a14;
+}
+.coins.pop { animation: coin-pop 420ms steps(4); }
+@keyframes coin-pop { 0% { transform: scale(1.5); color: #fff0a8; } 100% { transform: scale(1); } }
+.events li.coin, .events li.coin_drop { color: #ffc633; }
+.events li.coin { font-weight: 700; }

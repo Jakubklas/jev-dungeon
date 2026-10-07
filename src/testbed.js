@@ -8,6 +8,7 @@ import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
 import { LOADOUTS } from './skills/loadouts.js';
 import { MAX_SKILLS } from './skills/skill-set.js';
+import { spawnCoins } from './coins.js';
 
 export const TESTBED_MIN = 3; // interior floor cells per side
 export const TESTBED_MAX = 60;
@@ -27,11 +28,13 @@ export const DEFAULTS = {
   explorerSkills: 'default', // 'default' | 'none' | a list of loadout ids (<= 4)
   ghostSkills: 'default', // 'default' (claw) | 'none' (harmless ghosts)
   ghostHp: null, // 1..5; null = the Skills setting
+  coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
+export const TESTBED_MAX_COINS = 60;
 export const TESTBED_MAX_GHOST_HP = 5;
 // Solid / small props per interior floor cell for the random prop presets.
 const PROP_DENSITY = { few: { solid: 1 / 30, small: 1 / 40 }, many: { solid: 1 / 12, small: 1 / 20 } };
-const MAP_CHARS = '#.@TAps';
+const MAP_CHARS = '#.@TApsc';
 
 const key = ([x, y]) => `${x},${y}`;
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
@@ -146,6 +149,17 @@ export function normalizeConfig(raw = {}) {
     if (raw.ghostSkills !== 'default' && raw.ghostSkills !== 'none') bad(`ghostSkills must be 'default' or 'none', got ${JSON.stringify(raw.ghostSkills)}`);
     cfg.ghostSkills = raw.ghostSkills;
   }
+  if (given('coins')) {
+    let c = raw.coins;
+    if (typeof c === 'string' && /[;|]|,/.test(c)) c = c.split(/[;|]/).filter(Boolean);
+    if (Array.isArray(c)) {
+      if (c.length > TESTBED_MAX_COINS) bad(`at most ${TESTBED_MAX_COINS} coins`);
+      cfg.coins = c.map((cell, i) => toCell(cell, `coins[${i}]`));
+    } else {
+      cfg.coins = toInt(c, 'coins');
+      if (cfg.coins < 0 || cfg.coins > TESTBED_MAX_COINS) bad(`coins must be 0..${TESTBED_MAX_COINS} or a list of cells`);
+    }
+  }
   if (given('ghostHp')) {
     cfg.ghostHp = toInt(raw.ghostHp, 'ghostHp');
     if (cfg.ghostHp < 1 || cfg.ghostHp > TESTBED_MAX_GHOST_HP) bad(`ghostHp must be 1..${TESTBED_MAX_GHOST_HP}`);
@@ -185,7 +199,7 @@ function shuffle(rand, items) {
 }
 
 // Parses an ASCII map: '#' wall, '.' floor, '@' start, 'T' chest, 'A' adversary,
-// 'p' solid prop (random solid kind), 's' small prop (random small kind). The border must be wall.
+// 'p' solid prop (random solid kind), 's' small prop (random small kind), 'c' coin. The border must be wall.
 function parseMap(rows) {
   const width = rows[0].length;
   const height = rows.length;
@@ -193,7 +207,7 @@ function parseMap(rows) {
   if (width < TESTBED_MIN + 2 || height < TESTBED_MIN + 2 || width > TESTBED_MAX + 2 || height > TESTBED_MAX + 2) {
     bad(`map must be ${TESTBED_MIN + 2}..${TESTBED_MAX + 2} cells per side, wall ring included`);
   }
-  const out = { width, height, grid: [], start: null, treasure: null, adversaries: [], solid: [], small: [] };
+  const out = { width, height, grid: [], start: null, treasure: null, adversaries: [], solid: [], small: [], coins: [] };
   for (let y = 0; y < height; y++) {
     const row = [];
     for (let x = 0; x < width; x++) {
@@ -206,6 +220,7 @@ function parseMap(rows) {
       if (c === 'A') out.adversaries.push([x, y]);
       if (c === 'p') out.solid.push([x, y]);
       if (c === 's') out.small.push([x, y]);
+      if (c === 'c') out.coins.push([x, y]);
       row.push(c === '#' || c === 'p' ? '#' : '.');
     }
     out.grid.push(row);
@@ -263,13 +278,14 @@ function randomProps(rand, grid, width, height, start, keepClear, density) {
 export function buildArena(rawConfig = {}) {
   const cfg = normalizeConfig(rawConfig);
   const rand = rng(cfg.seed ^ 0x51ed27a3);
-  let width, height, grid, start, treasure, fixedAdversaries = cfg.adversaries, props = [];
+  let width, height, grid, start, treasure, fixedAdversaries = cfg.adversaries, props = [], fixedCoins = Array.isArray(cfg.coins) ? cfg.coins : null;
 
   if (cfg.map) {
     const m = parseMap(cfg.map);
     ({ width, height, grid, start } = m);
     treasure = m.treasure ?? (cfg.treasure === 'far' || Array.isArray(cfg.treasure) ? cfg.treasure : null);
     if (m.adversaries.length) fixedAdversaries = m.adversaries;
+    if (m.coins.length) fixedCoins = m.coins;
     const pick = (kinds) => kinds[Math.floor(rand() * kinds.length)];
     props = [
       ...m.solid.map(([x, y]) => ({ kind: standIn(pick(SOLID_KINDS)), x, y, solid: true, flip: rand() < 0.5 })),
@@ -373,5 +389,15 @@ export function buildArena(rawConfig = {}) {
     decor: [],
     testbed: true,
   };
+  // Coins: explicit cells, or a count spread by src/coins.js on its own stream (the arena never changes).
+  if (fixedCoins) {
+    dungeon.coins = fixedCoins.map((c) => {
+      if (!floorAt(c)) bad(`coin at ${c} is not an inside floor cell`);
+      if (same(c, start)) bad(`coin at ${c} sits on the start`);
+      return [...c];
+    });
+  } else {
+    dungeon.coins = spawnCoins(dungeon, { count: cfg.coins });
+  }
   return { dungeon, adversaries, config: cfg };
 }

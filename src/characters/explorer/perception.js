@@ -460,6 +460,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     .map((r) => ({ r, dist: knownDistances(world, r.cell) }));
   const otherExits = (dest) => neighbours(here).filter((n) => !sameCell(n, dest) && knownFloor(world, n));
   const out = {};
+  const coinPiles = world.seenCoins();
 
   for (const dir of world.legalMoves()) {
     const dest = step(here, dir);
@@ -487,6 +488,8 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
       }
     }
 
+    const coinsHere = coinPiles.filter((c) => sameCell(c, dest)).length;
+    if (coinsHere) facts.push(coinsHere === 1 ? 'Picks up a coin.' : `Picks up ${coinsHere} coins.`);
     const reveal = wouldReveal(world, dest);
     facts.push(reveal ? `Reveals about ${plural(reveal, 'new cell')}.` : 'Reveals nothing new.');
     facts.push(visitSentence(world.visits[key(dest)]));

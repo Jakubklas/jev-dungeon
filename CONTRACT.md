@@ -85,17 +85,23 @@ export class Game {
   //   facing /* 'up'|'down'|'left'|'right', starts 'right': last step's direction or last strike's aim */,
   //   block /* null | { effectiveness, until_step }: the shield stance */,
   //   strikes /* [{ by, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
-  //   skillRand /* block-roll RNG, null until the first roll */
-  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won }. No-op when won or lost. STAY keeps the cell, counts a step.
+  //   skillRand /* block-roll RNG, null until the first roll */,
+  //   coinPiles /* [[x, y]] one entry per coin on the floor (duplicates = a bigger pile); replaced, never spliced */,
+  //   coins /* the explorer's coin total */, coinRand /* coin-drop RNG, null until the first roll */
+  // coinPiles starts as a copy of dungeon.coins (src/coins.js spawnCoins; [] when absent, e.g. hand-built maps).
+  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won, coins }. No-op when won or lost. STAY keeps the cell, counts a step.
+                         //    A move picks up every pile on the destination (coins += n, `coins: n` in the return, 0 otherwise).
                          //    A null treasure never wins.
   damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
   skillRandom()          // next number of the per-game block-roll stream (seed ^ 0x2545f491, created on first call; never touches generation rng order)
+  coinRandom()           // next number of the per-game coin-drop stream (seed ^ 0x3c6ef372, created on first call)
   clearTickState()       // strikes = []; drops `block` once steps > until_step. Run.playTurn calls it first.
   legalMoves()           // dirs whose destination is floor ([] once won or lost)
   availableMoves()       // legalMoves plus STAY ([] once won or lost)
   isKnown([x,y]), knownTile([x,y]) /* '#' | '.' | null */, knownFloorCount(), exploredPct()
   publicView()           // -> { seed, width, height, tiles, start, treasure, props, decor, pos, steps, won, lost, health, max_health,
-                         //      light /* copy */, visits, trail, explored_pct, facing, strikes /* live array */ }
+                         //      light /* copy */, visits, trail, explored_pct, facing, strikes /* live array */,
+                         //      coin_piles /* copies */, coins }
   twin(overrides = {})   // shallow copy that keeps the prototype (for fog twin tests). `litOutside` must stay a Set.
 }
 ```
@@ -134,6 +140,10 @@ export class Adversary {
   lastRequest()                  // that body parsed, or null
 }
 export function spawnAdversaries(dungeon)        // -> Adversary[]. Seeded via rng(dungeon.seed ^ 0x9e3779b9).
+// src/coins.js
+export let FLOOR_PER_COIN = 60, MAX_COINS = 30; configureCoins({ floorPerCoin, maxCoins })
+export function spawnCoins(dungeon, { count } = {})  // -> [[x, y]] one coin per cell, min(MAX_COINS, round(floor/FLOOR_PER_COIN)) unless count is given,
+                                                  //    round-robin over shuffled rooms, never on start/chest/small prop. Seeded via rng(seed ^ 0x5be0cd19).
 //   count = min(MAX_ADVERSARIES, max(1, round(floorCells / FLOOR_PER_ADVERSARY))) (defaults 12 and 150). They spawn in rooms at a path distance of at least 20 from start
 //   and never in the start's sight, spread round-robin over the rooms. With the adversaryCharacters toggle on, characters are then assigned by
 //   assignCharacters(dungeon.seed, count, 'mixed') on its own stream rng(seed ^ 0x6a09e667), after every spawn rng() call (same cells for every seed).
@@ -198,7 +208,7 @@ export class Run {                               // one game in progress
   async playTurn()                               // -> Turn
   view()                                         // -> the browser view
 }
-export function newGame(seed?, opts = {})        // generateDungeon + spawnAdversaries -> Run. No Jev calls.
+export function newGame(seed?, opts = {})        // generateDungeon, then dungeon.coins = spawnCoins(dungeon), then spawnAdversaries -> Run. No Jev calls.
 export function newTestGame(config, opts = {})   // buildArena(config) -> Run. Throws TestbedError on a bad config. The config key `characters`
 //   ('standard' default | 'mixed' | one preset id | a list, URL form 'ambusher;timid', applied per ghost in id order and cycled) sets the ghosts' characters.
 //   opts = { ask, decide, dir, memoryDir } (all optional). The config keys `explorerSkills`, `ghostSkills`, `ghostHp` (testbed.js) set the explorer's SkillSet
@@ -212,7 +222,7 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 `playTurn`:
 0. `game.clearTickState()` (strikes emptied, a lapsed block dropped).
 1. `explorer = await this.explorer.takeTurn()` (decides, uses its skill, moves, saves memory). The explorer's skill events (`strike`, `struck`, `dispelled`) come from `explorer.skill_events`, which the brain returns every turn (`[]` when no skill was used).
-2. `{ events, turns } = await stepAdversaries(game, { decide })`. It first bumps an adversary the explorer stepped onto (knockback only), and does nothing once the game is won or lost. `events` = the explorer's skill events, then the adversaries'.
+2. `{ events, turns } = await stepAdversaries(game, { decide })`. It first bumps an adversary the explorer stepped onto (knockback only), and does nothing once the game is won or lost. `events` = the explorer's skill events, then a `coin` event `{ id: 'explorer', type: 'coin', at, gained, total }` when `game.coins` rose during the explorer's turn, then the adversaries'.
 3. `saveMemories(...)` writes `adversaries.json` (`{ tick, adversaries: memories }`, in `game.adversaries` order).
 4. If newly lost, `explorer.noteCaught(game.caughtBy)`; else if a `hit` event fired, `explorer.noteHit(id)`.
 
@@ -257,11 +267,11 @@ export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: lo
 export const SKILL_MIN = 0.5                      // question.js
 export function skillQuestion(options, priorityLine = '')         // -> a Choice question, `none` first (never shuffled), or null when options is empty
 export function pickSkill(answer, options)        // -> the chosen key, or 'none' (not an option, `none`, or probability < SKILL_MIN)
-export function configureSkills(values), skillConfig(), skillDefaults(), loadoutTuning()   // config.js: swordDamage 1, swordCooldown 1, shieldChance 0.6, shieldCooldown 2, clawDamage 1, clawCooldown 2, ghostHp 2, stunTicks 2
+export function configureSkills(values), skillConfig(), skillDefaults(), loadoutTuning()   // config.js: swordDamage 1, swordCooldown 1, shieldChance 0.6, shieldCooldown 2, clawDamage 1, clawCooldown 2, ghostHp 2, stunTicks 2, coinDropChance 0.5
 export const EXPLORER = { id: 'explorer' }        // resolve.js
 export function resolveAttack(game, attacker, cells, damage, { canHit, onHit, rand } = {})   // -> events
 ```
-`resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if `game.block` is set and `game.steps <= block.until_step` and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`). Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
+`resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if `game.block` is set and `game.steps <= block.until_step` and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`); each dispel then rolls `game.coinRandom()` once and, below `skillConfig().coinDropChance`, adds a pile at the ghost's cell and emits `{ id, type: 'coin_drop', at }`. Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
 
 **The `skill` question.** Asked in the same request as `next_move`, at most one per request (never per tactic, never in the explorer's sentiment request). Explorer gate: some skill is ready and an adversary is visible within 10 cells or a sighting up to 10 steps old lies within 10; the attack then lists only aims that hold a visible adversary, the block needs a visible chaser within 2 path steps. Ghost gate: a hunting ghost with the explorer in sight within 10 cells. With one legal move, a skill-only request is sent instead (dormant for the explorer: `stay` is always legal). The explorer's mind adds a `skill_priority` line. Fog: explorer skill facts use only visible adversaries, its own sightings and its own strike tally, never a ghost's hp, stun or cooldown.
 
@@ -278,6 +288,7 @@ get width, height                       // grid size, only for sizing arrays; sa
 isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()
 visibleAdversaries()                    // -> [{ id, pos, mode, distance }] the explorer sees now
 seenTreasure()                          // -> the chest cell once lit, else null (also null when there is no chest)
+seenCoins()                             // -> copies of the coin piles on known (lit) cells only
 move(dir)                               // the explorer's own step (Game.applyMove)
 useSkill(skillSet, key)                 // before the step: an attack turns to its aim (game.facing) and runs resolveAttack (events strike, struck, dispelled);
                                         // a block sets game.block = { effectiveness, until_step: steps + 1 }. Marks the skill used. -> events[] | null (unknown key, not ready, game over)
@@ -393,7 +404,7 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 

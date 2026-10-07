@@ -2,6 +2,7 @@
 // adversary's Jev brain decides, in parallel). A Run owns one game plus its explorer memory and
 // builds the browser view. The server uses only this module.
 import { Game, generateDungeon } from './dungeon.js';
+import { spawnCoins } from './coins.js';
 import { brainView, graceLeft, seesExplorer, spawnAdversaries, stepAdversaries } from './characters/adversary/adversary.js';
 import { saveMemories } from './characters/adversary/memory.js';
 import { buildArena, explorerSkillSetOf } from './testbed.js';
@@ -44,6 +45,7 @@ export class Run {
     const { game } = this;
     const wasLost = game.lost;
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
+    const coinsBefore = game.coins;
     const explorer = await this.explorer.takeTurn();
     // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
     // read from game.strikes (struck / dispelled need the brain's list).
@@ -51,7 +53,8 @@ export class Run {
     // stepAdversaries first bumps an adversary the explorer stepped onto (knockback only), and does
     // nothing once the game is won or lost.
     const { events: adversaryEvents, turns } = await stepAdversaries(game, { decide: this.#decide });
-    const events = [...skillEvents, ...adversaryEvents];
+    const coinEvents = game.coins > coinsBefore ? [{ id: 'explorer', type: 'coin', at: [...game.pos], gained: game.coins - coinsBefore, total: game.coins }] : [];
+    const events = [...skillEvents, ...coinEvents, ...adversaryEvents];
     await saveMemories(game.adversaries.map((a) => a.memory), game.steps, this.#dir);
     const hit = events.find((e) => e.type === 'hit');
     if (game.lost && !wasLost) await this.explorer.noteCaught(game.caughtBy);
@@ -77,7 +80,8 @@ export class Run {
 }
 
 export function newGame(seed, opts = {}) {
-  const dungeon = generateDungeon(seed ?? undefined);
+  const base = generateDungeon(seed ?? undefined);
+  const dungeon = { ...base, coins: spawnCoins(base) }; // own PRNG stream: the layout and spawns never change
   return new Run(dungeon, spawnAdversaries(dungeon), opts);
 }
 

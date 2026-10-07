@@ -257,13 +257,16 @@ function fallbackSprites() {
     chest: spriteFrom(14, 11, 7, 9, [
       ['#723c15', 1, 1, 12, 9], ['#97551d', 1, 1, 12, 3], ['#ffc633', 1, 4, 12, 1], ['#ffc633', 6, 4, 2, 3],
     ]),
+    coin: spriteFrom(7, 7, 3, 5, [
+      ['#3a2406', 1, 0, 5, 7], ['#3a2406', 0, 2, 7, 3], ['#ffc633', 1, 2, 5, 3], ['#ffc633', 2, 1, 3, 5],
+    ]),
   };
 }
 let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'chest']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'chest', 'coin']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -456,6 +459,18 @@ function computeFog() {
   }
 }
 
+// Coin piles from the view as [x, y, count] per distinct cell (older servers send none).
+function coinCells() {
+  const m = new Map();
+  for (const c of game?.coin_piles ?? []) {
+    if (!Array.isArray(c) || c.length < 2) continue;
+    const k = `${c[0]},${c[1]}`;
+    const e = m.get(k);
+    if (e) e[2]++; else m.set(k, [c[0], c[1], 1]);
+  }
+  return [...m.values()].filter(([x, y]) => game.light[y]?.[x] !== undefined);
+}
+
 function resetBoard() {
   shown = game.light.map((row) => row.map(() => 0));
   miniDirty = true;
@@ -468,7 +483,7 @@ function resetBoard() {
 
 // A new view arrived (a step): refresh everything derived from it.
 function boardUpdate() {
-  miniDirty = true;
+  miniDirty = true; // also covers coin_piles changes: the minimap redraws whenever a view arrives
   computeFog();
   indexProps();
   syncActors(false);
@@ -579,6 +594,13 @@ function drawScene(now) {
   if (game.treasure && (chestLit || reveal)) {
     ents.push({ depth: tx + ty, order: 0, gx: tx, gy: ty, kind: 'chest', face: 1,
       alpha: chestLit ? Math.min(1, Math.max(.15, shown[ty][tx] / .4)) : REVEAL_ALPHA });
+  }
+  // Coin piles: one entry per coin, so a cell listed twice is a pile of two. Fog rule: lit cells only (or Reveal).
+  for (const [cx2, cy2, n] of coinCells()) {
+    const lit = known(cx2, cy2);
+    if (!(lit || reveal)) continue;
+    ents.push({ depth: cx2 + cy2, order: -.5, gx: cx2, gy: cy2, kind: 'coin', n, face: 1,
+      alpha: lit ? Math.min(1, Math.max(.15, shown[cy2][cx2] / .4)) : REVEAL_ALPHA });
   }
   if (propArt) {
     for (const p of floorProps) {
@@ -854,6 +876,16 @@ function drawEntity(en, now, cx, cy) {
     }
     return;
   }
+  if (en.kind === 'coin') {
+    const bob = Math.round(Math.sin(now / 380 + en.gx * 1.7 + en.gy * 2.3));
+    b.globalAlpha = en.alpha * .7;
+    b.fillStyle = PALETTE.shadow;
+    pixelEllipse(px, py + 1, 4, 1);
+    b.globalAlpha = 1;
+    if (en.n > 1) blitSprite(sprites.coin, px + 3, py + 1, 1, en.alpha); // a second coin peeks out behind
+    blitSprite(sprites.coin, px - (en.n > 1 ? 1 : 0), py - 1 + bob, 1, en.alpha);
+    return;
+  }
   if (en.kind === 'chest') {
     b.globalAlpha = en.alpha * .8;
     b.fillStyle = PALETTE.shadow;
@@ -1064,6 +1096,7 @@ function drawMinimap() {
     mctx.fillRect((x + .5) * s - r, (y + .5) * s - r, r * 2, r * 2);
   };
   if (game.treasure && (game.light[game.treasure[1]][game.treasure[0]] > 0 || revealOn())) dot(game.treasure, PALETTE.chest, Math.max(2, s));
+  for (const [x, y] of coinCells()) if (game.light[y][x] > 0 || revealOn()) dot([x, y], '#ffd95a', Math.max(1.5, s * .6));
   for (const a of drawnAdversaries()) {
     mctx.globalAlpha = a.visible ? 1 : .5;
     dot(a.pos, PALETTE.enemy, Math.max(1.5, s * .8));
@@ -1250,8 +1283,22 @@ function renderHearts() {
   box.setAttribute('aria-label', `${hp} of ${max} lives`);
 }
 
+let shownCoins = 0;
+function renderCoins() {
+  const n = game?.coins ?? 0;
+  const box = $('coins');
+  box.textContent = n;
+  if (n > shownCoins) { // gold pop on a pickup
+    box.classList.remove('pop');
+    void box.offsetWidth;
+    box.classList.add('pop');
+  }
+  shownCoins = n;
+}
+
 function renderMemory() {
   renderHearts();
+  renderCoins();
   $('steps').textContent = game ? game.steps : 0;
   $('explored').textContent = game ? `${Math.round(game.explored_pct)}%` : '0%';
   $('latency').textContent = lastLatency == null ? '—' : `${lastLatency} ms`;
@@ -1355,7 +1402,7 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
@@ -1373,6 +1420,8 @@ const EVENT_TEXT = {
   dispelled: (id) => `Jev dispelled ${id}`,
   struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
   bump: (id) => `${id} bumped Jev`,
+  coin_drop: (id) => `${id} dropped a coin`,
+  coin: (id, e) => `Jev picked up a coin${Number.isFinite(e.total) ? ` (${e.total})` : ''}`,
   alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,
   brain_off: (id, e) => `${id} brain off${e.reason ? `: ${e.reason}` : ''}`,

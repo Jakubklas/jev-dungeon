@@ -3,6 +3,7 @@
 // Ghost hp and stun live on Adversary (takeHit, numbers from skillConfig()).
 // Events have the adversary-event shape { id, type, at, ... } so stepAdversaries can merge them.
 import { isFloor } from '../dungeon.js';
+import { skillConfig } from './config.js';
 
 export const EXPLORER = Object.freeze({ id: 'explorer' }); // the attacker handle for the explorer's strikes
 
@@ -43,6 +44,11 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
         game.adversaries.splice(game.adversaries.indexOf(a), 1); // in place: other holders of the array see it
         result = 'dispelled';
         events.push({ id: a.id, type: 'dispelled', at });
+        // One roll per dispel, even at chance 0 or 1, so the stream stays stable.
+        if (game.coinRandom() < skillConfig().coinDropChance) {
+          game.coinPiles = [...game.coinPiles, at];
+          events.push({ id: a.id, type: 'coin_drop', at });
+        }
       } else {
         events.push({ id: a.id, type: 'struck', at, hp: out.hp });
       }

@@ -263,6 +263,80 @@ for (const { name, config } of scenarios) {
   }
 }
 check(explorerCalls > 0, 'stub explorer was asked');
+// 7. Coins: the testbed `coins` option (count, cell list, ASCII 'c'), and the opening coins of a generated
+//    dungeon (src/coins.js): own PRNG stream, count from the floor area, spread over rooms, never on the
+//    start, the chest or a small prop, and the layout and ghost spawns unchanged.
+{
+  const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+  check(buildArena({}).dungeon.coins.length === 0, 'coins: default arena has no coins');
+  const five = buildArena({ size: '9x9', coins: 5, props: 'few', treasure: 'far' }).dungeon;
+  check(five.coins.length === 5, `coins: count 5 placed ${five.coins.length}`);
+  check(new Set(five.coins.map(String)).size === 5, 'coins: two coins share a cell');
+  for (const c of five.coins) {
+    check(five.tiles[c[1]][c[0]] === '.', `coins: ${c} is not floor`);
+    check(!same(c, five.start) && !same(c, five.treasure), `coins: ${c} on the start or chest`);
+    check(!five.props.some((p) => !p.solid && p.x === c[0] && p.y === c[1]), `coins: ${c} on a small prop`);
+  }
+  check(JSON.stringify(buildArena({ size: '9x9', coins: 5, props: 'few', treasure: 'far' }).dungeon.coins) === JSON.stringify(five.coins), 'coins: not deterministic');
+  // Coins come from their own stream: the arena itself (props, ghosts, chest) is the same with or without them.
+  const none = buildArena({ size: '9x9', coins: 0, props: 'few', treasure: 'far' });
+  const withC = buildArena({ size: '9x9', coins: 5, props: 'few', treasure: 'far' });
+  check(JSON.stringify({ ...none.dungeon, coins: 0 }) === JSON.stringify({ ...withC.dungeon, coins: 0 }) &&
+    JSON.stringify(none.adversaries) === JSON.stringify(withC.adversaries), 'coins: placing coins changed the arena');
+  check(JSON.stringify(buildArena({ coins: '2,2;3,3' }).dungeon.coins) === '[[2,2],[3,3]]', 'coins: cell list (URL form)');
+  check(JSON.stringify(buildArena({ coins: [[2, 2]] }).dungeon.coins) === '[[2,2]]', 'coins: cell list (JSON form)');
+  check(JSON.stringify(buildArena({ map: ['#######', '#@..c.#', '#.....#', '#.....#', '#######'] }).dungeon.coins) === '[[4,1]]', "coins: ASCII 'c'");
+  throwsBad({ coins: 61 }, 'coins 61');
+  throwsBad({ coins: -1 }, 'coins -1');
+  throwsBad({ coins: [[0, 0]] }, 'coin on the wall');
+  throwsBad({ coins: [[6, 6]] }, 'coin on the start');
+  // A Run starts with the arena's coins as piles; stepping onto one picks it up.
+  const run = newTestGame({ size: '5x5', numAdversaries: 0, coins: [[4, 3]] }, { ask: async () => ({}), decide: async () => ({}) });
+  check(JSON.stringify(run.game.coinPiles) === '[[4,3]]', 'coins: Run did not start with the arena coins');
+  run.game.applyMove('right');
+  check(run.game.coins === 1 && run.game.coinPiles.length === 0, 'coins: picking up an opening coin');
+
+  const { generateDungeon } = await import('../src/dungeon.js');
+  const { spawnCoins, configureCoins, FLOOR_PER_COIN, MAX_COINS } = await import('../src/coins.js');
+  const { spawnAdversaries } = await import('../src/characters/adversary/adversary.js');
+  const { newGame } = await import('../src/turn.js');
+  let spreadOk = 0;
+  for (let seed = 1; seed <= 20; seed++) {
+    const d = generateDungeon(seed);
+    const coins = spawnCoins(d);
+    let floor = 0;
+    for (const row of d.tiles) for (const c of row) if (c === '.') floor++;
+    const want = Math.min(MAX_COINS, Math.round(floor / FLOOR_PER_COIN));
+    if (coins.length !== want) fail(`coins seed ${seed}: ${coins.length} coins, wanted ${want}`);
+    if (JSON.stringify(spawnCoins(d)) !== JSON.stringify(coins)) fail(`coins seed ${seed}: not deterministic`);
+    if (new Set(coins.map(String)).size !== coins.length) fail(`coins seed ${seed}: two coins share a cell`);
+    for (const c of coins) {
+      if (d.tiles[c[1]][c[0]] !== '.') fail(`coins seed ${seed}: ${c} is not floor`);
+      if (same(c, d.start) || same(c, d.treasure)) fail(`coins seed ${seed}: ${c} on the start or chest`);
+      if (d.props.some((p) => !p.solid && p.x === c[0] && p.y === c[1])) fail(`coins seed ${seed}: ${c} on a small prop`);
+    }
+    // Round-robin: with at least as many coins as rooms, every room holding a free cell gets one.
+    const roomOf = (c) => d.rooms.findIndex((r) => c[0] >= r.x && c[0] < r.x + r.w && c[1] >= r.y && c[1] < r.y + r.h);
+    if (coins.length >= d.rooms.length && new Set(coins.map(roomOf)).size === d.rooms.length) spreadOk++;
+    // Generation and ghost spawns never move: same dungeon and ghost cells as a run without coins.
+    const run = newGame(seed, { ask: async () => ({}), decide: async () => ({}) });
+    if (JSON.stringify(run.game.coinPiles) !== JSON.stringify(coins)) fail(`coins seed ${seed}: the Run's piles differ from spawnCoins`);
+    if (JSON.stringify(run.game.adversaries.map((a) => a.pos)) !== JSON.stringify(spawnAdversaries(d).map((a) => a.pos))) fail(`coins seed ${seed}: ghost spawns moved`);
+    if (JSON.stringify(run.game.dungeon.tiles) !== JSON.stringify(d.tiles)) fail(`coins seed ${seed}: tiles changed`);
+  }
+  check(spreadOk > 0, 'coins: no seed spread its coins over every room');
+  const was = { maxCoins: MAX_COINS, floorPerCoin: FLOOR_PER_COIN };
+  try {
+    configureCoins({ maxCoins: 0 });
+    check(spawnCoins(generateDungeon(3)).length === 0, 'coins: maxCoins 0 still placed coins');
+    configureCoins({ maxCoins: 30, floorPerCoin: 10 });
+    check(spawnCoins(generateDungeon(3)).length === 30, 'coins: maxCoins does not cap the count');
+  } finally {
+    configureCoins(was);
+  }
+  console.log(`coins: testbed option, ASCII map, 20 generated seeds (${spreadOk} spread over every room)`);
+}
+
 console.log(`stub calls: explorer ${explorerCalls}, adversaries ${adversaryCalls} (no network)`);
 rmSync(dir, { recursive: true, force: true });
 
