@@ -3,7 +3,8 @@
 // Run from the dungeon-game directory: node scripts/check-skills.mjs
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
-import { Game } from '../src/dungeon.js';
+import { DIRS, Game } from '../src/dungeon.js';
+import { stepAdversaries } from '../src/characters/adversary/adversary.js';
 import { buildArena } from '../src/testbed.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { Skill } from '../src/skills/skill.js';
@@ -15,7 +16,7 @@ import { SKILL_MIN, pickSkill, skillQuestion } from '../src/skills/question.js';
 import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
 import { skillConfig, configureSkills } from '../src/skills/config.js';
 import { describeMoves } from '../src/characters/explorer/perception.js';
-import { ExplorerBrain } from '../src/characters/explorer/brain.js';
+import { ExplorerBrain, SENTIMENTS } from '../src/characters/explorer/brain.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -226,7 +227,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
 // 10. Coins: drop on dispel (one roll each), pickup, determinism, twin safety, publicView, fog.
 {
   const setChance = (p) => configureSkills({ ...skillConfig(), coinDropChance: p });
-  check(skillConfig().coinDropChance === 0.5, 'coinDropChance defaults to 0.5');
+  check(skillConfig().coinDropChance === 1, 'coinDropChance defaults to 1');
   const MAP = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#....A#', '#######']; // a2 keeps the game going after a1 is dispelled
   const dispel = (g) => { g.adversaries[0].takeHit(skillConfig().ghostHp - 1, [0, 0]); g.adversaries[0].pos = [4, 3]; return resolveAttack(g, EXPLORER, [[4, 3]], 1); };
   try {
@@ -311,9 +312,9 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     const lit2 = mk([[4, 3], [4, 3]]);
     check(/Picks up 2 coins\./.test(describeMoves(new KnownWorld(lit2), 'nearest_frontier', {}).right ?? ''), 'a two-coin pile says "Picks up 2 coins."');
   } finally {
-    setChance(0.5);
+    setChance(1);
   }
-  check(skillConfig().coinDropChance === 0.5, 'coinDropChance restored');
+  check(skillConfig().coinDropChance === 1, 'coinDropChance restored');
 }
 
 // 11. Victory by clearing: dispelling the last adversary wins; one of two does not; an arena with none is not won.
@@ -344,6 +345,142 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const g3 = arena(MAP2);
   resolveAttack(g3, EXPLORER, [g3.adversaries[0].pos], 1);
   check(!g3.won && g3.adversaries.length === 1, 'a strike that leaves the ghost alive does not win');
+}
+
+// 12. Fights have a value (PLAN-motivation P3): the combat rule's live numbers, engage's fact in numbers, the
+// "may clear the dungeon" sentence only for the one adversary ever seen, every mood strikes an adjacent one, and
+// stubbed duels that back what the texts claim.
+{
+  const stubAsk = (calls) => async ({ kind, questions, state }) => {
+    calls.push({ kind, questions, state });
+    return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+      if (q.type === 'noul') return [k, { noul: 0.9 }];
+      const keys = Object.keys(q.criteria);
+      const c = k === 'sentiment' ? 'aggressive' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
+      return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+    }));
+  };
+  const withBrain = async (g, fn) => {
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const calls = [];
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: stubAsk(calls), memoryDir: pathToFileURL(dir + '/') });
+    const rnd = Math.random; Math.random = () => 0.5;
+    try { return await fn(brain, calls); } finally { Math.random = rnd; rmSync(dir, { recursive: true, force: true }); }
+  };
+  const tacticOf = (calls) => calls.find((c) => c.questions.tactic)?.questions.tactic.criteria ?? null;
+  const dump = (calls) => calls.map((c) => JSON.stringify(c.questions) + JSON.stringify(c.state)).join('|');
+  const ROOM = ['#############', '#...........#', '#...........#', '#..@...A....#', '#...........#', '#...........#', '#############'];
+  const TWO = ['#############', '#...........#', '#...A.......#', '#..@...A....#', '#...........#', '#...........#', '#############'];
+  const hunting = (g) => { for (const a of g.adversaries) a.mode = 'chase'; return g; };
+
+  // a. The rules text carries the live numbers.
+  const rulesOf = () => withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return calls[0].state.game; });
+  const before = skillConfig();
+  const base = await rulesOf();
+  check(/loses 1 hp and is knocked back and stunned 2 steps, so your next strike lands before it can claw/.test(base), `combat rule: stun clause (${base})`);
+  check(/drops a coin every time/.test(base) && /claw needs 2 steps to recharge, and your shield stops it 60% of the time/.test(base), 'combat rule: coin, recharge and shield at the defaults');
+  try {
+    configureSkills({ ...before, stunTicks: 3, clawCooldown: 4, shieldChance: 0.4, coinDropChance: 0.5, swordDamage: 2 });
+    const live = await rulesOf();
+    check(/loses 2 hp and is knocked back and stunned 3 steps/.test(live) && /half the time/.test(live) && /needs 4 steps to recharge/.test(live) && /stops it 40% of the time/.test(live), `combat rule follows the settings (${live})`);
+    configureSkills({ ...before, stunTicks: 1 });
+    check(!/before it can claw/.test(await rulesOf()), 'combat rule: no "next strike before it claws" claim with a 1-step stun');
+  } finally { configureSkills(before); }
+
+  // b. Engage's fact: strikes needed from the visible hp; the clear sentence only for the one ghost ever seen.
+  const solo = await withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
+  check(solo?.engage && /2 strikes dispel it; expect at most one claw at you\./.test(solo.engage), `engage fact has strikes and the claw line (${solo?.engage})`);
+  check(/Dispelling it may clear the dungeon \(a win\)\./.test(solo?.engage ?? ''), 'engage fact: a lone adversary may clear the dungeon');
+  // Twin: a second ghost sealed away and never seen changes nothing.
+  const SEALED = ['#############', '#...........#', '#...........#', '#..@...A....#', '#...........#', '#...........#', '#############', '#...........#', '#.....A.....#', '#############'];
+  const lone = await withBrain(hunting(arena(SEALED.map((r, i) => (i > 5 ? r.replace('A', '.') : r)))), async (b, calls) => { await b.takeTurn(); return dump(calls); });
+  const hidden = await withBrain(hunting(arena(SEALED)), async (b, calls) => { await b.takeTurn(); return dump(calls); });
+  check(lone === hidden, 'a second ghost never seen does not change the request');
+  // Two in sight: no sentence. Two seen, one gone from sight: still none (remembered, and never "the only one").
+  const two = await withBrain(hunting(arena(TWO)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
+  check(two?.engage && /strikes? dispel/.test(two.engage) && !/clear the dungeon/.test(two.engage), `two ghosts in sight: strikes but no clear sentence (${two?.engage})`);
+  {
+    const g = hunting(arena(TWO));
+    await withBrain(g, async (b, calls) => {
+      await b.takeTurn(); // both seen; engage taken
+      g.adversaries = g.adversaries.filter((a) => a.id !== 'a1'); // a1 is out of sight now (frozen in memory)
+      await b.noteHit('a2'); // a life lost during a tactic: the next tick asks again
+      const n = calls.length;
+      await b.takeTurn();
+      const t = tacticOf(calls.slice(n));
+      check(t !== null, 'the re-decision asks the tactic question');
+      check(t === null || !/clear the dungeon/.test(t.engage ?? ''), `a ghost seen earlier removes the clear sentence (${t?.engage})`);
+    });
+  }
+
+  // c. Every mood may strike an adjacent adversary when the sword is ready.
+  for (const [id, m] of Object.entries(SENTIMENTS)) {
+    check(/Strike an adjacent adversary whenever the sword is ready/.test(m.skill_priority) && !/only if|that blocks your way|that one hit dispels/.test(m.skill_priority), `${id}: skill_priority allows any adjacent strike (${m.skill_priority})`);
+  }
+
+  // d. Stubbed duels: a hunting ghost (2 hp, claw cooldown 2) against a sword-only explorer, 24 placements.
+  const decide = async ({ state, questions }) => {
+    const out = {};
+    if (questions.next_move) {
+      const t = state.explorer.in_sight ? state.explorer.position : state.last_seen.cell;
+      const opts = Object.keys(questions.next_move.criteria);
+      const sc = (d) => Math.abs(state.self.position[0] + DIRS[d][0] - t[0]) + Math.abs(state.self.position[1] + DIRS[d][1] - t[1]);
+      const c = opts.reduce((best, d) => (sc(d) < sc(best) ? d : best));
+      out.next_move = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
+    }
+    if (questions.skill) { const k = Object.keys(questions.skill.criteria).filter((x) => x !== 'none'); const c = k[0] ?? 'none'; out.skill = { choice: c, probabilities: { [c]: 1 }, confidence: 1 }; }
+    if (questions.search_approach) out.search_approach = { choice: 'sweep_last_seen', probabilities: {}, confidence: 1 };
+    if (questions.keep_hunting) out.keep_hunting = { noul: 0.9 };
+    return out;
+  };
+  const man = (a, b) => Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]);
+  // policy 'hold': walk to 2 steps from it and wait for it to step in (what engage's target says), strike when
+  // adjacent, close in on a stunned one. 'walk': keep walking at it (the target engage does not choose).
+  async function duel(policy, row, gx) {
+    const m = ['###############', '#.............#', '#.............#', '#..@..........#', '#.............#', '#.............#', '###############'].map((r) => r.split(''));
+    m[row][gx] = 'A';
+    const game = arena(m.map((r) => r.join('')));
+    game.adversaries[0].mode = 'chase';
+    game.health = game.maxHealth = 9;
+    const world = new KnownWorld(game);
+    const sword = buildSkillSet(['sword_strike']);
+    const r = { strikes: 0, claws: 0, clawsBetween: 0, dispelled: false };
+    let atFirst = 0;
+    for (let t = 0; t < 60 && !r.dispelled; t++) {
+      game.clearTickState();
+      const g = world.visibleAdversaries()[0];
+      let acted = false;
+      if (g && man(world.pos, g.pos) === 1) {
+        const dir = Object.keys(DIRS).find((d) => DIRS[d][0] === g.pos[0] - world.pos[0] && DIRS[d][1] === g.pos[1] - world.pos[1]);
+        const opt = Object.entries(sword.options({ pos: [...world.pos], facing: world.facing }, { opponentsNear: true, visibleOpponents: [{ id: g.id, pos: g.pos, hp: g.hp, maxHp: g.maxHp }], stunTicks: 2, coinChance: 1 })).find(([, o]) => o.target.dir === dir);
+        const ev = opt ? world.useSkill(sword, opt[0]) : null;
+        if (ev) {
+          r.strikes++; acted = true;
+          if (r.strikes === 1) atFirst = r.claws;
+          if (r.strikes === 2) r.clawsBetween = r.claws - atFirst;
+          if (ev.some((e) => e.type === 'dispelled')) r.dispelled = true;
+        }
+      }
+      if (!acted) {
+        const nx = (d) => [world.pos[0] + DIRS[d][0], world.pos[1] + DIRS[d][1]];
+        const toward = () => world.legalMoves().filter((d) => d !== 'stay' && man(nx(d), g.pos) >= 1).sort((a, b) => man(nx(a), g.pos) - man(nx(b), g.pos))[0];
+        const d0 = g ? man(world.pos, g.pos) : 0;
+        if (g && (policy === 'walk' || d0 > 2 || (r.strikes > 0 && d0 === 2))) world.move(toward()); else world.move('stay');
+      }
+      sword.turnPassed();
+      const { events } = await stepAdversaries(game, { decide });
+      r.claws += events.filter((e) => e.type === 'hit').length;
+    }
+    return r;
+  }
+  for (const policy of ['hold', 'walk']) {
+    const rs = [];
+    for (const row of [2, 3, 4]) for (let gx = 6; gx <= 13; gx++) rs.push(await duel(policy, row, gx));
+    check(rs.every((r) => r.dispelled && r.strikes === 2), `${policy} duels: 2 strikes dispel a 2 hp ghost in all ${rs.length}`);
+    check(rs.every((r) => r.clawsBetween === 0), `${policy} duels: no claw between the first and the second strike`);
+    check(rs.every((r) => r.claws <= 1), `${policy} duels: at most one claw per duel`);
+    if (policy === 'hold') check(rs.every((r) => r.claws === 0), 'hold duels: no claw at all holding the 2-step gap');
+  }
 }
 
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }

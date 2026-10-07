@@ -63,7 +63,7 @@ export const SENTIMENTS = {
     when: 'Pick when cornered: a chasing adversary within about 4 steps, in a corridor, dead end or small room (a side under 6), with no route past it whose closest approach is 3 or more.',
     priority: 'Scared: getting away comes first. Never move toward an adversary; take the move that leaves the most steps between you and avoid every dead end.',
     note: 'Flees first and never moves toward an adversary.',
-    skill_priority: 'Strike an adjacent adversary only if it blocks your way out (the stun buys distance); else block if one can reach you.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.',
   },
   risk_averse: {
     min_gap: 4, end_ticks: 5,
@@ -71,7 +71,7 @@ export const SENTIMENTS = {
     when: 'Pick when an adversary is in sight 5 or more steps away but the ground is uncertain: few known exits, a corridor, or the best route past it comes within 3 steps.',
     priority: 'Risk-averse: keep at least 4 steps from adversaries; when in doubt take the move that grows the distance or keeps more exits open, even at the cost of progress.',
     note: 'Prefers retreat or hiding over passing.',
-    skill_priority: 'Block when an adversary can reach you; strike one that blocks your way out.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready; block when none is adjacent but one can reach you.',
   },
   cautious: {
     min_gap: 3, end_ticks: 4,
@@ -79,7 +79,7 @@ export const SENTIMENTS = {
     when: 'Pick when danger is recent or near: fewer than the full lives left, a hit or chase in `recent.events`, an adversary seen a few steps ago (`threats.remembered`), or an adversary in sight that is far (6+ steps) or still patrolling and has not reacted.',
     priority: 'Cautious: keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
     note: 'Favours well-connected ground over dead ends and corridors.',
-    skill_priority: 'Strike an adjacent adversary that blocks your way or that one hit dispels; else block if one can reach you.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
   },
   // The opposite of cautious: drawn to the unknown, it accepts corridors and side branches that
   // still lead somewhere new. Same 3-step safety floor; it just gets back to exploring sooner.
@@ -89,7 +89,7 @@ export const SENTIMENTS = {
     when: 'Pick when it is safe to explore boldly: full lives, no adversary in sight or remembered (`threats.remembered` empty), no recent chase, and plenty of unexplored space (`surroundings.unexplored_by_direction`).',
     priority: 'Curious: the unknown comes first. Prefer the move that would reveal the most new cells or steps onto a never-visited cell; corridors and side branches are fine while they lead towards unexplored space. Still keep at least 3 steps from adversaries.',
     note: 'Drawn to the unknown: goes for the most new cells, even down corridors.',
-    skill_priority: 'Strike an adjacent adversary that blocks the way to unexplored ground.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on exploring.',
   },
   courageous: {
     min_gap: 2, end_ticks: 2,
@@ -97,7 +97,7 @@ export const SENTIMENTS = {
     when: 'Pick when an adversary is in sight but there is room to work with: a big room with several exits, a route past it toward unexplored space whose closest approach is only 2 steps, or a lone adversary low on hp.',
     priority: 'Courageous: hold your nerve. Do not give up ground just because an adversary is in sight; engage one that blocks your way or is low on hp, else keep 2+ steps and keep making progress.',
     note: 'Holds its nerve; fights when it pays.',
-    skill_priority: 'Strike an adjacent adversary when the sword is ready; else block if one can reach you.',
+    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one; else block if one can reach you.',
   },
   aggressive: {
     min_gap: 2, end_ticks: 1,
@@ -134,7 +134,7 @@ const TACTIC_MOVE_HINT = {
 
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
-// combat: null (no attack skill) or { name, damage, stun, coinChance } (the live skill and settings numbers).
+// combat: null (no attack skill) or { name, damage, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null) =>
   'Goal: loot this dark dungeon and get out alive. Your score is the coins you hold when you win. ' +
   'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every adversary. At 0 lives you lose, coins and all. ' +
@@ -147,10 +147,14 @@ const rules = (hasSkills = true, combat = null) =>
 
 const chancePhrase = (p) => (p >= 1 ? 'every time' : p === 0.5 ? 'half the time' : `${Math.round(p * 100)}% of the time`);
 // What the sword does, with the live numbers: the facts that make a fight worth weighing.
-function combatRule({ name, damage, stun, coinChance }) {
+// The stun clause is claimed only from 2 steps up: strike, close in, strike again is two ticks, and the
+// stubbed duels (check-skills section 11) show no claw in between at the default stun.
+function combatRule({ name, damage, stun, coinChance, clawCooldown, shield }) {
   const loot = coinChance > 0 ? ` and drops a coin ${chancePhrase(coinChance)}` : '';
-  return `Your ${name.toLowerCase()} always hits an adjacent adversary: it loses ${damage} hp${stun ? ` and is knocked back and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}; ` +
-    `at 0 hp it is gone for good${loot}.`;
+  return `Your ${name.toLowerCase()} always hits an adjacent adversary: it loses ${damage} hp${stun ? ` and is knocked back and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}` +
+    `${stun >= 2 ? ', so your next strike lands before it can claw' : ''}; at 0 hp it is gone for good${loot}. ` +
+    `An adversary's claw needs ${clawCooldown} step${clawCooldown === 1 ? '' : 's'} to recharge` +
+    `${shield > 0 ? `, and your shield stops it ${chancePhrase(shield)}` : ''}.`;
 }
 
 // Encounter sentences that repeat a tactic option's own fact (dropped when the tactic question is asked).
@@ -200,6 +204,7 @@ export class ExplorerBrain {
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
   #seen = new Map();
+  #everSeen = new Set(); // every adversary id the explorer has had in sight this game (never pruned): is this the only one it knows of?
   // Remembered sightings that are not visible now (what threats.remembered is built from), and the
   // known cells near recent ones (exploration approaches steer clear of them).
   #remembered = [];
@@ -294,6 +299,7 @@ export class ExplorerBrain {
     const visible = new Set();
     for (const v of world.visibleAdversaries()) {
       visible.add(v.id);
+      this.#everSeen.add(v.id);
       this.#seen.set(v.id, { id: v.id, cell: [...v.pos], step: now, chasing: v.mode === 'chase', hp: v.hp, maxHp: v.maxHp });
     }
     for (const [id, r] of this.#seen) {
@@ -346,6 +352,15 @@ export class ExplorerBrain {
     return new Set([...this.#struck].filter(([, at]) => now - at < skillConfig().stunTicks).map(([id]) => id));
   }
 
+  // What engage's option fact needs to say the fight in numbers: the sword's damage, and whether the adversary in
+  // sight is the only one this explorer has ever seen (nothing remembered, no other id seen this game). Own sight
+  // only: it never claims it is the last one, only that it may clear the dungeon.
+  #fight() {
+    const k = this.#skills.skills.find((x) => x.kind === 'attack');
+    if (!k) return null;
+    return { damage: k.damage, only: this.#everSeen.size === 1 && this.#remembered.length === 0 && this.#world.visibleAdversaries().length === 1 };
+  }
+
   // A ready attack skill is in hand (engage is offered only then).
   #armed() {
     return this.#skills.skills.some((k) => k.kind === 'attack' && k.ready);
@@ -356,7 +371,8 @@ export class ExplorerBrain {
     const k = this.#skills.skills.find((x) => x.kind === 'attack');
     if (!k) return null;
     const c = skillConfig();
-    return { name: k.name, damage: k.damage, stun: c.stunTicks, coinChance: c.coinDropChance };
+    const block = this.#skills.skills.find((x) => x.kind === 'block');
+    return { name: k.name, damage: k.damage, stun: c.stunTicks, coinChance: c.coinDropChance, clawCooldown: c.clawCooldown, shield: block ? block.effectiveness : null };
   }
 
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
@@ -409,7 +425,7 @@ export class ExplorerBrain {
       const profile = profileOf(memory);
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds() });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -440,7 +456,7 @@ export class ExplorerBrain {
           priorities: [
             profile.priority,
             'Prefer a tactic that keeps making progress (slip past, carry on) or wins a fight worth its risk (engage); racing to the portal ends the game.',
-            'Run away only when the adversary is close, the space cramped, or nothing else is safe.',
+            'Engage a lone adversary when the sword is ready: it pays a coin and brings the cleared win closer. Run away when outnumbered, cramped or without the sword.',
           ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),

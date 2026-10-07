@@ -236,7 +236,15 @@ export const hpText = (th) => `${th.hp} of ${th.maxHp} hp`;
 // explorer's own cell when it is already there). Already next to one: the own cell (strike now). The
 // cheapest target wins (the weaker adversary on a tie). No minimum gap: closing in is the point.
 const HOLD_GAP = 2;
-export function engageTarget(world, threats, { stunned = null } = {}) {
+// The fight in numbers, from the health bar in sight and the sword's damage only. "At most one claw" is claimed
+// for up to 2 strikes: in stubbed duels (check-skills section 11) holding the 2-step gap took no claw and walking in
+// at most one, always before the first strike. `fight.only`: the one adversary the explorer has ever seen.
+function fightFacts(th, { damage, only }) {
+  const n = Math.max(1, Math.ceil(th.hp / damage));
+  return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it${n <= 2 ? '; expect at most one claw at you' : ''}.` +
+    `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}`;
+}
+export function engageTarget(world, threats, { stunned = null, fight = null } = {}) {
   if (!threats.length) return null;
   const here = world.pos;
   const dist = knownDistances(world, here);
@@ -264,7 +272,7 @@ export function engageTarget(world, threats, { stunned = null } = {}) {
     approach: `${where} puts you 2 steps from ${who}: wait there for it to step in, then strike first.`,
     close: `${where} puts you next to ${who}, still stunned by your strike.`,
   }[best.kind];
-  return { cell: [...best.cell], steps: best.steps, why };
+  return { cell: [...best.cell], steps: best.steps, why: fight ? `${why} ${fightFacts(th, fight)}` : why };
 }
 
 // Per legal move: does it lead into a known dead end (nothing unexplored past it, no loop back)?
