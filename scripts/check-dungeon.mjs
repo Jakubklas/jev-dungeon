@@ -9,7 +9,7 @@ import {
 } from '../src/dungeon.js';
 import {
   APPROACHES, TACTICS, isTactic, situation, describeMoves, approachTarget, availableApproaches, exitSeen,
-  tacticFeasibility, tacticOptions, avoidZone,
+  tacticFeasibility, tacticOptions, avoidZone, describeMoveParts,
 } from '../src/characters/explorer/perception.js';
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
@@ -1431,6 +1431,149 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     else if (!first.known) fail('leave_now asked before the portal was known');
     rmSync(dir, { recursive: true, force: true });
     console.log('mid-encounter portal: leave_now waits for the first tick without a tactic question');
+  }
+}
+
+// 4h. Coins pull (PLAN-motivation P2; stub Jev, no network, temp memory dir): collect_coins is offered only
+//     while a lit pile is reachable and targets the best coins per known-path step, never through the portal;
+//     unlit piles change no request byte; the per-move "Toward / Away from N seen coins" fact shows within 8
+//     steps only; the coin decision (a next_approach question, no sentiment call) fires once on a new nearby
+//     pile, not again within 10 steps, not beside a tactic; a stub picking collect_coins walks onto the pile.
+{
+  const strip = (n) => ['#'.repeat(n), '#' + '.'.repeat(n - 2) + '#', '#'.repeat(n)];
+  const hall = (n) => ['#'.repeat(n), ...Array(3).fill('#' + '.'.repeat(n - 2) + '#'), '#'.repeat(n)];
+  const mk = (rows, pos, lit, coins, portal = null) => {
+    const g = handGame(rows, pos, lit);
+    if (portal) g.dungeon.treasure = portal;
+    g.coinPiles = coins;
+    return g;
+  };
+  const seeded = async (n, fn) => {
+    const real = Math.random;
+    Math.random = rng(n);
+    try { return await fn(); } finally { Math.random = real; }
+  };
+
+  // (a) Offered only with a lit, reachable pile; the target is the best coins / steps (ties: fewer steps).
+  {
+    const w = (g) => new KnownWorld(g);
+    if (availableApproaches(w(mk(hall(30), [2, 2], 9, []))).includes('collect_coins')) fail('collect_coins offered with no coins');
+    if (availableApproaches(w(mk(hall(30), [2, 2], 9, [[20, 2]]))).includes('collect_coins')) fail('collect_coins offered for an unlit pile');
+    const lit = w(mk(hall(30), [2, 2], 9, [[5, 2], [8, 2], [8, 2], [8, 2]]));
+    if (!availableApproaches(lit).includes('collect_coins')) fail('collect_coins not offered with a lit pile');
+    const t = approachTarget(lit, 'collect_coins');
+    // 1 coin 3 steps away = 0.33 per step; 3 coins 6 steps away = 0.5 per step
+    if (!t || t.cell.join() !== '8,2' || t.count !== 3) fail(`collect_coins target ${JSON.stringify(t)}, expected the 3-coin pile at 8,2`);
+    const better = approachTarget(w(mk(hall(30), [2, 2], 9, [[4, 2], [8, 2], [8, 2], [8, 2], [8, 2]])), 'collect_coins'); // 0.5 vs 0.67
+    if (better.cell.join() !== '8,2') fail(`collect_coins ignored the better ratio: ${JSON.stringify(better)}`);
+    const even = approachTarget(w(mk(hall(30), [2, 2], 9, [[4, 2], [8, 2], [8, 2], [8, 2]])), 'collect_coins'); // 0.5 vs 0.5: fewer steps
+    if (even.cell.join() !== '4,2') fail(`collect_coins tie not broken by steps: ${JSON.stringify(even)}`);
+    const avoid = approachTarget(lit, 'collect_coins', { avoid: new Set(['8,2']) });
+    if (avoid.cell.join() !== '5,2') fail('collect_coins ignored the avoid zone while another pile exists');
+    const only = approachTarget(w(mk(hall(30), [2, 2], 9, [[8, 2]])), 'collect_coins', { avoid: new Set(['8,2']) });
+    if (!only) fail('collect_coins dropped its only pile for the avoid zone');
+    // The portal is a wall: a pile behind it is unreachable, so the approach has no target there.
+    const behind = w(mk(strip(30), [2, 1], 12, [[10, 1]], [6, 1]));
+    if (availableApproaches(behind).includes('collect_coins') || approachTarget(behind, 'collect_coins')) fail('collect_coins routes through the portal');
+    const before = w(mk(strip(30), [2, 1], 12, [[4, 1]], [6, 1]));
+    if (approachTarget(before, 'collect_coins')?.cell.join() !== '4,1') fail('collect_coins missed a pile before the portal');
+    console.log('collect_coins: offered only with a lit reachable pile; best coins per step (ties: fewer steps); avoid zone honoured; the portal is a wall');
+  }
+
+  // (b) The move fact: nearest pile by known path, within 8 steps only.
+  {
+    const facts = (pileX) => describeMoves(new KnownWorld(mk(strip(30), [3, 1], 14, [[pileX, 1], [pileX, 1]])), 'nearest_frontier');
+    const near = facts(11); // 8 steps away
+    if (!/Toward 2 seen coins \(7 steps after this\)\./.test(near.right)) fail(`no toward-coins fact at 8 steps: ${near.right}`);
+    if (!/Away from 2 seen coins \(9 steps after this\)\./.test(near.left)) fail(`no away-coins fact at 8 steps: ${near.left}`);
+    const far = facts(12); // 9 steps away
+    if (/seen coin/.test(far.right + far.left)) fail(`coins fact beyond 8 steps: ${far.right} ${far.left}`);
+    const on = describeMoves(new KnownWorld(mk(strip(30), [3, 1], 14, [[4, 1], [4, 1]])), 'nearest_frontier');
+    if (!/Picks up 2 coins\./.test(on.right) || /Toward/.test(on.right)) fail(`step onto a pile: ${on.right}`);
+    const parts = describeMoveParts(new KnownWorld(mk(strip(30), [3, 1], 14, [[11, 1]])), 'collect_coins');
+    if (!/Toward 1 seen coin/.test(parts.right.shared) || /seen coin/.test(parts.right.target)) fail('the coins fact is not in the shared part');
+    console.log('coin move fact: Toward / Away within 8 known-path steps, absent at 9, Picks up on the pile, in the shared part');
+  }
+
+  // (c) Fog twin: coins on unlit cells change no request byte; a lit pile does.
+  {
+    const run = async (coins) => {
+      const g = mk(hall(40), [2, 2], 9, coins);
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.9 }];
+        const keys = Object.keys(q.criteria);
+        const c = k === 'sentiment' ? 'cautious' : keys.includes('right') ? 'right' : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      await seeded(7, () => brain.takeTurn());
+      await seeded(8, () => brain.takeTurn());
+      const out = JSON.stringify(brain.lastRequests());
+      rmSync(dir, { recursive: true, force: true });
+      return out;
+    };
+    const none = await run([]);
+    const dark = await run([[30, 2], [35, 1], [30, 2]]);
+    if (none !== dark) fail('unlit coins changed the request');
+    const lit = await run([[7, 2]]);
+    if (lit === none || !/seen coin/.test(lit)) fail('a lit pile did not reach the request');
+    console.log('coin fog twin: unlit piles leave the requests byte-identical; a lit pile shows');
+  }
+
+  // (d) The coin decision.
+  {
+    const play = async ({ rows, coins, pick, ticks, ghost = false, pos = [2, 2] }) => {
+      const g = mk(rows, pos, 2, coins);
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const log = [];
+      let brain = null;
+      const ask = async ({ kind, questions }) => {
+        log.push({ step: g.steps, kind, kinds: Object.keys(questions), approach: brain.memory.approach.id });
+        return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+          if (q.type === 'noul') return [k, { noul: 0.1 }];
+          const keys = Object.keys(q.criteria);
+          let c = keys.includes('right') ? 'right' : keys[0];
+          if (k === 'sentiment') c = 'cautious';
+          if (k === 'tactic') c = keys.includes('run_away') ? 'run_away' : keys[0];
+          if (k === 'next_approach') c = pick === 'current' ? brain.memory.approach.id : pick;
+          return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+        }));
+      };
+      brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const turns = [];
+      for (let i = 0; i < ticks && !g.won; i++) {
+        if (ghost) g.adversaries = [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])];
+        turns.push(await brain.takeTurn());
+      }
+      rmSync(dir, { recursive: true, force: true });
+      return { g, log, turns, brain };
+    };
+    const wide = hall(60);
+
+    // Picks collect_coins: one question, a switch, the pile taken, the approach back to the edges, no sentiment call for it.
+    const a = await play({ rows: wide, coins: [[11, 2], [11, 2]], pick: 'collect_coins', ticks: 14 });
+    const asks = a.log.filter((l) => l.kinds.includes('next_approach') && !l.kinds.includes('approach_working'));
+    if (asks.length !== 1) fail(`coin decision asked ${asks.length} times, expected 1`);
+    else if (asks[0].kind !== 'tick') fail(`coin decision on the wrong request: ${JSON.stringify(asks[0])}`);
+    if (a.log.filter((l) => l.kind === 'sentiment').length !== 1) fail('the coin decision cost a sentiment call (only the start one is expected)');
+    if (!a.turns.some((t) => t.policy?.to === 'collect_coins')) fail('picking collect_coins did not switch the approach');
+    if (a.g.coins !== 2 || a.brain.memory.progress.coins !== 2) fail(`the stub picking collect_coins did not collect the pile (coins ${a.g.coins})`);
+    if (!a.turns.some((t) => t.policy?.from === 'collect_coins' && t.policy.to === 'nearest_frontier')) fail('collect_coins did not hand back to nearest_frontier once the pile was taken');
+    if (a.brain.memory.approach.id !== 'nearest_frontier') fail(`approach after the coins: ${a.brain.memory.approach.id}`);
+    validateMemory(a.brain.memory);
+
+    // Picks the current approach: no switch; a second pile within 10 steps asks nothing more.
+    const b = await play({ rows: wide, coins: [[10, 2], [15, 2]], pick: 'current', ticks: 14 });
+    const asksB = b.log.filter((l) => l.kinds.includes('next_approach') && !l.kinds.includes('approach_working'));
+    if (asksB.length !== 1) fail(`two piles within 10 steps: coin decision asked ${asksB.length} times, expected 1 ${JSON.stringify(asksB)}`);
+    if (b.turns.some((t) => t.policy?.to === 'collect_coins')) fail('staying with the current approach still switched');
+
+    // Beside a tactic nothing is asked.
+    const c = await play({ rows: wide, coins: [[10, 2]], pick: 'collect_coins', ticks: 10, ghost: true });
+    if (c.log.some((l) => l.kinds.includes('next_approach') && (l.kinds.includes('tactic') || TACTICS.includes(l.approach)))) fail('coin decision asked during a tactic');
+    if (!c.log.some((l) => l.kinds.includes('tactic'))) fail('tactic setup: no tactic question was asked');
+    console.log('coin decision: one next_approach on a new nearby pile (no sentiment call), none within 10 steps, none beside a tactic; collect_coins walks onto the pile, then hands back to nearest_frontier');
   }
 }
 
