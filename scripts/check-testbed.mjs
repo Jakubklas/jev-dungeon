@@ -184,7 +184,7 @@ for (const { name, config } of scenarios) {
       for (let y = 0; y < game.dungeon.height; y++) for (let x = 0; x < game.dungeon.width; x++) if (game.dungeon.tiles[y][x] === '.' && game.isKnown([x, y])) lit++;
       check(lit === game.floorCount, `${name}: small arena floor fully lit at step 0 (${lit}/${game.floorCount})`);
     }
-    check(typeof situation(new KnownWorld(game)).surroundings.chest === 'string', `${name}: situation`);
+    check(typeof situation(new KnownWorld(game)).surroundings.exit === 'string', `${name}: situation`);
     let ticks = 0;
     for (; ticks < 25 && !game.won && !game.lost; ticks++) {
       await run.playTurn();

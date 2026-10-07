@@ -77,9 +77,10 @@ function gapAt(threats, cell, steps) {
 }
 
 // Known-floor BFS from the explorer that only enters cells where every visible adversary stays
-// at least `minGap` steps away when the explorer arrives (the chest may always be entered).
-export function safeDistances(world, threats, minGap) {
-  return knownDistances(world, world.pos, null, (c, d) => gapAt(threats, c, d) >= minGap, world.seenTreasure());
+// at least `minGap` steps away when the explorer arrives (the portal may always be entered).
+// Only `withPortal` (race_to_exit, the portal fact) may end on the portal; every other route keeps off it.
+export function safeDistances(world, threats, minGap, withPortal = false) {
+  return knownDistances(world, world.pos, null, (c, d) => gapAt(threats, c, d) >= minGap, withPortal ? world.seenTreasure() : null);
 }
 
 function nearestThreat(world, threats) {
@@ -99,29 +100,31 @@ function isPast(world, th, cell) {
 export const hiddenFromAll = (world, threats, c) => threats.every((th) => !sameCell(th.pos, c) && !knownLineOfSight(world, th.pos, c));
 
 // The goal cells each tactic needs, found in one gap-limited BFS.
-export function goalsAt(world, threats, dist) {
-  const chest = world.seenTreasure();
+// `distExit` (optional): the same BFS allowed to end on the portal, for the `exit` goal only; slip, hide and
+// frontier goals never use the portal.
+export function goalsAt(world, threats, dist, distExit = null) {
+  const exitCell = world.seenTreasure();
   const near = nearestThreat(world, threats);
   const cells = dist.cells().filter((c) => !sameCell(c, world.pos)).map((c) => ({ cell: c, steps: dist.get(c) }));
   const frontier = cells.filter((f) => isFrontier(world, f.cell));
-  const chestGoal = chest && dist.has(chest) ? { cell: [...chest], steps: dist.get(chest) } : null;
-  const pastCands = [...frontier, ...(chestGoal ? [chestGoal] : [])].filter((f) => near && isPast(world, near, f.cell));
+  const exitGoal = exitCell && distExit?.has(exitCell) ? { cell: [...exitCell], steps: distExit.get(exitCell) } : null;
+  const pastCands = frontier.filter((f) => near && isPast(world, near, f.cell));
   return {
     slip: pick(pastCands, (f) => -f.steps),
     hide: pick(cells.filter((f) => f.steps <= HIDE_MAX_STEPS && hiddenFromAll(world, threats, f.cell)), (f) => -f.steps),
-    chest: chestGoal,
+    exit: exitGoal,
     frontier: pick(frontier, (f) => (hiddenFromAll(world, threats, f.cell) ? 1000 : 0) - f.steps),
   };
 }
 
 // For each goal type, the largest gap (1..MAX_GAP) at which a route to it still exists:
-// that is the route's closest approach. -> { slip, hide, chest, frontier }: { gap, cell, steps } | null
+// that is the route's closest approach. -> { slip, hide, exit, frontier }: { gap, cell, steps } | null
 function routeSurvey(world, threats) {
-  const out = { slip: null, hide: null, chest: null, frontier: null };
+  const out = { slip: null, hide: null, exit: null, frontier: null };
   for (let k = MAX_GAP; k >= 1; k--) {
     const missing = Object.keys(out).filter((t) => !out[t]);
     if (!missing.length) break;
-    const goals = goalsAt(world, threats, safeDistances(world, threats, k));
+    const goals = goalsAt(world, threats, safeDistances(world, threats, k), world.seenTreasure() ? safeDistances(world, threats, k, true) : null);
     for (const t of missing) if (goals[t]) out[t] = { gap: k, ...goals[t] };
   }
   return out;
@@ -297,13 +300,13 @@ export function encounterFacts(world, threats) {
   const run = escapeTarget(world, knownDistances(world, here), threats);
   const dead = deadEndMoves(world);
   const legal = world.legalMoves().length;
-  const chest = world.seenTreasure();
+  const exitCell = world.seenTreasure();
   const facts = {
     space,
     gap_now: gapNow,
     speed: `Every step straight away from an adversary gains about ${Math.round((1 - ADVERSARY_SPEED) * 10) / 10} of a step.`,
     slip_past: survey.slip
-      ? `Best known route past it ${chest && sameCell(survey.slip.cell, chest) ? 'to the chest' : 'toward unexplored space'}: ` +
+      ? `Best known route past it toward unexplored space: ` +
         `${plural(survey.slip.steps, 'step')}, closest approach ${gapWords(survey.slip.gap)}.`
       : 'No known route gets past it: it blocks the way, or every way past runs into it.',
     hide: survey.hide
@@ -314,10 +317,10 @@ export function encounterFacts(world, threats) {
       : 'Nowhere known to run to.',
     dead_ends: dead.length ? `${dead.length} of ${plural(legal, 'move')} lead${dead.length === 1 ? 's' : ''} into a known dead end (${dead.join(', ')}).` : 'No move leads into a known dead end.',
   };
-  if (chest) {
-    facts.chest = survey.chest
-      ? `The chest is ${plural(survey.chest.steps, 'step')} away; on that path the adversary gets no closer than ${gapWords(survey.chest.gap)}.`
-      : 'The chest is seen, but no known path reaches it without running into the adversary.';
+  if (exitCell) {
+    facts.exit = survey.exit
+      ? `The portal is ${plural(survey.exit.steps, 'step')} away; on that path the adversary gets no closer than ${gapWords(survey.exit.gap)}.`
+      : 'The portal is seen, but no known path reaches it without running into the adversary.';
   }
   return { facts, survey, area, threats };
 }

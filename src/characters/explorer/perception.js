@@ -34,7 +34,7 @@ export const APPROACHES = {
   nearest_frontier: { text: 'Explore the closest edge of the known map first, clearing nearby gaps before travelling.', thought: "Let's check the closest dark edge." },
   largest_unexplored: { text: 'Head for the largest dark region, judged by how much unknown space lies in each direction.', thought: 'That big dark patch looks promising.' },
   far_side: { text: 'Travel to the part of the dungeon farthest from where the explorer has already been.', thought: "Let's try the far side of this place." },
-  go_to_treasure: { text: 'The chest has been seen: walk the shortest known path to it.', thought: 'The chest! Straight to it.', needsTreasure: true },
+  go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
   slip_past: {
     text: 'Slip past the adversary: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
@@ -45,7 +45,7 @@ export const APPROACHES = {
     thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
   },
   hide: { text: "Duck out of sight: reach a known cell outside the adversary's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
-  race_to_chest: { text: 'Race the adversary to the seen chest along the known path, staying out of its reach.', thought: 'Go for the chest!', tactic: true, needsTreasure: true, brief: 'Race it to the seen chest along the known path.' },
+  race_to_exit: { text: 'Race the adversary to the seen portal along the known path, staying out of its reach.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Race it to the seen portal along the known path.' },
   carry_on: { text: 'The adversary is patrolling and has not seen the explorer: keep exploring, but stay out of its sight.', thought: "It hasn't seen me, keep going.", tactic: true, brief: 'It has not seen you: keep exploring out of its sight.' },
 };
 export const TACTICS = Object.keys(APPROACHES).filter((id) => APPROACHES[id].tactic);
@@ -69,8 +69,8 @@ const FACT_SIGHTINGS = 3; // at most this many (the most recent) get a BFS per d
 // How far (in cells, each way) unexplored_by_direction looks. Fixed, so it never depends on the map size.
 const SURVEY_REACH = 12;
 
-// The treasure position is only ever read through KnownWorld.seenTreasure (null until lit).
-export function treasureSeen(world) {
+// The portal position is only ever read through KnownWorld.seenTreasure (null until lit).
+export function exitSeen(world) {
   return world.seenTreasure() !== null;
 }
 
@@ -97,7 +97,7 @@ const amount = (n) => (n === 0 ? 'none' : n <= 30 ? 'little' : n <= 120 ? 'some'
 
 // Exploration approaches Jev may pick in a review (tactics are offered by tacticOptions).
 export function availableApproaches(world) {
-  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsTreasure || treasureSeen(world)));
+  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsExit || exitSeen(world)));
 }
 
 // Tactic targets need a visible adversary; without one, the move-on tactics fall back to the
@@ -149,7 +149,8 @@ function frozenThreats(world, remembered) {
 // while any other frontier cell exists.
 // `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage.
 export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null } = {}) {
-  const dist = knownDistances(world, world.pos);
+  // Only the leaving approaches may route through the portal; for all others it is a wall.
+  const dist = knownDistances(world, world.pos, null, null, null, approachId === 'go_to_exit');
 
   if (approachId === 'run_away') {
     const threats = threatsOf(world);
@@ -165,13 +166,13 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
 
   if (isTactic(approachId)) {
     const threats = threatsOf(world);
-    const chest = world.seenTreasure();
-    if (approachId === 'race_to_chest') {
-      if (!chest) return null;
-      if (!threats.length) return approachTarget(world, 'go_to_treasure');
-      const safe = safeDistances(world, threats, minGap);
-      if (!safe.has(chest)) return null;
-      return { cell: [...chest], steps: safe.get(chest), why: `The chest is ${plural(safe.get(chest), 'step')} away by a known path that keeps the adversary at least ${plural(minGap, 'step')} off.` };
+    const exitCell = world.seenTreasure();
+    if (approachId === 'race_to_exit') {
+      if (!exitCell) return null;
+      if (!threats.length) return approachTarget(world, 'go_to_exit');
+      const safe = safeDistances(world, threats, minGap, true);
+      if (!safe.has(exitCell)) return null;
+      return { cell: [...exitCell], steps: safe.get(exitCell), why: `The portal is ${plural(safe.get(exitCell), 'step')} away by a known path that keeps the adversary at least ${plural(minGap, 'step')} off.` };
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
     if (approachId === 'engage') return engageTarget(world, threats, { stunned });
@@ -187,7 +188,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     if (approachId === 'slip_past') {
       const g = goals.slip;
       if (!g) return null;
-      const to = chest && sameCell(g.cell, chest) ? 'to the chest' : 'toward unexplored space';
+      const to = 'toward unexplored space';
       return { ...g, why: `Route past the adversary ${to}, ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}, keeping at least ${plural(minGap, 'step')} between you.` };
     }
     if (approachId === 'hide') {
@@ -204,16 +205,16 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
 
   const frontier = reachableFrontier(world, dist);
 
-  if (approachId === 'go_to_treasure') {
+  if (approachId === 'go_to_exit') {
     const t = world.seenTreasure();
     if (!t) return null;
     if (dist.has(t)) {
-      return { cell: [...t], steps: dist.get(t), why: `The chest is ${plural(dist.get(t), 'step')} away by known path.` };
+      return { cell: [...t], steps: dist.get(t), why: `The portal is ${plural(dist.get(t), 'step')} away by known path.` };
     }
     // Seen, but the way there still crosses dark cells: head for the edge nearest to it.
     const near = pick(frontier, (f) => -Math.hypot(f.cell[0] - t[0], f.cell[1] - t[1]));
     if (!near) return null;
-    return { ...near, why: `No fully known path to the chest yet; this edge of the known map is closest to it, ${plural(near.steps, 'step')} away.` };
+    return { ...near, why: `No fully known path to the portal yet; this edge of the known map is closest to it, ${plural(near.steps, 'step')} away.` };
   }
 
   if (!frontier.length) return null;
@@ -272,7 +273,7 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   add('run_away', true);
   add('engage', armed);
   add('hide', s.hide && s.hide.gap >= minGap);
-  add('race_to_chest', treasureSeen(world) && s.chest && s.chest.gap >= minGap);
+  add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);
   add('carry_on', threats.every((th) => !th.chasing) && s.frontier && s.frontier.gap >= minGap);
   return out;
 }
@@ -313,6 +314,22 @@ function coinView(world, dist) {
   return list.length ? { coins: list } : {};
 }
 
+// The facts the `leave_now` question states, from this tick's situation `sit`: coins held, lit piles not yet
+// taken (count, nearest by known path), the portal's known-path distance, lives, adversaries, what is left
+// to explore. All fog-safe: purse, lit piles, known floor, adversaries in sight or remembered.
+export function leaveFacts(world, sit) {
+  const dist = knownDistances(world, world.pos);
+  const piles = world.seenCoins(); // one entry per coin (a stacked pile repeats its cell)
+  const near = piles.map((c) => dist.get(c)).filter((d) => d !== undefined).sort((a, b) => a - b)[0];
+  const portal = world.seenTreasure();
+  const toPortal = portal ? knownDistances(world, world.pos, null, null, null, true) : null;
+  const t = portal && toPortal.has(portal) ? `${plural(toPortal.get(portal), 'step')} away` : 'no known path yet';
+  const { visible, remembered } = sit.threats;
+  return `You hold ${plural(world.coins, 'coin')}; ` +
+    (piles.length ? `${plural(piles.length, 'seen coin')} left${near === undefined ? '' : `, nearest ${plural(near, 'step')} away`}; ` : 'no coins seen; ') +
+    `portal ${t}; ${world.health} of ${world.maxHealth} lives; ${visible.length} ${visible.length === 1 ? 'adversary' : 'adversaries'} in sight, ${remembered.length} remembered; ${plural(sit.surroundings.frontier_cells, 'unexplored edge')}.`;
+}
+
 // Landmarks (memory.landmarks) made relative to the explorer's position, recomputed every tick.
 function landmarkView(world, dist, landmarks) {
   return landmarks.map((l) => ({
@@ -330,10 +347,12 @@ function landmarkView(world, dist, landmarks) {
 export function situation(world, { remembered = [], landmarks = [] } = {}) {
   const dist = knownDistances(world, world.pos);
   const t = world.seenTreasure();
-  let chest = 'not seen yet';
+  // The portal's own distance (and its landmark's) may route through it; every other distance treats it as a wall.
+  const distX = t ? knownDistances(world, world.pos, null, null, null, true) : dist;
+  let exitText = 'not seen yet';
   if (t) {
-    chest = dist.has(t)
-      ? `seen, ${plural(dist.get(t), 'step')} away by known path`
+    exitText = distX.has(t)
+      ? `seen, ${plural(distX.get(t), 'step')} away by known path`
       : 'seen, no fully known path yet';
   }
   const unknown = unknownByDirection(world);
@@ -349,7 +368,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
       here: hereKind(world),
       steps: world.steps,
       known_floor_cells: world.knownFloorCount(), // a count, not a %: a % would leak the dungeon's size
-      chest,
+      exit: exitText,
       unexplored_by_direction: {
         north: amount(unknown.north),
         south: amount(unknown.south),
@@ -357,7 +376,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
         west: amount(unknown.west),
       },
       frontier_cells: reachableFrontier(world, dist).length,
-      landmarks: landmarkView(world, dist, landmarks),
+      landmarks: landmarkView(world, distX, landmarks),
       ...coinView(world, dist),
     },
     threats: {
@@ -462,20 +481,22 @@ export function describeMoves(world, approachId, opts = {}) {
   return Object.fromEntries(Object.entries(describeMoveParts(world, approachId, opts)).map(([dir, p]) => [dir, p.whole ?? [p.shared, p.target].filter(Boolean).join(' ')]));
 }
 
-// The same facts split in two: `shared` (threats, sightings, chest, reveal, visits, dead ends: they do
+// The same facts split in two: `shared` (threats, sightings, portal, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
 export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null } = {}) {
-  const target = approachId === 'go_to_treasure' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned });
+  const target = approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned });
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();
-  const toTreasure = t ? knownDistances(world, t) : null;
+  // Distance to the portal is only a fact while leaving: otherwise it would frame every move around leaving.
+  const leaving = approachId === 'go_to_exit' || approachId === 'race_to_exit';
+  const toExit = t && leaving ? knownDistances(world, t) : null;
   const threats = threatsOf(world);
   const here = world.pos;
-  // When the chest is seen but has no known path, judge moves against the edge nearest it.
+  // When the portal is seen but has no known path, judge moves against the edge nearest it.
   let toNearEdge = null;
-  if (t && approachId === 'go_to_treasure' && !toTreasure.has(here)) {
-    const near = approachTarget(world, 'go_to_treasure');
+  if (t && approachId === 'go_to_exit' && !toExit.has(here)) {
+    const near = approachTarget(world, 'go_to_exit');
     toNearEdge = near ? knownDistances(world, near.cell) : null;
   }
   // One BFS per remembered sighting (the most recent few), shared by every move: never per move.
@@ -491,23 +512,23 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     const targetFacts = [];
 
     if (t && sameCell(dest, t)) {
-      out[dir] = { whole: 'Steps onto the treasure chest and wins the game.' };
+      out[dir] = { whole: 'Steps onto the portal: leaves the dungeon with your current coins and ends the game.' };
       continue;
     }
     facts.push(...threatSentences(world, threats, dest, minGap));
     const spot = sightingSentence(world, sightings, here, dest);
     if (spot) facts.push(spot);
 
-    if (t) {
-      const before = toTreasure.get(here), after = toTreasure.get(dest);
+    if (toExit) {
+      const before = toExit.get(here), after = toExit.get(dest);
       if (before !== undefined && after !== undefined) {
         facts.push(after < before
-          ? `Closer to the chest (${plural(after, 'step')} left by known path).`
-          : `Farther from the chest (${plural(after, 'step')} by known path).`);
+          ? `Closer to the portal (${plural(after, 'step')} left by known path).`
+          : `Farther from the portal (${plural(after, 'step')} by known path).`);
       } else if (toNearEdge?.has(here) && toNearEdge.has(dest)) {
         facts.push(toNearEdge.get(dest) < toNearEdge.get(here)
-          ? 'No known path to the chest yet; heads for the dark edge nearest it.'
-          : 'No known path to the chest yet; leaves the dark edge nearest it.');
+          ? 'No known path to the portal yet; heads for the dark edge nearest it.'
+          : 'No known path to the portal yet; leaves the dark edge nearest it.');
       }
     }
 
@@ -520,7 +541,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
       facts.push(`Goes back to the cell you left 2 steps ago${backAndForth ? ` (back-and-forth ${plural(backAndForth, 'time')} in the last 6 moves)` : ''}.`);
     }
 
-    if (approachId !== 'go_to_treasure') {
+    if (approachId !== 'go_to_exit') {
       if (!target) {
         targetFacts.push(isTactic(approachId)
           ? (threats.length ? 'The tactic has no workable target from here.' : 'No adversary in sight right now.')

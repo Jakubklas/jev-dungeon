@@ -69,7 +69,7 @@ const draw = () => {
 };
 
 const d = game.dungeon;
-console.log(`Testbed ${d.width}x${d.height}, seed ${d.seed}, chest ${d.treasure ?? 'none'}, ${game.adversaries.length} adversaries, ${d.props.length} props, ${LIVE ? 'LIVE Jev' : 'dry run (stub answers)'}`);
+console.log(`Testbed ${d.width}x${d.height}, seed ${d.seed}, portal ${d.treasure ?? 'none'}, ${game.adversaries.length} adversaries, ${d.props.length} props, ${LIVE ? 'LIVE Jev' : 'dry run (stub answers)'}`);
 console.log(draw());
 for (let tick = 1; tick <= TICKS && !game.won && !game.lost; tick++) {
   // playTurn, not takeTurn + stepAdversaries: it also records hits in the explorer's memory, as the game does.

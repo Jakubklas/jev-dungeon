@@ -1291,7 +1291,7 @@ const SENTIMENT_NOTES = {
 
 // Landmarks (fog-safe: they are known cells). One colour and glyph per kind.
 const LANDMARK_KINDS = {
-  chest: { text: 'Chest', glyph: '▣', colour: '#ffc633' },
+  exit: { text: 'Portal', glyph: '▣', colour: '#ffc633' },
   dead_end_explored: { text: 'Dead end', glyph: '■', colour: '#8f9bb8' },
   hit_here: { text: 'Hit here', glyph: '✖', colour: '#ff6a55' },
   hiding_spot_used: { text: 'Hiding spot', glyph: '◆', colour: '#7ee8ff' },
@@ -1829,8 +1829,8 @@ function endGame() {
   setStatus(lost
     ? `Jev lost all lives after ${game.steps} steps.`
     : cleared ? `Jev dispelled every adversary in ${game.steps} steps.`
-      : `Jev found the treasure in ${game.steps} steps.`);
-  $('over-title').textContent = lost ? 'Jev lost all lives' : cleared ? 'Dungeon cleared' : 'Treasure found';
+      : `Jev left through the portal with ${game.coins ?? 0} coin${game.coins === 1 ? '' : 's'} in ${game.steps} steps.`);
+  $('over-title').textContent = lost ? 'Jev lost all lives' : cleared ? 'Dungeon cleared' : 'Jev escaped';
   $('overlay').querySelector('.modal').classList.toggle('lost', lost);
   const stats = {
     Steps: game.steps,

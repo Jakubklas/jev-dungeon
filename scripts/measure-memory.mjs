@@ -284,13 +284,13 @@ const stat = (a) => (a.length ? `${Math.round(a.reduce((s, n) => s + n, 0) / a.l
 console.log(`measure-memory: ${LIVE ? 'LIVE (paid)' : 'dry run, stub answers'}, up to ${TICKS} ticks per arena`);
 console.log('request bytes are avg/max of the JSON body sent to Jev\n');
 for (const r of rows) {
-  console.log(`${r.name}: ${r.ticks} ticks, ${r.outcome}, chest ${r.chest}, hits ${r.hits}`);
+  console.log(`${r.name}: ${r.ticks} ticks, ${r.outcome}, portal ${r.chest}, hits ${r.hits}`);
   console.log(`  bytes sentiment ${stat(r.sizes['explorer sentiment'])} | tick ${stat(r.sizes['explorer tick'])} | adversary ${stat(r.sizes.adversary)}`);
   console.log(`  decisions ${r.decisions} (chase_over ${r.chaseOvers}) | re-encounters ${r.reEncounters} | back-and-forth ${r.backForth}`);
   const counts = (o) => Object.entries(o).map(([k, n]) => `${k}×${n}`).join(', ') || '-';
   console.log(`  combat: skill offered on ${r.offers} ticks, strikes ${r.strikes}, dispels ${r.dispels}, coins ${r.coins} | minds ${counts(r.picks.mind)} | tactics ${counts(r.picks.tactic)}`);
 }
-const cols = ['arena', 'ticks', 'decisions', 're-enc', 'ping-pong', 'chest', 'outcome', 'hits', 'offers', 'strikes', 'dispels', 'coins'];
+const cols = ['arena', 'ticks', 'decisions', 're-enc', 'ping-pong', 'portal', 'outcome', 'hits', 'offers', 'strikes', 'dispels', 'coins'];
 console.log(`\n${cols.join('\t')}`);
 for (const r of rows) console.log([r.name, r.ticks, r.decisions, r.reEncounters, r.backForth, r.chest, r.outcome, r.hits, r.offers, r.strikes, r.dispels, r.coins].join('\t'));
 rmSync(dir, { recursive: true, force: true });

@@ -23,8 +23,11 @@ export function isFrontier(world, c) {
 // Flat Int32Array (index y * width + x, -1 = not reached) plus the visiting order.
 // Known floor is always inside the map, so the index never wraps.
 // `admit(cell, steps)` (optional) rejects cells that may not be entered at that step count;
-// `endCell` may be entered regardless but is not expanded (the chest: stepping on it wins).
-export function knownDistances(world, from, blocked = null, admit = null, endCell = null) {
+// `endCell` may be entered regardless but is not expanded (the portal: stepping on it ends the game).
+// A seen portal is impassable and never reached unless `endCell` is it or `allowPortal` is set: only the
+// leaving approaches (go_to_exit, race_to_exit) may route through it, so no other target or route can
+// win by accident.
+export function knownDistances(world, from, blocked = null, admit = null, endCell = null, allowPortal = false) {
   const W = world.width;
   const dist = new Int32Array(W * world.height).fill(-1);
   const order = [];
@@ -44,12 +47,14 @@ export function knownDistances(world, from, blocked = null, admit = null, endCel
   order.push(from);
   const blockedIdx = blocked ? at(blocked) : -1;
   const endIdx = endCell ? at(endCell) : -1;
+  const portal = allowPortal ? null : world.seenTreasure();
+  const portalIdx = portal ? at(portal) : -1;
   for (let i = 0; i < order.length; i++) {
     const d = dist[at(order[i])] + 1;
     for (const n of neighbours(order[i])) {
       if (!knownFloor(world, n)) continue;
       const ni = at(n);
-      if (dist[ni] >= 0 || ni === blockedIdx) continue;
+      if (dist[ni] >= 0 || ni === blockedIdx || (ni === portalIdx && ni !== endIdx)) continue;
       if (ni === endIdx) { dist[ni] = d; continue; }
       if (admit && !admit(n, d)) continue;
       dist[ni] = d;

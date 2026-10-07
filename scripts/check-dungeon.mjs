@@ -8,7 +8,7 @@ import {
   DIRS, EXPLORER_LIVES, SIGHT_RANGE, MIN_SIZE, MAX_SIZE,
 } from '../src/dungeon.js';
 import {
-  APPROACHES, TACTICS, isTactic, situation, describeMoves, approachTarget, availableApproaches, treasureSeen,
+  APPROACHES, TACTICS, isTactic, situation, describeMoves, approachTarget, availableApproaches, exitSeen,
   tacticFeasibility, tacticOptions, avoidZone,
 } from '../src/characters/explorer/perception.js';
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
@@ -227,7 +227,7 @@ const MODES = ['patrol', 'chase', 'search'];
 // (aggressive and scared), so sentiment-dependent output is covered too.
 const GAPS = [...new Set([SENTIMENTS.aggressive.min_gap, SENTIMENTS.scared.min_gap])];
 function perceive(world) {
-  const out = { seen: treasureSeen(world), available: availableApproaches(world), situation: situation(world) };
+  const out = { seen: exitSeen(world), available: availableApproaches(world), situation: situation(world) };
   for (const id of Object.keys(APPROACHES)) {
     if (isTactic(id)) continue;
     out[id] = { target: approachTarget(world, id), moves: describeMoves(world, id) };
@@ -348,7 +348,7 @@ function firstDiff(a, b, path = '') {
   return `${path}: ${JSON.stringify(a)?.slice(0, 200)} vs ${JSON.stringify(b)?.slice(0, 200)}`;
 }
 
-const mentionsChest = /treasure|chest/i;
+const mentionsChest = /treasure|chest|portal/i;
 let walks = 0, unseenSteps = 0, twinChecks = 0, padded = 0, withVisible = 0, withChaser = 0, visMismatch = 0;
 const tacticSeen = new Map(); // tactic id -> times offered in the twin walks
 for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
@@ -370,24 +370,24 @@ for (const seed of [3, 7, 17, 42, 99, 123, 2024]) {
       const ids = Object.keys(t.options);
       if (vis.length ? !ids.includes('run_away') : ids.length) fail(`seed ${seed} gap ${g}: tactic options ${ids} with ${vis.length} in sight`);
       if (ids.includes('carry_on') && vis.some((a) => a.mode === 'chase')) fail(`seed ${seed}: carry_on offered while chased`);
-      if (ids.includes('race_to_chest') && !treasureSeen(new KnownWorld(game))) fail(`seed ${seed}: race_to_chest offered before the chest is seen`);
+      if (ids.includes('race_to_exit') && !exitSeen(new KnownWorld(game))) fail(`seed ${seed}: race_to_exit offered before the portal is seen`);
       if (ids.some((id) => !isTactic(id))) fail(`seed ${seed}: non-tactic option ${ids}`);
     }
     if (seen.available.some((id) => isTactic(id))) fail(`seed ${seed}: tactic in availableApproaches`);
     if (!!seen.situation.threats.encounter !== vis.length > 0) fail(`seed ${seed}: threats.encounter ${!!seen.situation.threats.encounter} with ${vis.length} in sight`);
     if (seen.situation.threats.visible.length !== vis.length) fail(`seed ${seed}: threats count ${seen.situation.threats.visible.length} vs ${vis.length}`);
     if (seen.situation.threats.remembered.length) fail(`seed ${seed}: situation alone reports remembered threats`);
-    if (!treasureSeen(new KnownWorld(game))) {
+    if (!exitSeen(new KnownWorld(game))) {
       unseenSteps++;
-      if (seen.available.includes('go_to_treasure')) fail(`seed ${seed} step ${game.steps}: go_to_treasure offered early`);
-      if (seen.situation.surroundings.chest !== 'not seen yet') fail(`seed ${seed}: surroundings.chest = ${seen.situation.surroundings.chest}`);
-      const { chest: _chest, ...surroundings } = seen.situation.surroundings;
+      if (seen.available.includes('go_to_exit')) fail(`seed ${seed} step ${game.steps}: go_to_exit offered early`);
+      if (seen.situation.surroundings.exit !== 'not seen yet') fail(`seed ${seed}: surroundings.exit = ${seen.situation.surroundings.exit}`);
+      const { exit: _exit, ...surroundings } = seen.situation.surroundings;
       const rest = { ...seen.situation, surroundings };
-      // The tactic id race_to_chest is a key, not text sent while unseen (it is never offered then).
-      const texts = [JSON.stringify(rest), JSON.stringify(seen.tactics).replace(/race_to_chest/g, 'race_tactic')];
+      // The tactic id race_to_exit is a key, not text sent while unseen (it is never offered then).
+      const texts = [JSON.stringify(rest), JSON.stringify(seen.tactics).replace(/race_to_exit/g, 'race_tactic')];
       for (const id of Object.keys(APPROACHES)) if (!isTactic(id)) texts.push(JSON.stringify(seen[id]));
       for (const text of texts) {
-        if (mentionsChest.test(text)) fail(`seed ${seed} step ${game.steps}: mentions the chest early: ${text.slice(0, 160)}`);
+        if (mentionsChest.test(text)) fail(`seed ${seed} step ${game.steps}: mentions the portal early: ${text.slice(0, 160)}`);
         if (coord.test(text)) fail(`seed ${seed} step ${game.steps}: contains chest coordinates`);
       }
     }
@@ -450,7 +450,7 @@ for (const id of ['slip_past', 'run_away', 'hide']) if (!tacticSeen.get(id)) fai
     '#.........#',
     '###########',
   ];
-  const d = { seed: 0, width: 11, height: 9, tiles, start: [2, 5], treasure: [9, 7], rooms: [{ x: 1, y: 1, w: 3, h: 3 }] };
+  const d = { seed: 0, width: 11, height: 9, tiles, start: [2, 5], treasure: [-9, -9], rooms: [{ x: 1, y: 1, w: 3, h: 3 }] }; // the portal is a wall to every route but its own: keep it off the loop
   const g = new Game(d);
   g.light = g.light.map((row) => row.map(() => 1));
   const adv = (pos, mode) => new Adversary({ id: 'a1', pos, mode });
@@ -849,27 +849,27 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     console.log(`back-and-forth: fact on the undoing move, tactic_failed after ${preFail} undone moves (decisions ${triggers.join(' ')})`);
   }
 
-  // (d) Landmarks: dedupe by kind + cell, chest pinned, oldest other evicted; events and counters.
+  // (d) Landmarks: dedupe by kind + cell, exit pinned, oldest other evicted; events and counters.
   {
     const mem = createMemory({ approachId: 'nearest_frontier', approachText: 'x', thought: 'x', sentiment: { id: 'cautious' }, start: [1, 1] });
-    addLandmark(mem, { kind: 'chest', cell: [9, 9], step: 1, note: 'chest' });
+    addLandmark(mem, { kind: 'exit', cell: [9, 9], step: 1, note: 'exit' });
     addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 2, note: 'first' });
     addLandmark(mem, { kind: 'hit_here', cell: [2, 2], step: 5, note: 'again' });
     if (mem.landmarks.length !== 2 || mem.landmarks.at(-1).step !== 5 || mem.landmarks.at(-1).note !== 'again') fail(`landmark dedupe: ${JSON.stringify(mem.landmarks)}`);
     for (let i = 0; i < 12; i++) addLandmark(mem, { kind: 'dead_end_explored', cell: [i + 3, 3], step: 10 + i, note: `d${i}` });
     if (mem.landmarks.length !== LIMITS.landmarks) fail(`landmark cap ${mem.landmarks.length}`);
-    if (!mem.landmarks.some((l) => l.kind === 'chest')) fail('chest landmark was evicted');
-    if (mem.landmarks.some((l) => l.kind === 'hit_here') || mem.landmarks.some((l) => l.note === 'd0')) fail('oldest non-chest landmarks were not evicted first');
+    if (!mem.landmarks.some((l) => l.kind === 'exit')) fail('exit landmark was evicted');
+    if (mem.landmarks.some((l) => l.kind === 'hit_here') || mem.landmarks.some((l) => l.note === 'd0')) fail('oldest non-exit landmarks were not evicted first');
     if (mem.landmarks.at(-1).note !== 'd11') fail('newest landmark missing');
     validateMemory(mem);
     for (let i = 0; i < 10; i++) addEvent(mem, i + 1, `event ${i}`);
     if (mem.events.length !== LIMITS.events || mem.events[0].text !== 'event 4') fail(`events cap: ${JSON.stringify(mem.events)}`);
     validateMemory(mem);
     const g = makeRoom();
-    const sit = situation(new KnownWorld(g), { landmarks: [{ kind: 'chest', cell: [2, 2], step: 0, note: 'The treasure chest.' }, { kind: 'hit_here', cell: [6, 2], step: 0, note: 'Took a hit here.' }] });
+    const sit = situation(new KnownWorld(g), { landmarks: [{ kind: 'exit', cell: [2, 2], step: 0, note: 'The portal.' }, { kind: 'hit_here', cell: [6, 2], step: 0, note: 'Took a hit here.' }] });
     const lm = sit.surroundings.landmarks;
     if (lm[0].direction !== 'here' || lm[1].direction !== 'east' || lm[1].distance !== 4 || lm[1].steps_ago !== g.steps) fail(`landmark view ${JSON.stringify(lm)}`);
-    console.log('landmarks: dedupe, 8-cap with the chest pinned, relative view; events capped at 6');
+    console.log('landmarks: dedupe, 8-cap with the exit pinned, relative view; events capped at 6');
   }
 
   // (e) Brain: encounter counters, events (no spam, no repeated step), hit landmark, request size.
@@ -900,7 +900,7 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
     const max = Math.max(...sizes.map((s) => s.bytes));
     const maxTactics = Math.max(...sizes.map((s) => s.tactics));
     if (max > 9500) fail(`largest stubbed request is ${max} bytes (> 9500)`);
-    // The busiest decision ticks on a hand-built map where almost every tactic is feasible: a seen chest
+    // The busiest decision ticks on a hand-built map where almost every tactic is feasible: a seen portal
     // behind a corner, a side room to hide in, an adversary that is chasing (5 tactics) or patrolling (6).
     {
       const hall = [
@@ -913,7 +913,9 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
         '#........####.....#########',
         '###########################',
       ];
-      for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      // slip_past no longer routes to the portal (it is a wall to every non-leaving route), so the hall offers
+      // one tactic fewer than before P1: run_away, engage, hide, race_to_exit (+ carry_on while patrolling).
+      for (const [mode, wantTactics, bound] of [['chase', 4, 9500], ['patrol', 5, 10500]]) {
         const big = handGame(hall, [5, 3], 12);
         big.dungeon.treasure = [1, 1];
         big.adversaries = [chaser([1, 5], mode)];
@@ -1260,7 +1262,179 @@ const SCARED = SENTIMENTS.scared.min_gap, AGGRO = SENTIMENTS.aggressive.min_gap;
   }
 }
 
-// 5. Scripted follower: nearest_frontier until the chest is seen, then go_to_treasure,
+// 4g. The portal and the leave decision (stub Jev, no network, temp memory dir): sighting the portal
+//     changes no approach by itself; `leave_now` is asked on the exit tick and in every review once the
+//     portal is known, never before; above 0.5 the approach becomes go_to_exit and stays; below, exploring
+//     goes on; and the question carries no fact about unlit cells (a twin with hidden coins and tiles).
+{
+  const corridor = (wallAt = null) => [
+    '#'.repeat(40),
+    '#' + '.'.repeat(38).split('').map((c, i) => (i + 1 === wallAt ? '#' : c)).join('') + '#',
+    '#'.repeat(40),
+  ];
+  const mk = (lit, wallAt = null, coins = []) => {
+    const g = handGame(corridor(wallAt), [2, 1], lit);
+    g.dungeon.treasure = [20, 1];
+    g.coinPiles = coins;
+    return g;
+  };
+  const play = async (leaveAnswer, ticks) => {
+    const g = mk(3);
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const log = [];
+    const ask = async ({ questions, body }) => {
+      const known = new KnownWorld(g).seenTreasure() !== null;
+      log.push({ step: g.steps, known, kinds: Object.keys(questions), body });
+      const answers = {};
+      for (const [k, q] of Object.entries(questions)) {
+        if (q.type === 'noul') answers[k] = { noul: k === 'leave_now' ? leaveAnswer : 0.9 };
+        else {
+          const keys = Object.keys(q.criteria);
+          // walk right until the portal is lit, then stand still (so the game never ends on a step onto it)
+          const c = k === 'sentiment' ? 'cautious' : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
+          answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
+        }
+      }
+      return answers;
+    };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const approaches = [];
+    for (let i = 0; i < ticks && !g.won; i++) { await brain.takeTurn(); approaches.push(brain.memory.approach.id); }
+    rmSync(dir, { recursive: true, force: true });
+    return { g, brain, log, approaches };
+  };
+
+  // (a) leave_now says 0.1: asked on the exit tick and again in reviews, never before the portal is known,
+  //     and the approach is never switched to go_to_exit by sighting alone.
+  {
+    const { log, approaches, brain } = await play(0.1, 40);
+    const asks = log.filter((l) => l.kinds.includes('leave_now'));
+    if (asks.some((l) => !l.known)) fail('leave_now asked before the portal was known');
+    const firstKnown = log.find((l) => l.known);
+    if (!firstKnown) fail('portal never seen in the corridor run');
+    else if (!asks.length || asks[0].step !== firstKnown.step) fail(`leave_now not asked on the exit tick (first known at step ${firstKnown?.step}, first ask ${asks[0]?.step})`);
+    if (asks.length < 3) fail(`leave_now asked ${asks.length} times; wanted the exit tick plus later reviews`);
+    if (log.filter((l) => !l.known).some((l) => l.kinds.includes('leave_now'))) fail('leave_now before sighting');
+    if (approaches.some((a) => a === 'go_to_exit')) fail('sighting or a 0.1 answer switched the approach to go_to_exit');
+    // leave_now is the only gate into go_to_exit: a review never offers it as next_approach.
+    const reviews = log.filter((l) => l.kinds.includes('next_approach'));
+    if (!reviews.length) fail('no review asked next_approach in the corridor run');
+    if (reviews.some((l) => 'go_to_exit' in JSON.parse(l.body).questions.next_approach.criteria)) fail('next_approach offers go_to_exit');
+    if (!brain.memory.landmarks.some((l) => l.kind === 'exit')) fail('exit landmark missing');
+    if (!brain.memory.events.concat([]).some((e) => /Saw the portal/.test(e.text)) && brain.memory.events.length < 6) fail('portal sighting event missing');
+    console.log(`leave_now at 0.1: asked ${asks.length} times from the exit tick on, approach stayed ${[...new Set(approaches)].join('/')}`);
+  }
+
+  // (b) leave_now says 0.9: go_to_exit on the exit tick, and it sticks (no more reviews or leave_now).
+  {
+    const { log, approaches, g } = await play(0.9, 30);
+    const i = approaches.indexOf('go_to_exit');
+    if (i < 0) fail('leave_now 0.9 did not switch to go_to_exit');
+    else {
+      const firstKnown = log.find((l) => l.known).step;
+      if (i + 1 !== firstKnown + 1) fail(`switch at tick ${i + 1}, portal asked at step ${firstKnown}`);
+      if (approaches.slice(i).some((a) => a !== 'go_to_exit')) fail(`go_to_exit did not stick: ${approaches.slice(i).join(',')}`);
+      if (log.filter((l) => l.step > firstKnown).some((l) => l.kinds.includes('leave_now') || l.kinds.includes('approach_working'))) fail('asked again after deciding to leave');
+    }
+    if (g.won) fail('stub should not have walked onto the portal');
+    console.log(`leave_now at 0.9: go_to_exit from tick ${i + 1}, kept for ${approaches.length - i} ticks`);
+  }
+
+  // (c) Fog twin: coins and walls on unlit cells differ, the exit-tick request is byte-identical, and
+  //     a different LIT coin changes it (the question does read the lit ones).
+  {
+    const bodyOf = async (g) => {
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const bodies = [];
+      const ask = async ({ questions, body }) => {
+        bodies.push(body);
+        return Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === 'noul' ? { noul: 0.1 } : { choice: Object.keys(q.criteria)[0], probabilities: {}, confidence: 1 }]));
+      };
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const real = Math.random;
+      Math.random = rng(7);
+      try { await brain.takeTurn(); } finally { Math.random = real; }
+      rmSync(dir, { recursive: true, force: true });
+      return bodies;
+    };
+    const A = await bodyOf(mk(25, null, [[10, 1], [28, 1]]));
+    const B = await bodyOf(mk(25, 30, [[10, 1], [33, 1], [35, 1]]));
+    const C = await bodyOf(mk(25, null, [[12, 1], [28, 1]]));
+    if (!A.some((b) => b.includes('leave_now'))) fail('leave_now missing from the twin request');
+    if (A.join('|') !== B.join('|')) fail('leave_now twin: hidden coins/walls changed the request');
+    if (A.join('|') === C.join('|')) fail('leave_now twin: a different lit coin did not change the request');
+    const q = JSON.parse(A.find((b) => b.includes('leave_now'))).questions.leave_now;
+    if (/treasure|chest/i.test(JSON.stringify(q))) fail('leave_now mentions the old chest words');
+    console.log('leave_now fog twin: hidden coins and walls leave the request byte-identical; lit coins show');
+  }
+
+  // (d) The corridor repro: the exploration target lies past the seen portal. The portal is a wall for every
+  //     non-leaving route, so no approach targets it and a stub following "Closer to the target" never wins.
+  {
+    const row = '#@..c.T.................#';
+    const g = handGame(['#'.repeat(row.length), row.replace('@', '.').replace('c', '.').replace('T', '.'), '#'.repeat(row.length)], [1, 1], 3);
+    g.dungeon.treasure = [6, 1];
+    g.coinPiles = [[4, 1]];
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+      if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
+      const keys = Object.keys(q.criteria);
+      // Follows "Closer to the target" literally (the portal step included, if a fact ever points through it); else stays.
+      const c = k === 'sentiment' ? 'cautious' : keys.find((d) => /Closer to the target/.test(String(q.criteria[d]))) ?? (keys.includes(STAY) ? STAY : keys[0]);
+      return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+    }));
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const portal = g.dungeon.treasure;
+    for (let i = 0; i < 20 && !g.won; i++) {
+      // Every frontier lies past the portal in this 1-wide corridor, so none is reachable without crossing it.
+      if (new KnownWorld(g).seenTreasure() && approachTarget(new KnownWorld(g), 'nearest_frontier')) fail(`nearest_frontier has a target through the portal (tick ${i})`);
+      for (const id of ['nearest_frontier', 'largest_unexplored', 'far_side', 'run_away', 'hide', 'carry_on']) {
+        const t = approachTarget(new KnownWorld(g), id);
+        if (t && t.cell.join() === portal.join()) fail(`${id} targets the portal (tick ${i})`);
+      }
+      await brain.takeTurn();
+    }
+    if (g.won) fail('a stub following "Closer to the target" won through the portal by accident');
+    rmSync(dir, { recursive: true, force: true });
+    console.log('corridor repro: no non-leaving target is the portal; no accidental win in 20 ticks');
+  }
+
+  // (e) The portal first seen mid-encounter: leave_now is not asked beside a tactic question; it comes on the
+  //     first tick without one.
+  {
+    const hall = ['#'.repeat(20), '#' + '.'.repeat(18) + '#', '#' + '.'.repeat(18) + '#', '#' + '.'.repeat(18) + '#', '#'.repeat(20)];
+    const g = handGame(hall, [3, 2], 9);
+    g.dungeon.treasure = [15, 2];
+    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+    const log = [];
+    const ask = async ({ questions }) => {
+      log.push({ known: new KnownWorld(g).seenTreasure() !== null, kinds: Object.keys(questions) });
+      return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
+        const keys = Object.keys(q.criteria);
+        const known = new KnownWorld(g).seenTreasure() !== null;
+        const c = k === 'sentiment' ? 'cautious' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+    };
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    for (let i = 0; i < 12 && !g.won; i++) {
+      // A chaser two cells behind, in sight, for the first 7 ticks; then it is gone.
+      g.adversaries = i < 7 ? [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])] : [];
+      await brain.takeTurn();
+    }
+    const tacticWhileKnown = log.some((l) => l.known && l.kinds.includes('tactic'));
+    const first = log.find((l) => l.kinds.includes('leave_now'));
+    if (!tacticWhileKnown) fail('mid-encounter case: no tactic question after the portal was seen (setup)');
+    else if (!first) fail('mid-encounter case: leave_now never asked');
+    else if (first.kinds.includes('tactic')) fail('leave_now asked beside a tactic question');
+    else if (!first.known) fail('leave_now asked before the portal was known');
+    rmSync(dir, { recursive: true, force: true });
+    console.log('mid-encounter portal: leave_now waits for the first tick without a tactic question');
+  }
+}
+
+// 5. Scripted follower: nearest_frontier until the chest is seen, then go_to_exit,
 //    stepping along the known-floor shortest path to the current target. No adversaries.
 function knownStepTowards(game, target) {
   const dist = new Map([[target.join(), 0]]);
@@ -1280,7 +1454,7 @@ function knownStepTowards(game, target) {
 function follow(game, cap = 20000, onTick = null) {
   while (!game.won && game.steps < cap) {
     if (onTick) onTick(game);
-    const target = approachTarget(new KnownWorld(game), treasureSeen(new KnownWorld(game)) ? 'go_to_treasure' : 'nearest_frontier');
+    const target = approachTarget(new KnownWorld(game), exitSeen(new KnownWorld(game)) ? 'go_to_exit' : 'nearest_frontier');
     if (!target) return false;
     const dir = knownStepTowards(game, target.cell);
     if (!dir) return false;
@@ -1334,7 +1508,7 @@ if (MEASURE) {
   const calm = [], chased = [];
   const floorNear = [];
   for (let i = 0; i < 60 && !g.won; i++) {
-    const approach = treasureSeen(new KnownWorld(g)) ? 'go_to_treasure' : 'nearest_frontier';
+    const approach = exitSeen(new KnownWorld(g)) ? 'go_to_exit' : 'nearest_frontier';
     g.adversaries = [];
     calm.push(tick(approach));
     // Put a chaser in sight, a few cells away.
