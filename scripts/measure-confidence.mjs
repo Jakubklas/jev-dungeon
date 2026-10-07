@@ -76,12 +76,16 @@ async function playGame(kind, seed, p) {
     const game = run.game;
     holder.ask = makeAsk(game, p, mulberry32(seed * 104729 + Math.round(p * 1000)), probe);
     let C = createConfidence();
+    let lastState = null; // an engage-hold tick with no skill offered sends no request: it keeps the last one's view
     const r = { kind, seed, p, ticks: 0, min: 50, max: 50, left: false, hits: 0, strikes: 0, dispelled: 0, blocked: 0, evaded: 0, pressed: 0, won: false, lost: false };
     for (let t = 0; t < TICKS && !game.won && !game.lost; t++) {
       probe.state = null;
       const turn = await run.playTurn();
       r.ticks = t + 1;
-      const st = probe.state;
+      // A held tick (turn.held) makes no request when no skill is offered; a ghost is still in sight, so reuse the
+      // previous request's view instead of reading the tick as calm (no ghost visible).
+      const st = probe.state ?? (turn.held ? lastState : null);
+      if (probe.state) lastState = probe.state;
       const visible = (st?.threats?.visible ?? []).map((a) => ({ id: a.id, distance: a.distance, mode: a.chasing ? 'chase' : 'patrol' }));
       const sk = st?.self?.skills ?? {};
       const armed = Object.entries(sk).some(([id, v]) => id.startsWith('sword') && v === 'ready');
