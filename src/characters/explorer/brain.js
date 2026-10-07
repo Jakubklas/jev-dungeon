@@ -492,7 +492,10 @@ export class ExplorerBrain {
     const profile = profileOf(memory);
     this.#keepEscapeGoal(profile);
     const hasSkillOptions = Object.keys(skillOptions).length > 0;
-    const held = !tacticIds.length && this.#holding(); // engage hold: stay, no move question (P7a)
+    // engage hold: stay, no move question (P7a). A decision tick (tactic question) is not a hold tick, so it restarts
+    // the count: HOLD_MAX counts consecutive hold ticks, not ones split by a re-decision on the same cell.
+    if (tacticIds.length) this.#hold = { cell: null, n: 0, adj: 0 };
+    const held = !tacticIds.length && this.#holding();
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
