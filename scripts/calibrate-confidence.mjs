@@ -1,7 +1,7 @@
 // PLAN-confidence phase C4: calibration and sweep of the confidence score C. Free: the REAL ExplorerBrain plays
 // newGame dungeons and generated newTestGame arenas against clawing ghosts (duel-harness) with the fighting executor
 // (lib/fight-executor.mjs), stub ask / decide, Math.random seeded per game, fetch a throwing tripwire.
-//   node scripts/calibrate-confidence.mjs [--phase all|reliability|sweep|compare] [--quick] [--workers 9] [--out file.json]
+//   node scripts/calibrate-confidence.mjs [--phase all|reliability|sweep|compare] [--quick] [--workers 9] [--testbase 1000] [--out file.json]
 // Games are farmed out to child processes (this script forks itself with --job). Nothing here reads text, so a free
 // run shows only what the CODE gates (min_gap delta, engage open) do against a scripted executor, never whether Jev
 // uses the word. Pre-declared design (fixed before the first run, see PLAN-confidence.md 'C4 results'):
@@ -211,6 +211,7 @@ async function main() {
   const n = (k, full, q) => Number(flags[k] ?? (quick ? q : full));
   const D_TRAIN = n('dtrain', 40, 4), A_TRAIN = n('atrain', 60, 6), C_TRAIN = n('ctrain', 60, 6);
   const D_TEST = n('dtest', 300, 6), A_TEST = n('atest', 400, 10), C_TEST = n('ctest', 300, 10);
+  const TB = Number(flags.testbase ?? 1000); // first held-out seed - 1 (--testbase 5000 reruns (c) on fresh seeds)
   const games = (arm, dn, an, cn, off = 0) => {
     const jobs = [];
     for (const p of PS) {
@@ -240,7 +241,7 @@ async function main() {
 
   if (phase === 'all' || phase === 'reliability') {
     // The big pool for the default weighted arm: the held-out range plus the train range.
-    const jobs = [...games(DEF, D_TEST, A_TEST, C_TEST, 1000), ...games(DEF, D_TRAIN, A_TRAIN, C_TRAIN, 0)];
+    const jobs = [...games(DEF, D_TEST, A_TEST, C_TEST, TB), ...games(DEF, D_TRAIN, A_TRAIN, C_TRAIN, 0)];
     const rs = await farm(jobs, workers, 'reliability');
     const gate = reliability(rs, 'RELIABILITY, arm weighted (default weights, toggle on)');
     result.reliability = { gate, fights: fights(rs).length, games: rs.length, rows: fights(rs) };
@@ -256,7 +257,7 @@ async function main() {
     printRows(`SWEEP on TRAIN seeds (dungeons 1..${D_TRAIN}, arenas 1..${A_TRAIN}, crowds 1..${C_TRAIN}, p 0 / 0.2 / 0.5; paired against off)`, rows);
     // Winner: fewest hits per game among the weighted sets whose coins are not below off's by more than 1 SE.
     const cand = rows.filter((r) => r.name !== 'off' && r.name !== 'beta' && r.dCoins.mu >= -r.dCoins.se);
-    cand.sort((a, b) => a.hits - b.hits || (a.name === 'weighted' ? -1 : 1));
+    cand.sort((a, b) => a.hits - b.hits); // stable: a tie goes to the earlier row, and the default is the first candidate
     bestName = cand[0].name;
     console.log(`\nSWEEP WINNER (fewest hits/game, coins not below off by more than 1 SE): ${bestName} (hits/game ${f2(cand[0].hits)}; default ${f2(rows.find((r) => r.name === 'weighted').hits)}; null ${f2(rows[0].hits)})`);
     result.sweep = rows;
@@ -267,11 +268,11 @@ async function main() {
     const fittedName = bestName ?? flags.fitted ?? 'weighted';
     const fitted = fittedName === 'weighted' ? null : sweep.find((a) => a.name === fittedName);
     const arms = [OFF, DEF, ...(fitted ? [A(`fitted:${fitted.name}`, fitted.confidence)] : []), BETA];
-    const rs = await farm(arms.flatMap((a) => games(a, D_TEST, A_TEST, C_TEST, 1000)), workers, 'compare');
+    const rs = await farm(arms.flatMap((a) => games(a, D_TEST, A_TEST, C_TEST, TB)), workers, 'compare');
     const by = (n) => rs.filter((r) => r.arm === n);
     const base = by('off');
     const rows = arms.map((a) => armRow(a.name, by(a.name), base));
-    printRows(`COMPARE on HELD-OUT seeds (dungeons 1001..${1000 + D_TEST}, arenas 1001..${1000 + A_TEST}, crowds 1001..${1000 + C_TEST}, p 0 / 0.2 / 0.5)`, rows);
+    printRows(`COMPARE on HELD-OUT seeds (dungeons ${TB + 1}..${TB + D_TEST}, arenas ${TB + 1}..${TB + A_TEST}, crowds ${TB + 1}..${TB + C_TEST}, p 0 / 0.2 / 0.5)`, rows);
     for (const kind of ['dungeon', 'arena', 'crowd']) {
       printRows(`  ${kind} games only`, arms.map((a) => armRow(a.name, by(a.name).filter((r) => r.kind === kind), base.filter((r) => r.kind === kind))));
     }

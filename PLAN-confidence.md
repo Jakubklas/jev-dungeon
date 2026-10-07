@@ -265,9 +265,11 @@ Reading: **only the HIT weight matters.** One hit from 50 gives 35 (default) and
 -10 a hit gives exactly 40, which keeps `engage` open and changes nothing, so `hit -10`, `free` and `beta` (one hit = 40.0) play
 the **identical** games as `off`. Every other weight is inert in these runs, probably because C must cross 40 (down) or 80 (up) to
 change behaviour, and only a hit moves it down (not tested further).
-Whenever the gate acts (default, hit -25, brake) it is slightly **worse** than `off` on hits, coins, dispels and games lost:
-closing `engage` after a hit presumably makes the explorer run instead of striking (mechanism not isolated), against the P7a hold
-design. Winner by the pre-declared rule (fewest hits per game, coins not more than 1 SE below `off`, tie to the earlier row):
+Whenever the gate acts (default, hit -25, brake) it is slightly worse than `off` on these train seeds (hits, coins, dispels,
+games lost), but every difference is within noise (|z| < 2), and the review's rerun on fresh seeds (below) had hit -25 slightly
+*better* than `off`: the gate's effect is indistinguishable from zero, not shown to be harmful. Closing `engage` after a hit
+presumably makes the explorer run instead of striking (mechanism not isolated). Winner by the pre-declared rule (fewest hits per
+game, coins not more than 1 SE below `off`, a tie to the earlier row, i.e. the default first):
 `hit-10`, which is a no-op arm, so the fitted arm equals the null arm. That is a result about the grid, not a model that works.
 
 ### (c) Held-out comparison (dungeons 1001..1150, arenas 1001..1200, crowds 1001..1150, p 0 / 0.2 / 0.5 = 1500 games per arm, 4157 fights in `off`; none of these seeds was used in (b); same seeds for every arm)
@@ -289,6 +291,21 @@ better) or on fight win rate (needs z >= 2.4; the default is -0.25), and coins a
 2.4 is a Bonferroni correction for the 3 C arms. Decision: **measured, not worth it, under stubs.** The toggle and its code
 stay in, the default stays OFF, no weight is changed.
 
+**Review (Opus, 2026-10-07): ship = false confirmed.** Reproduced: `--phase compare --testbase 0 --dtest 40 --atest 40 --ctest 40
+--fitted hit-25` replays the train-seed sweep rows for off, weighted, hit-25 and beta exactly (the runs are deterministic, arms see
+the same seeds). Fresh seeds (`--testbase 5000 --dtest 30 --atest 40 --ctest 40 --fitted hit-25`, 330 games per arm, never used
+before): off 92.4% / 0.28 hits / 1.55 coins / 12 lost; weighted 92.4% / 0.28 / 1.56 / 13 (d hits z +1.00); hit-25 92.5% / 0.27 /
+1.58 / 11 (z -0.38); beta identical to off; SHIP false for every arm; the null arm's passive-C gate 2.0 points (FAIL). So the sign
+of the small differences flips with the seeds: run-to-run noise, no effect. Method notes from the review: fights are counted once
+(one open fight at a time, closed at the first hit or dispel, a hit on the same tick as a dispel counts as a loss); win is as the
+plan defines it (any ghost dispelled with no hit since the fight began, not necessarily the one engaged); strata are the visible
+ghosts at the fight's start (capped at 3); walk-in p (0 / 0.2 / 0.5) and ghost hp (1..3 arenas, 2..3 crowds) vary. The empty low
+bands are partly an artefact of the fight definition: a fight closes at its hit (C 35, `unsure`), the rest of that encounter
+falls inside `REARM` (4 ticks), and by the next opening a strike has usually lifted C back to `even`; so the gate effectively
+compares `even` with `sure` / `dominant`, and cannot test the brake side at all. That does not change the ship call, which rests on
+(c). In the weighted arm the gate also selects which fights start (engage is closed below 40, only an adjacent strike opens one),
+so its reliability table is not a clean calibration of C; the null arm's passive C is (1.1 and 2.0 points).
+
 ### Honest limits
 
 - The executor is a script: it picks `engage` whenever offered, so closing the gate can only hurt it. Jev might use a `sure` or
@@ -303,7 +320,7 @@ stay in, the default stays OFF, no weight is changed.
 - The reliability run (13.3 min) used the first invocation's default sizes; a first sweep with 14 weight sets was stopped after
   about 4 minutes to cut the grid to 10 sets and the sizes to those above, so the total compute was about 54 minutes plus that
   stopped part. Reproduce with: `node scripts/calibrate-confidence.mjs --phase reliability`, `--phase sweep --dtrain 40 --atrain 40 --ctrain 40`,
-  `--phase compare --fitted hit-10 --dtest 150 --atest 200 --ctest 150`.
+  `--phase compare --fitted hit-10 --dtest 150 --atest 200 --ctest 150` (`--testbase N` moves the held-out seeds).
 
 ### What the live ablation C5 should judge
 
