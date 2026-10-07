@@ -60,10 +60,11 @@ function send(res, status, body, type = 'application/json') {
 }
 
 // `testbed`: a config for src/testbed.js (a small test arena), or null for a normal dungeon.
-async function startNewGame(testbed = null) {
+// `seed`: an integer for a normal dungeon (so a measurement can replay the same dungeon), else random.
+async function startNewGame(testbed = null, seed = undefined) {
   while (busy) await busy.catch(() => {});
   settings.applyNextGame(); // saved settings that wait for a new game take effect here
-  run = testbed ? newTestGame(testbed, GAME_OPTS) : newGame(undefined, GAME_OPTS);
+  run = testbed ? newTestGame(testbed, GAME_OPTS) : newGame(seed, GAME_OPTS);
   await run.persist(); // fresh memory.json/md and adversaries.json now, not at the first step
   const d = run.game.dungeon;
   console.log(`New ${testbed ? 'testbed arena' : 'dungeon'}, seed ${d.seed}, ${d.width}x${d.height}, ${run.game.adversaries?.length ?? 0} adversaries`);
@@ -107,7 +108,8 @@ createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && path === '/api/new') {
-      // Optional body { testbed: {...} } (see AGENTS.md "Testbed"). Anything else starts a normal dungeon.
+      // Optional body { testbed: {...} } (see AGENTS.md "Testbed") or { seed: <integer> } for a normal dungeon.
+      // Anything else starts a random normal dungeon.
       let opts = {};
       try {
         opts = JSON.parse((await readBody(req)) || '{}') ?? {};
@@ -115,7 +117,8 @@ createServer(async (req, res) => {
         return send(res, 400, { error: 'Body must be JSON.' });
       }
       try {
-        return send(res, 200, await startNewGame(opts.testbed ?? TESTBED));
+        if (opts.seed != null && !Number.isInteger(opts.seed)) return send(res, 400, { error: 'seed must be an integer.' });
+        return send(res, 200, await startNewGame(opts.testbed ?? TESTBED, opts.seed ?? undefined));
       } catch (err) {
         if (err instanceof TestbedError) return send(res, 400, { error: `Bad testbed config: ${err.message}` });
         throw err;
