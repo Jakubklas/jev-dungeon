@@ -18,8 +18,12 @@ const PORT = Number(process.env.PORT) || 3003;
 // adversaries.json) into its own folder, so many servers can run side by side. Unset = next to server.js.
 const DATA = process.env.DATA_DIR ? pathToFileURL(resolve(process.env.DATA_DIR) + '/') : null;
 const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
-// Options for the Run being built: the paths above plus the explorer's confidence toggle (a 'next' setting, so it is read after applyNextGame).
-const gameOpts = () => ({ ...GAME_OPTS, confidence: settings.appliedValue('confidenceModel') === true });
+// Options for the Run being built: the paths above plus the explorer's confidence mode (two 'next' settings, so they are read after applyNextGame).
+const gameOpts = () => ({
+  ...GAME_OPTS,
+  // true = the model (gates and the word Jev reads); 'display' = the same score tracked and shown as the UI bar only, requests unchanged; false = neither.
+  confidence: settings.appliedValue('confidenceModel') === true ? true : settings.appliedValue('confidenceMeter') !== false ? 'display' : false,
+});
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
 await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
 // TESTBED=size=9x9&numAdversaries=2 (or a JSON object) makes this server a testbed: every new game

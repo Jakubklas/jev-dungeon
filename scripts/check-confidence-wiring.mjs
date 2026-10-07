@@ -298,6 +298,30 @@ async function encounter({ hit = false } = {}) {
   ok(tb.some((t) => t.events.some((e) => e.type === 'dispelled')) && C(b).value >= 40 && C(b).value < 80, `... through a dispel (C ${C(b).value})`);
 }
 
+// 12. display mode (the UI bar): C is tracked and reported, but nothing Jev reads and no gate changes. After a hit
+// pushes C to 35 (where the full model widens the gap and closes engage) display plays and asks exactly like off.
+{
+  const rec = (inner, bodies) => async (req) => { bodies.push(JSON.stringify({ s: req.state, q: req.questions })); return inner(req); };
+  const mk = async (confidence) => {
+    const bodies = [];
+    const run = build({ map: withGhost(ROOM, 8, 3), seed: 31, explorerSkills: ['sword_strike'], ghostHp: 2 }, { confidence, ask: rec(stub({ mood: 'bold', tactic: 'engage', skill: true }), bodies) });
+    run.game.adversaries.forEach((x) => { x.mode = 'chase'; });
+    run.game.health = 2; run.game.maxHealth = 3;
+    await run.explorer.noteHit('a1'); // C 50 -> 35 with the tracker on; a plain log line with it off
+    const turns = await play(run, 25);
+    return { run, turns, bodies };
+  };
+  const off = await mk(false), disp = await mk('display'), full = await mk(true);
+  const sig = (ts) => ts.map((t) => `${t.dir}|${t.decision?.tactic?.choice ?? ''}|${t.events.map((e) => e.type).join()}`).join(';');
+  ok(disp.bodies.length === off.bodies.length && disp.bodies.every((b, i) => b === off.bodies[i]), 'display: every request is byte-identical to off, even at C 35');
+  ok(sig(disp.turns) === sig(off.turns), 'display: same moves, tactics and events as off');
+  ok(JSON.stringify(full.bodies) !== JSON.stringify(off.bodies), 'sanity: the full model (true) does change requests at C 35');
+  ok(C(disp.run) && C(disp.run).value !== 50 && C(disp.run).counts.strikes > 0 && disp.turns[0].confidence.value < 40, `display: C is tracked (after the hit ${disp.turns[0].confidence.value}, at the end ${JSON.stringify(C(disp.run))})`);
+  ok(disp.turns.every((t) => t.confidence && typeof t.confidence.value === 'number' && t.confidence.band), 'display: every turn reports confidence for the bar');
+  ok(!('confidence' in off.run.memory.progress) && off.turns.every((t) => !('confidence' in t)), 'off: no confidence anywhere');
+  ok(!disp.bodies.some((b) => /self\.confidence|"confidence":"/.test(b)), 'display: no confidence word in any request');
+}
+
 rmSync(dir, { recursive: true, force: true });
 if (fails) { console.log(`check-confidence-wiring: ${fails} failure(s)`); process.exit(1); }
 console.log('check-confidence-wiring: all checks passed');

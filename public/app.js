@@ -1449,11 +1449,15 @@ function renderCoins() {
   shownCoins = n;
 }
 
-// Confidence meter (PLAN-confidence C3): a bar and the band word, only while the turn shape carries `confidence`.
+// Confidence meter (PLAN-confidence C3): a bar and the band word. It shows the score from the last turn, or, before
+// the first step, the 50 the memory starts at; it is hidden when neither the Confidence model nor the Confidence meter
+// setting is on (no `confidence` in the turn or in memory.progress).
+const CONFIDENCE_BANDS = [[80, 'dominant'], [65, 'sure'], [40, 'even'], [30, 'unsure']]; // the thresholds of confidence.js band()
 function renderConfidence() {
   const stat = $('confidence-stat');
   if (!stat) return;
-  const c = lastConfidence;
+  const fromMemory = memory?.progress?.confidence;
+  const c = lastConfidence ?? (fromMemory ? { value: fromMemory.value, band: (CONFIDENCE_BANDS.find(([lo]) => fromMemory.value >= lo) ?? [0, 'shaken'])[1], delta: 0 } : null);
   stat.hidden = !c;
   if (!c) return;
   const v = Math.max(0, Math.min(100, Number(c.value) || 0));

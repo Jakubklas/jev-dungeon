@@ -251,7 +251,8 @@ export class ExplorerBrain {
   // Confidence model (PLAN-confidence C2, off by default): #cs is confidence.js's state (value, counts, the
   // encounter's flags); memory.progress.confidence mirrors { value, counts } only with the toggle on.
   // #csLast / #csWhy feed the turn's `confidence` report (value change and events since the last report).
-  #csOn = false;
+  #csOn = false; // C is tracked and reported (the UI bar, memory.progress.confidence)
+  #csAct = false; // C also drives the gates and is told to Jev; false in 'display' mode, so requests stay identical to off
   #cs = null;
   #csLast = 50;
   #csWhy = [];
@@ -274,8 +275,9 @@ export class ExplorerBrain {
     this.#review = { step: 0, targetSteps: approachTarget(world, 'nearest_frontier')?.steps ?? null };
     memory.progress.known_floor_cells = world.knownFloorCount();
     this.#encounter.pending = 'start';
-    if (confidence) { // no request text uses it yet (C3): it only moves and is reported
+    if (confidence) { // confidence: true | an arm object = the model; 'display' = tracked and shown, but gates and words are off
       this.#csOn = true;
+      this.#csAct = confidence !== 'display';
       this.#cs = createConfidence(typeof confidence === 'object' ? confidence : {}); // an object = C4's weights / model arm
       this.#syncConfidence();
     }
@@ -291,7 +293,7 @@ export class ExplorerBrain {
 
   // C for the gates: null with the toggle off (then every effective value is the plain SENTIMENTS one).
   #C() {
-    return this.#csOn ? this.#cs.value : null;
+    return this.#csAct ? this.#cs.value : null;
   }
 
   // The current mood's profile at the current C (all gap readers below use it, never SENTIMENTS directly).
@@ -301,7 +303,7 @@ export class ExplorerBrain {
 
   // engage needs the sword ready and, with the model on, C >= ENGAGE_MIN.
   #engageArmed() {
-    return this.#armed() && (!this.#csOn || engageOpen(this.#cs.value));
+    return this.#armed() && (!this.#csAct || engageOpen(this.#cs.value));
   }
 
   #syncConfidence() {
@@ -360,7 +362,7 @@ export class ExplorerBrain {
     const i = a.interrupted;
     return {
       game: rules(this.#skills.size > 0, this.#combat()),
-      self: { ...sit.self, ...(this.#csOn ? { confidence: `${Math.floor(this.#cs.value)} ${confidenceBand(this.#cs.value)}` } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
+      self: { ...sit.self, ...(this.#csAct ? { confidence: `${Math.floor(this.#cs.value)} ${confidenceBand(this.#cs.value)}` } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
@@ -892,7 +894,7 @@ export class ExplorerBrain {
           `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
-          (this.#csOn ? CONFIDENCE_SENTENCE : ''),
+          (this.#csAct ? CONFIDENCE_SENTENCE : ''),
         criteria,
       },
     };
