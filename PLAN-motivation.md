@@ -7,7 +7,7 @@ when to leave, states the two ways to win (leave through the portal, or dispel e
 what a fight is worth, makes coins pull on the moves, and cuts the six moods to four that each say
 what they go after. Measured on the same 10 gyms before and after (P5).
 
-Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is proposed. Code wins over this plan (AGENTS.md rule 3).
+Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is built and measured; P7 (make the fight work) is proposed. Code wins over this plan (AGENTS.md rule 3).
 
 ## 0. Baseline (live, 2026-10-07)
 
@@ -185,6 +185,81 @@ when the sword is ready" first. Still 0 lives lost in about 1000 ticks, so the c
   ("Jev decided to leave"), which reads as a failure; it should use `changeApproach` like the coin switches.
 - `analyze.mjs` misses a leave decided mid-encounter (`replaceInterrupted` sets no `policy`), so its
   `leave_pct` column is empty for those games; the memory event has the number.
+
+### P6 results (live, 5 real dungeons, 2026-10-07)
+
+Built as `worktree-agent-aea3845bfaf959486` (27cd1fc), not merged. P6 = steady no longer covers a ghost
+in sight, bold covers a lone ghost at any distance, a stakes sentence at encounters, engage as the first
+tactic line for a lone ghost under steady/greedy (one shared `#loneFight` gate), leaving no longer logged as
+a failed approach. Measured with `runs/motivation/step-arenas.mjs`: 5 normal dungeons on fixed seeds
+101-105 (`POST /api/new { seed }`), 120 steps, before = main at 03188c9, after = P6.
+
+| Metric (5 games, 120 steps) | Before | After P6 |
+| --- | --- | --- |
+| `engage` chosen / offered | 1 / 35 (3%) | **8 / 26 (31%)** |
+| Strikes per game | 2.2 | 3.2 |
+| Ghosts dispelled | 4 | 6 |
+| Mood at an encounter with 1 ghost, 2 lives | wary 13, steady 3, bold 1 | **bold 7** (of 7) |
+| Coins collected / seen | 82% | 93% |
+| Lives lost | **0** | **3** |
+| Games lost / wins | 0 / 0 | 0 / 2 (portal, steps 104 and 109) |
+| Mood share of steps | wary 42% | wary 46%, greedy 40%, bold 6% |
+| Cleared wins | 0 | 0 |
+
+**Mood selection is fixed:** bold is now the pick for a lone ghost at full lives, and `engage` wins when it
+is offered under bold (8 of 8 engages were bold).
+
+**New problem: the explorer does not hold.** Of the 8 fights, 4 went as designed (two strikes, a dispel, a
+coin drop, no damage) and **3 each cost a life**; all 3 hits happened at the same moment. The explorer reached
+the holding cell, 2 steps from the hunting ghost, then stepped toward it (move confidence 0.53-0.67 for the
+step in, 0.05-0.10 for staying), ended next to it, and the ghost clawed first. The sword was not even
+offered on that step, because no ghost was adjacent before the move. Every duel in `check-skills.mjs` says
+holding takes 0 claws and walking in takes some: the 3 of 7 walk-ins that cost a life match that. Causes in
+the text Jev reads (printed with a stub at the holding cell):
+1. The `stay` option reads "Stand still." and its shared fact "Stands still: reveals nothing. The chasing
+   adversary keeps moving"; nothing says staying is the plan at the target.
+2. Bold's move line says "moving toward an adversary is fine."
+3. On ordinary ticks (3 of the 4 steps of each approach) the priorities include "Stay makes no progress and
+   lets adversaries close in: only when every step is worse." and "Prefer moves revealing many new cells".
+
+### P7: make the fight work (proposed)
+
+**P7a, hold at the holding cell.** The goal is zero claws when Jev has chosen `engage` against a lone ghost.
+Two options; recommended is **B + A**:
+- **A (text):** at the holding cell, the engage move options say it: `stay` = "Hold here: it steps next to
+  you and you strike first." and the other moves "Steps off the holding cell: gives it the first claw."
+  For engage, drop the generic "Stay makes no progress..." and "reveal new cells" priorities and bold's "moving
+  toward an adversary is fine" from the engage move question.
+- **B (code):** with approach `engage`, a hunting lone ghost at known-path gap 2, the sword ready and the
+  explorer standing on the engage target, the brain holds (a `stay`, no move question; the skill question
+  still goes out when the ghost steps adjacent). The decision to fight stays Jev's (the tactic choice); the
+  hold is execution, saves a call and cannot be talked out of. Cost: one more code policy in `takeTurn`.
+- **Checks:** an end-to-end duel through the real `ExplorerBrain` with a scripted Jev that picks `engage`
+  and then follows the printed facts (including a "walks in" variant that picks the first non-stay move):
+  over the 24 ghost placements of `check-skills` section 12, claws taken = 0 with B, and the text-only
+  variant (A) shows how often a text-following Jev still steps in. Free, no live calls.
+
+**P7b, strike as soon as the ghost is adjacent.** Today the skill is offered from the position before the
+move. When the explorer holds and the ghost steps next to it, the next tick offers the sword (the aim cell
+now holds a visible ghost): confirm in the end-to-end duel that the strike lands on that very next tick, and
+that the ghost has not clawed in between (ghost budget 0.6, claw cooldown 2).
+
+**P7c, outnumbered is not one case.** Wary was 46% of steps; with 3-12 ghosts per dungeon, "2+ adversaries in
+sight or remembered" is true most of the game (remembered sightings last 30 steps). Plan:
+1. Measure for free: stubbed duels of the explorer holding against two ghosts that arrive N steps apart, to see
+   when it still takes at most one claw (the first dispel stuns and knocks one back; the second arrives later).
+2. If a clean rule exists, split wary: `outnumbered` means two or more ghosts within a gap of the explorer
+   that makes them arrive together; a remembered ghost older than about 10 steps no longer counts; a hunting
+   ghost with another 4+ steps behind it is a lone fight now.
+3. Re-word bold and the stakes sentence to the same rule, with the same gate in code (`#loneFight`).
+
+**P7d, the clearing win.** In dungeons with 4-12 ghosts, clearing needs 4-12 dispels; 6 dispels in 5 games
+reached no clear. The explorer cannot know how many ghosts exist (fog), so no fact can promise it. Leave it
+as the arena-scale goal and do not tune for it; revisit after P7a-c if dispels per game stay low.
+
+**Measure (free first, then live):** the end-to-end duels above, then the same 5 seeded dungeons (add 5 more
+seeds and 150 steps if the budget allows: 8 engages is a small sample). Targets: lives lost per fight <= 0.1,
+`engage` chosen >= 30% of offers (kept), strikes per game >= 3, dispels per game >= 2, bold share >= 10%.
 
 ## 4. Cost, size and ownership
 
