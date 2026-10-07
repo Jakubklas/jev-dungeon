@@ -34,7 +34,7 @@ dungeon-game/
   src/characters/explorer/memory.js       explorer memory (memory.json / memory.md)                  -> brain agent
   src/characters/explorer/brain.js        ExplorerBrain: Jev decisions for the explorer              -> brain agent
   src/characters/explorer/confidence.js   confidence score C, pure, imports nothing, not wired yet (PLAN-confidence C1) -> brain agent
-  scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, skills, characters, memory-kit, confidence, duels; no Jev); scripts/lib/duel-harness.mjs the duel harness they and later scripts import
+  scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, skills, characters, memory-kit, confidence, duels, request-hashes; no Jev); scripts/lib/duel-harness.mjs the duel harness they and later scripts import; scripts/request-hashes.mjs + scripts/fixtures/request-hashes.json the request-hash baseline (sha256 of every explorer request over 39 scenarios, compared by check-request-hashes.mjs)
   scripts/run-testbed.mjs            testbed runner (no Jev unless --live)
   scripts/measure-memory.mjs, scripts/arenas/{door,open,corridor,explore,ambush,home,pack,charline,skills}.json   request-size and behaviour metrics over fixture arenas (stubbed unless --live; `--who adversary` is stubbed only)
   PLAN-memory.md, PLAN-adversary-memory.md, PLAN-multiplayer.md   plans, not specs of the code (adversary-memory plan: A1-A4 built behind toggles that default to off; A5 superseded by PLAN-skills.md; mood and wait not built, caution reserved)
