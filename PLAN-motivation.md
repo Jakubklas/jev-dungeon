@@ -261,6 +261,45 @@ as the arena-scale goal and do not tune for it; revisit after P7a-c if dispels p
 seeds and 150 steps if the budget allows: 8 engages is a small sample). Targets: lives lost per fight <= 0.1,
 `engage` chosen >= 30% of offers (kept), strikes per game >= 3, dispels per game >= 2, bold share >= 10%.
 
+### P7c results (free, stubbed duels, no behaviour change)
+
+Measured with `node scripts/measure-outnumbered.mjs` (about 2 minutes, no Jev, no network; the explorer is the real
+`ExplorerBrain` with the engage hold, 2 lives, mood bold, sword only). Two hunting ghosts, ghost hp 1 and 2, in the
+open room (first ghost over the 24 placements of check-skills section 12, the second N = 0..6 cells further along
+the row or beside it, 105 runs per policy, set and hp) and in the 1-wide corridor (N = 1..5). Settings: default,
+`stunTicks 3`, `clawCooldown 3`. Two scripted Jevs: `follow` (engage, then the move whose fact says it is the target,
+else stay) and `walk-in` (the move that closes on the nearest ghost whatever the facts say).
+
+| Scripted Jev | Runs (all sets, rooms, hp, N) | Claws | Runs with a claw | Deaths at 2 lives |
+| --- | --- | --- | --- | --- |
+| follow, two ghosts N = 0..6 | all | **0** | 0 | 0 |
+| follow, remembered-ghost proxy | 432 | **0** | 0 | 0 |
+| walk-in, default settings, open room | 210 (hp 1 and 2) | 72 | 67 | **1** (hp 2, N = 4) |
+| walk-in, default, corridor | 10 | 1 | 1 | 0 |
+| walk-in, remembered-ghost proxy | 432 | 22-30 per 72 | 17-21 per 72 | 0 |
+
+- A text-following Jev takes no claw against two ghosts at any offset, in either room, at all three settings.
+  The reason is the same as for one ghost: both ghosts arrive one at a time, the first strike stuns and knocks one
+  back, and the sword is ready again (cooldown 1) before the next claw (cooldown 2).
+- A Jev that walks in takes up to 2 claws per run (3 in the proxy), one per ghost fought, and at default settings
+  one run in 210 loses both lives (open room, hp 2, second ghost 4 cells behind). The hold does not apply with a
+  second ghost in sight, so nothing in code backs "at most one claw" there. Only N = 6 (6 runs) and the corridor
+  with N >= 4 were clean, too narrow to hang a rule on.
+- Remembered second ghost: the harness cannot hand the brain an earlier sighting, so the proxy is the worst case,
+  a hunting ghost that starts out of sight 9+ cells away (about 15+ ticks off) and keeps coming. It changes
+  nothing for a following Jev (0 claws) and adds claws only for the walk-in Jev. A remembered ghost that was
+  patrolling cannot arrive at all, but the brain does not know that, so the age rule cannot be a truth claim either.
+
+**Conclusion: no clean rule, so no behaviour change.** The bar was "at most one claw per ghost fought and no
+case that kills at default settings"; the walk-in Jev kills once and takes 2 claws in a run, and the facts-following
+Jev's zero is a property of the text working, not of anything the code guarantees against a second ghost. The
+claims in the stakes sentence, the engage default line and the `when` texts are only true with the gate
+`#loneFight` (one ghost, none remembered), so loosening it would make them false. Left unchanged: `#loneFight`,
+the mood `when` texts, the stakes sentence. The way forward, if the wary share still hurts in a live run, is a code
+change the data cannot yet back: extend the hold to a pair (hold at the gap-2 cell of the nearest ghost while
+the other is 5+ steps behind) and re-measure with `measure-outnumbered.mjs`; the walk-in column must reach 0 claws
+and 0 deaths first. The 46% wary share stays as measured in P6.
+
 ## 4. Cost, size and ownership
 
 - **Jev calls**: P2's `coins` trigger and P4's `dispelled` trigger add sentiment calls (capped).
