@@ -7,7 +7,7 @@ when to leave, states the two ways to win (leave through the portal, or dispel e
 what a fight is worth, makes coins pull on the moves, and cuts the six moods to four that each say
 what they go after. Measured on the same 10 gyms before and after (P5).
 
-Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is built and measured; P7 (make the fight work) is proposed. Code wins over this plan (AGENTS.md rule 3).
+Status: P1-P4 built on `feature/motivation`, P5 measured (see "P5 results"). P6 (moods at the encounter) is built and measured. P7: P7a (the engage hold, text and code) and P7b are built and measured for free (see "P7a/P7b results"); P7c was measured with no clean rule, so behaviour is unchanged (see "P7c results"); P7d is left as is by design. The live P7 measurement (the 5 seeded dungeons) has not been run. Code wins over this plan (AGENTS.md rule 3).
 
 ## 0. Baseline (live, 2026-10-07)
 
@@ -222,7 +222,7 @@ the text Jev reads (printed with a stub at the holding cell):
 3. On ordinary ticks (3 of the 4 steps of each approach) the priorities include "Stay makes no progress and
    lets adversaries close in: only when every step is worse." and "Prefer moves revealing many new cells".
 
-### P7: make the fight work (proposed)
+### P7: make the fight work (P7a-c built or measured, see the results below)
 
 **P7a, hold at the holding cell.** The goal is zero claws when Jev has chosen `engage` against a lone ghost.
 Two options; recommended is **B + A**:
@@ -260,6 +260,75 @@ as the arena-scale goal and do not tune for it; revisit after P7a-c if dispels p
 **Measure (free first, then live):** the end-to-end duels above, then the same 5 seeded dungeons (add 5 more
 seeds and 150 steps if the budget allows: 8 engages is a small sample). Targets: lives lost per fight <= 0.1,
 `engage` chosen >= 30% of offers (kept), strikes per game >= 3, dispels per game >= 2, bold share >= 10%.
+
+### P7a/P7b results (free, stubbed duels)
+
+Built: B + A as recommended. Code: `#holding()` in brain.js makes the move `stay` with no move question while the
+approach is `engage`, exactly one adversary is in sight, hunting and not stunned by the explorer's own strike, the
+sword is ready and the explorer stands on the engage target; it is released after `HOLD_MAX = 5` hold ticks or
+`HOLD_ADJACENT_MAX = 2` ticks beside the ghost without a strike, and it applies only on ticks without the `tactic`
+question. The turn gains `held`. Text: the engage move questions drop the mood priority line and the generic
+"Stay makes no progress", "follow the approach", "reveal new cells", "avoid backtracking" and coin lines; a step
+next to an unstunned hunting ghost reads "Steps next to it: it can claw before you strike."; `stay` on the holding
+cell reads "Holds this cell, 2 steps from it: it steps next to you and you can strike first."
+
+Measured with `node scripts/check-duels.mjs` (about 5 s, no Jev; harness `scripts/lib/duel-harness.mjs`, the real
+`ExplorerBrain`), over the 24 ghost placements of check-skills section 12 (claws / dispelled / strikes / hold ticks):
+
+| Hold | Scripted Jev | Ghost hp | Claws | Dispelled | Strikes | Hold ticks |
+| --- | --- | --- | --- | --- | --- | --- |
+| on | follow | 1 / 2 / 3 | **0 / 0 / 0** | 24 / 24 / 24 | 24 / 48 / 72 | 46 / 70 / 90 |
+| on | walk-in | 1 / 2 / 3 | **0 / 0 / 0** | 24 / 24 / 24 | 24 / 48 / 72 | 46 / 70 / 92 |
+| off | walk-in | 2 | 4 (in 4 of 24) | 24 | | |
+| off | follow | 2 | 0 | 24 | | |
+
+- P7b: with the hold on, the strike lands exactly 1 tick after the ghost first steps adjacent in all 24 placements,
+  with no claw before the first strike or between strikes.
+- A ghost that never moves gives exactly 5 consecutive hold ticks; the 6th asks the normal move question.
+- A 3 hp ghost is still offered `engage`; its fact says "3 strikes dispel it." with no claw claim and the
+  sentiment gets no stakes sentence.
+- Request size (check-dungeon 4e worst case): 8978 / 9542 B, down from 9082 / 9642 B (the dropped priority
+  lines); bounds 9500 / 10500 unchanged.
+- Not yet measured: the live targets above (lives lost per fight, engage share, strikes and dispels per game).
+
+### P7c results (free, stubbed duels, no behaviour change)
+
+Measured with `node scripts/measure-outnumbered.mjs` (about 2 minutes, no Jev, no network; the explorer is the real
+`ExplorerBrain` with the engage hold, 2 lives, mood bold, sword only). Two hunting ghosts, ghost hp 1 and 2, in the
+open room (first ghost over the 24 placements of check-skills section 12, the second N = 0..6 cells further along
+the row or beside it, 105 runs per policy, set and hp) and in the 1-wide corridor (N = 1..5). Settings: default,
+`stunTicks 3`, `clawCooldown 3`. Two scripted Jevs: `follow` (engage, then the move whose fact says it is the target,
+else stay) and `walk-in` (the move that closes on the nearest ghost whatever the facts say).
+
+| Scripted Jev | Runs (all sets, rooms, hp, N) | Claws | Runs with a claw | Deaths at 2 lives |
+| --- | --- | --- | --- | --- |
+| follow, two ghosts N = 0..6 | all | **0** | 0 | 0 |
+| follow, remembered-ghost proxy | 432 | **0** | 0 | 0 |
+| walk-in, default settings, open room | 210 (hp 1 and 2) | 72 | 67 | **1** (hp 2, N = 4) |
+| walk-in, default, corridor | 10 | 1 | 1 | 0 |
+| walk-in, remembered-ghost proxy | 432 | 22-30 per 72 | 17-21 per 72 | 0 |
+
+- A text-following Jev takes no claw against two ghosts at any offset, in either room, at all three settings.
+  The reason is the same as for one ghost: both ghosts arrive one at a time, the first strike stuns and knocks one
+  back, and the sword is ready again (cooldown 1) before the next claw (cooldown 2).
+- A Jev that walks in takes up to 2 claws per run (3 in the proxy), one per ghost fought, and at default settings
+  one run in 210 loses both lives (open room, hp 2, second ghost 4 cells behind). The hold does not apply with a
+  second ghost in sight, so nothing in code backs "at most one claw" there. Only N = 6 (6 runs) and the corridor
+  with N >= 4 were clean, too narrow to hang a rule on.
+- Remembered second ghost: the harness cannot hand the brain an earlier sighting, so the proxy is the worst case,
+  a hunting ghost that starts out of sight 9+ cells away (about 15+ ticks off) and keeps coming. It changes
+  nothing for a following Jev (0 claws) and adds claws only for the walk-in Jev. A remembered ghost that was
+  patrolling cannot arrive at all, but the brain does not know that, so the age rule cannot be a truth claim either.
+
+**Conclusion: no clean rule, so no behaviour change.** The bar was "at most one claw per ghost fought and no
+case that kills at default settings"; the walk-in Jev kills once and takes 2 claws in a run, and the facts-following
+Jev's zero is a property of the text working, not of anything the code guarantees against a second ghost. The
+claims in the stakes sentence, the engage default line and the `when` texts are only true with the gate
+`#loneFight` (one ghost, none remembered), so loosening it would make them false. Left unchanged: `#loneFight`,
+the mood `when` texts, the stakes sentence. The way forward, if the wary share still hurts in a live run, is a code
+change the data cannot yet back: extend the hold to a pair (hold at the gap-2 cell of the nearest ghost while
+the other is 5+ steps behind) and re-measure with `measure-outnumbered.mjs`; the walk-in column must reach 0 claws
+and 0 deaths first. The 46% wary share stays as measured in P6.
 
 ## 4. Cost, size and ownership
 

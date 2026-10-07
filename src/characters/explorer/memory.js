@@ -26,6 +26,7 @@
 // Zero dependencies: hand-written validation instead of zod.
 import { writeFile } from 'node:fs/promises';
 import { addLandmarkTo, backAndForth, pushRing } from '../shared/memory-kit.js';
+import { band } from './confidence.js';
 
 export const LIMITS = {
   approach: 240,
@@ -39,6 +40,7 @@ export const LIMITS = {
   recentMoves: 6,
   skills: 4,
   skillText: 120,
+  confidenceCount: 1e6, // each confidence counter (progress.confidence, toggle on only)
   recentCells: 8, // 6 moves plus the two positions before them, so every move can be judged
 };
 
@@ -154,14 +156,10 @@ export function resumeApproach(memory, step, thoughtOf) {
 }
 
 // Replaces the parked approach, e.g. the portal was spotted mid-chase: after the chase the explorer
-// should head for the portal, not resume exploring. The dropped one goes into `tried` with `reason`.
+// should head for the portal, not resume exploring. The dropped one is replaced, not failed: no `tried` row.
 export function replaceInterrupted(memory, { id, text }, reason, step) {
   const a = memory.approach;
-  const old = a.interrupted;
-  if (old) {
-    a.tried.push({ id: old.id, approach: old.approach, steps: `${old.since_step}–${step}`, reason: String(reason).slice(0, LIMITS.approach) });
-    a.tried = a.tried.slice(-LIMITS.triedApproaches);
-  }
+  const old = a.interrupted; // replaced, not failed: no `tried` row
   a.interrupted = { id, approach: text.slice(0, LIMITS.approach), since_step: step + 1, reason: old?.reason ?? String(reason).slice(0, LIMITS.approach) };
 }
 
@@ -218,6 +216,13 @@ export function validateMemory(m) {
   if (!p || typeof p !== 'object') fail('progress');
   for (const k of ['steps', 'known_floor_cells', 'revealed_since_approach', 'steps_since_approach', 'revisits_last_10', 'coins']) {
     if (!isNum(p[k])) fail(`progress.${k}`);
+  }
+  if ('confidence' in p) { // present only with the confidence toggle on
+    const c = p.confidence;
+    if (!c || typeof c !== 'object' || !isNum(c.value) || c.value < 0 || c.value > 100) fail('progress.confidence.value');
+    for (const k of ['strikes', 'blocked', 'evaded', 'pressed']) {
+      if (!Number.isInteger(c.counts?.[k]) || c.counts[k] < 0 || c.counts[k] > LIMITS.confidenceCount) fail(`progress.confidence.counts.${k}`);
+    }
   }
   const s = m.sentiment;
   if (!s || typeof s !== 'object' || !MOOD_IDS.includes(s.id) || !isNum(s.since_step)) fail('sentiment');
@@ -283,6 +288,7 @@ export function renderMarkdown(m) {
     '## Progress',
     `- Steps: ${p.steps}`,
     `- Coins: ${p.coins}`,
+    ...(p.confidence ? [`- Confidence: ${p.confidence.value} (${band(p.confidence.value)}; strikes ${p.confidence.counts.strikes}, blocked ${p.confidence.counts.blocked}, evaded ${p.confidence.counts.evaded}, pressed ${p.confidence.counts.pressed})`] : []),
     `- Known floor cells: ${p.known_floor_cells}`,
     `- Since this approach: ${p.steps_since_approach} steps, ${p.revealed_since_approach} cells revealed`,
     `- Revisits in the last 10 steps: ${p.revisits_last_10}`,

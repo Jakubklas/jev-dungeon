@@ -14,7 +14,7 @@ import {
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
-import { LIMITS, MOOD_IDS, addEvent, addLandmark, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
+import { LIMITS, MOOD_IDS, addEvent, addLandmark, countEncounter, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -41,6 +41,8 @@ const sees = (dungeon, a, b) => euclid(a, b) <= SIGHT_RANGE && hasLineOfSight(du
 //    anything beyond the allowlist, so a hidden-state read cannot slip in unnoticed.
 const ALLOWED_IMPORTS = {
   './perception.js': null, './memory.js': null, './encounter.js': null, './known-map.js': null,
+  // confidence.js (PLAN-confidence C2): the explorer's confidence score. Pure, imports nothing (check-confidence asserts it), so brain.js and memory.js may import it.
+  './confidence.js': null,
   '../../jev.js': null, 'node:fs/promises': null,
   // SIGHT_RANGE is a constant, not hidden state: brain.js uses it to expire a remembered sighting once
   // the explorer stands within sight range of the frozen cell with a known line of sight to it.
@@ -952,7 +954,10 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       const start = [5, 4], ghost = [1, 7];
       // The boldest mood (smallest min gap) by value, not by name, so a mood rename keeps every tactic open.
       const boldest = Object.entries(SENTIMENTS).sort((a, b) => a[1].min_gap - b[1].min_gap)[0][0];
-      for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
+      // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
+      // neutral zone and close tactics, so this is the worst case inside the zone.
+      for (const conf of [false, true]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -961,13 +966,22 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         const bb = new ExplorerBrain(new KnownWorld(big), {
           ask: answerWith((k, ds) => (k === 'sentiment' ? boldest : k === 'skill' ? 'none' : ds.includes('stay') ? 'stay' : ds[0])),
           memoryDir: pathToFileURL(bd + '/'),
+          confidence: conf,
         });
         await withSeed(1, async () => {
           big.pos = [5, 8]; big.adversaries = [chaser([11, 8], 'chase', 'a2')]; // seen, then remembered (out of sight from the start)
           await bb.takeTurn();
           big.pos = [...start]; big.adversaries = [];
           for (let i = 0; i < 4; i++) { await bb.takeTurn(); big.pos = [...start]; }
-          await bb.noteHit('a2'); await bb.noteHit('a2');
+          if (conf) {
+            // noteHit's memory writes, verbatim (same events and hit_here landmark), without its confidence update.
+            for (let h = 0; h < 2; h++) {
+              const at = Math.max(big.steps, 1);
+              countEncounter(bb.memory, 'hits', at);
+              addEvent(bb.memory, at, `Hit by a2: ${big.health} of ${big.maxHealth} lives left.`);
+              addLandmark(bb.memory, { kind: 'hit_here', cell: big.pos, step: at, note: 'Took a hit here.' });
+            }
+          } else { await bb.noteHit('a2'); await bb.noteHit('a2'); }
           // A full plan.tried (5 review switches), as late in a long game; the tactic request leaves it out.
           bb.memory.approach.tried = Array.from({ length: LIMITS.triedApproaches }, (_, i) => ({ id: ['nearest_frontier', 'far_side', 'largest_unexplored'][i % 3], approach: 'x', steps: `${i * 9}–${i * 9 + 8}`, reason: 'Jev judged it not working (31%): 4 cells revealed in 8 steps, 2 revisits in the last 10.' }));
           big.adversaries = [chaser(ghost, mode)];
@@ -979,7 +993,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
         if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
         if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
-        console.log(`  worst-case decision tick (${mode}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        console.log(`  worst-case decision tick (${mode}${conf ? ', confidence ON' : ''}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
     }
@@ -1382,7 +1396,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
 
   // (b) leave_now says 0.9: go_to_exit on the exit tick, and it sticks (no more reviews or leave_now).
   {
-    const { log, approaches, g } = await play(0.9, 30);
+    const { log, approaches, g, brain } = await play(0.9, 30);
     const i = approaches.indexOf('go_to_exit');
     if (i < 0) fail('leave_now 0.9 did not switch to go_to_exit');
     else {
@@ -1392,6 +1406,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       if (log.filter((l) => l.step > firstKnown).some((l) => l.kinds.includes('leave_now') || l.kinds.includes('approach_working'))) fail('asked again after deciding to leave');
     }
     if (g.won) fail('stub should not have walked onto the portal');
+    if (brain.memory.approach.tried.length) fail(`leave_now switch wrote plan.tried: ${JSON.stringify(brain.memory.approach.tried)}`);
     console.log(`leave_now at 0.9: go_to_exit from tick ${i + 1}, kept for ${approaches.length - i} ticks`);
   }
 
@@ -1766,6 +1781,121 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     rmSync(dir, { recursive: true, force: true });
   }
 
+
+  // P6. Moods at the encounter: the `when` texts no longer overlap at the moment a ghost comes into sight, the
+  // encounter sentence and the tactic default line appear only under the engage fact's own gates, and a
+  // leave_now switch (exploring or mid-encounter) is no failure: no plan.tried row, and the turn carries a policy.
+  {
+    const W = SENTIMENTS;
+    if (/adversar/.test(W.greedy.when.split('Pick when')[1].replace('with no adversary in sight', ''))) fail('greedy when names an adversary beyond "no adversary in sight"');
+    if (!/no adversary is in sight/.test(W.steady.when)) fail('steady when does not cover no adversary in sight');
+    if (!/Never with 2\+ adversaries known: that is wary/.test(W.steady.when) || !/exactly one is in sight and fighting it is clearly bad/.test(W.steady.when)) fail('steady when: the one-adversary case is not stated precisely');
+    if (/\d+\+? steps|far|close|within/.test(W.bold.when.split('Pick when')[1])) fail(`bold when has a distance cap: ${W.bold.when}`);
+    if (!/lone adversary is the only one known \(in sight at any distance, or remembered\)/.test(W.bold.when) || !/sword is ready/.test(W.bold.when) || !/full lives or hit protection/.test(W.bold.when)) fail('bold when lost a condition');
+    if (!/outnumbered \(2\+ adversaries in sight or remembered\)/.test(W.wary.when)) fail('wary when lost the outnumbered case');
+    if (/2\+/.test(W.bold.when) || /coin/.test(W.bold.when) === false) fail('bold when: overlaps wary or lost the coin upside');
+    console.log('mood whens: nothing in sight -> greedy/steady; lone ghost at any distance, sword ready, full lives -> bold; 2+ known -> wary');
+
+    const row = ['#'.repeat(40), '#' + '.'.repeat(38) + '#', '#'.repeat(40)];
+    const STAKES = 'A lone adversary you can strike first costs at most one claw';
+    const DEFAULT_LINE = /^Default: engage a lone adversary while the sword is ready/;
+    const probe = async ({ ghosts, mood = 'steady', skills = 'explorer', stun = null, ghostHp = null, hp = null, health = null }) => {
+      const keep = skillConfig();
+      if (stun !== null) configureSkills({ ...keep, stunTicks: stun });
+      try {
+        const g = handGame(row, [10, 1], 40);
+        g.adversaries = ghosts.map((x, i) => (hp ? new Adversary({ id: `a${i + 1}`, pos: [x, 1], mode: 'chase', hp }) : chaser([x, 1], 'chase', `a${i + 1}`)));
+        if (health) g.health = health;
+        if (ghostHp) for (const a of g.adversaries) while (a.hp > ghostHp) a.takeHit(1, [0, 0]);
+        const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+        const out = {};
+        const ask = async ({ questions }) => {
+          if (questions.sentiment) out.sentiment = questions.sentiment.instructions;
+          if (questions.tactic) out.priorities = questions.tactic.instructions.priorities;
+          return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+            if (q.type === 'noul') return [k, { noul: 0.1 }];
+            const keys = Object.keys(q.criteria);
+            const c = k === 'sentiment' ? mood : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : keys.includes('left') ? 'left' : keys[0];
+            return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+          }));
+        };
+        const brain = new ExplorerBrain(new KnownWorld(g), { ask, skills, memoryDir: pathToFileURL(dir + '/') });
+        await brain.takeTurn();
+        rmSync(dir, { recursive: true, force: true });
+        return out;
+      } finally { configureSkills(keep); }
+    };
+    const lone = await probe({ ghosts: [17] });
+    if (!lone.sentiment?.includes(STAKES)) fail(`lone ghost at 7 steps: no stakes sentence in ${lone.sentiment}`);
+    else console.log(`encounter sentence: "${lone.sentiment.slice(lone.sentiment.indexOf(STAKES) - 1, lone.sentiment.indexOf(' What should'))}"`);
+    if (!lone.priorities || !DEFAULT_LINE.test(lone.priorities[0])) fail(`lone ghost, steady: tactic priorities ${JSON.stringify(lone.priorities)}`);
+    else console.log(`tactic priority (steady, lone): "${lone.priorities[0]}"`);
+    const greedy = await probe({ ghosts: [17], mood: 'greedy' });
+    if (!greedy.priorities || !DEFAULT_LINE.test(greedy.priorities[0])) fail('greedy keeps the old tactic priority order for a lone ghost');
+    const bold = await probe({ ghosts: [17], mood: 'bold' });
+    if (!bold.priorities || DEFAULT_LINE.test(bold.priorities[0]) || !bold.priorities.some((l) => /^Engage a lone adversary when the sword is ready/.test(l))) fail('bold tactic priorities changed');
+    const two = await probe({ ghosts: [16, 17] });
+    if (two.sentiment.includes(STAKES)) fail('stakes sentence with two adversaries visible');
+    if (two.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line with two adversaries visible');
+    const slow = await probe({ ghosts: [17], stun: 1 });
+    if (slow.sentiment.includes(STAKES)) fail('stakes sentence with stunTicks 1');
+    if (slow.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line with stunTicks 1');
+    const none = await probe({ ghosts: [17], skills: 'none' });
+    if (none.sentiment.includes(STAKES)) fail('stakes sentence without a sword');
+    if (none.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line without a sword');
+    // One claw must not be able to end the game, and the duels back at most 2 strikes (review of P6).
+    const last = await probe({ ghosts: [17], health: 1 });
+    if (last.sentiment.includes(STAKES)) fail('stakes sentence at 1 life');
+    if (last.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line at 1 life');
+    const tough = await probe({ ghosts: [17], hp: 3 });
+    if (tough.sentiment.includes(STAKES)) fail('stakes sentence for a 3-strike ghost');
+    if (tough.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line for a 3-strike ghost');
+    const noEnc = await (async () => {
+      const g = handGame(row, [10, 1], 40);
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      let text = '';
+      const ask = async ({ questions }) => {
+        if (questions.sentiment) text = questions.sentiment.instructions;
+        return Object.fromEntries(Object.entries(questions).map(([k, q]) => { const keys = Object.keys(q.criteria ?? {}); return [k, q.type === 'noul' ? { noul: 0.1 } : { choice: keys[0], probabilities: { [keys[0]]: 1 }, confidence: 1 }]; }));
+      };
+      await new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') }).takeTurn();
+      rmSync(dir, { recursive: true, force: true });
+      return text;
+    })();
+    if (noEnc.includes(STAKES)) fail('stakes sentence with nothing in sight');
+    console.log('encounter sentence and default-engage line: only for one visible ghost, sword ready, stun holding, 2 strikes, lives to spare; absent for two ghosts, stunTicks 1, no sword, 1 life, a 3-strike ghost, nothing in sight');
+
+    // leave_now mid-encounter: a tactic is on (nearest_frontier parked), the portal comes into view, Jev says leave.
+    {
+      const g = handGame(row, [20, 1], 30);
+      g.adversaries = [chaser([26, 1])];
+      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+        if (q.type === 'noul') return [k, { noul: 0.9 }];
+        const keys = Object.keys(q.criteria);
+        const c = k === 'sentiment' ? 'steady' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : keys.includes('left') ? 'left' : keys[0];
+        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+      }));
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      await brain.takeTurn();
+      if (!isTactic(brain.memory.approach.id)) fail(`leave setup: no tactic on (${brain.memory.approach.id})`);
+      g.dungeon.treasure = [12, 1];
+      let leaving = null;
+      for (let i = 0; i < 12 && !leaving; i++) {
+        const t = await brain.takeTurn();
+        if (t.policy?.to === 'go_to_exit') leaving = t;
+      }
+      if (!leaving) fail('leave_now mid-encounter: no turn carried a policy to go_to_exit');
+      else {
+        if (!isTactic(brain.memory.approach.id)) fail('leave_now mid-encounter should have happened with the tactic still on');
+        if (leaving.policy.from !== 'nearest_frontier') fail(`mid-encounter policy.from ${leaving.policy.from}`);
+      }
+      if (brain.memory.approach.interrupted?.id !== 'go_to_exit') fail(`parked approach after leave: ${brain.memory.approach.interrupted?.id}`);
+      if (brain.memory.approach.tried.length) fail(`mid-encounter leave wrote plan.tried: ${JSON.stringify(brain.memory.approach.tried)}`);
+      rmSync(dir, { recursive: true, force: true });
+      console.log('leave_now mid-encounter: policy {from, to: go_to_exit, reason}, parked approach replaced, no plan.tried row');
+    }
+  }
 }
 
 // 5. Scripted follower: nearest_frontier until the chest is seen, then go_to_exit,

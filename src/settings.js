@@ -17,6 +17,7 @@ export const SCHEMA = [
   { key: 'keepHuntingMin', group: 'Adversaries', label: 'Give-up threshold', hint: 'Jev\'s keep-hunting answer below this ends the hunt.', type: 'range', min: 0, max: 1, step: 0.05, def: 0.5, when: 'live' },
   { key: 'adversaryCharacters', group: 'Adversaries', label: 'Ghost characters', hint: 'Each ghost gets a fixed character (mixed presets) and its own patrol stream. Off = every ghost is standard.', type: 'toggle', def: false, when: 'next' },
   { key: 'limitedMap', group: 'Adversaries', label: 'Limited ghost map', hint: 'Ghosts know only their home zone and what they have seen (fading), not the real map. Needs Ghost characters; ignored without it.', type: 'toggle', def: false, when: 'next' },
+  { key: 'confidenceModel', group: 'Explorer', label: 'Confidence model', hint: 'The explorer keeps a confidence score its fights move (PLAN-confidence). Off by default. On: a low score widens the gap every mood keeps and closes engage below 40, from 80 it narrows it by one; Jev sees the score and its band word. Measured not worth it under stubs (PLAN-confidence C4).', type: 'toggle', def: false, when: 'next' },
   { key: 'graceTicks', group: 'Damage', label: 'Grace after a hit', hint: 'Ticks of protection after a hit.', type: 'range', min: 0, max: 12, step: 1, def: 4, when: 'live' },
   { key: 'packAlert', group: 'Pack', label: 'Pack alert', hint: 'A spotter calls nearby patrolling ghosts into the hunt.', type: 'toggle', def: true, when: 'live' },
   { key: 'alertSteps', group: 'Pack', label: 'Alert reach', hint: 'Path steps within which a call is heard.', type: 'range', min: 1, max: 80, step: 1, def: 24, when: 'live' },
@@ -42,6 +43,8 @@ export const SCHEMA = [
 ];
 
 const BY_KEY = new Map(SCHEMA.map((s) => [s.key, s]));
+// What the running game modules were last given (saved values that wait for a new game are not in force yet).
+export const appliedValue = (key) => applied[key];
 export const defaults = () => Object.fromEntries(SCHEMA.map((s) => [s.key, s.def]));
 
 // Checks one value against its knob. Returns the cleaned value or throws a message.

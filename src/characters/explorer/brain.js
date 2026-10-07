@@ -22,13 +22,14 @@ import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
-import { knownLineOfSight, speedPhrase } from './encounter.js';
+import { knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
   LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
+import { PRESSED_RANGE, apply as applyConfidence, band as confidenceBand, closeEncounter, createConfidence, engageOpen, gaps as confidenceGaps, seeChase } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
 const REVIEW_EVERY = 8; // steps between approach reviews
@@ -41,6 +42,8 @@ const THREAT_STEPS = 2; // a visible chaser within this many path steps offers t
 // Ghosts get their claw attack in a later phase (PLAN S4). Until then a block has nothing to stop; the
 // plan wants it left out, but this phase offers it anyway. Flip to false to hide the block option.
 const GHOSTS_CAN_ATTACK = true;
+const HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps off a hunting ghost before the normal question returns
+const HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
 const PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
@@ -68,7 +71,7 @@ export const SENTIMENTS = {
   steady: {
     min_gap: 3, end_ticks: 4,
     move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when none of the others clearly fits: e.g. an adversary far off (6+ steps) or patrolling and not yet chasing, or no coins in sight and little left to explore nearby.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when no adversary is in sight and nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when exactly one is in sight and fighting it is clearly bad (sword not ready, or fewer than full lives and no hit protection). Never with 2+ adversaries known: that is wary.',
     priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
     note: 'Sticks to the plan: explores, coins on the way, keeps a safe distance.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
@@ -76,7 +79,7 @@ export const SENTIMENTS = {
   greedy: {
     min_gap: 3, end_ticks: 2,
     move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
-    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no chaser in sight and full lives or hit protection.',
+    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no adversary in sight and full lives or hit protection.',
     priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from adversaries.',
     note: 'Goes after coins and unexplored rooms; detours are fine.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on looting.',
@@ -84,15 +87,45 @@ export const SENTIMENTS = {
   bold: {
     min_gap: 2, end_ticks: 1,
     move_priority: 'Bold: take the fight; moving toward an adversary is fine.',
-    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when you have full lives or hit protection, the sword is ready and one adversary is in sight (or a weakened one, `hp` below max).',
+    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when a lone adversary is the only one known (in sight at any distance, or remembered), the sword is ready (`self.skills`) and you have full lives or hit protection.',
     priority: 'Bold: take the fight. Engage a lone or weakened adversary you can beat; moving toward one is fine; keep at least 2 steps unless striking.',
     note: 'Takes fights it can win: engages lone or weak adversaries.',
     skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
   },
 };
 const DEFAULT_SENTIMENT = 'steady';
-const profileNote = (id) => `min gap ${SENTIMENTS[id].min_gap}; alert ${SENTIMENTS[id].end_ticks} tick${SENTIMENTS[id].end_ticks === 1 ? '' : 's'} after losing sight. ${SENTIMENTS[id].note}`;
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
+
+// The gap a mood really keeps once the confidence model (PLAN-confidence C3) shifts it: base + delta from C,
+// never below 2 when it lowers a gap. C null (toggle off) or in the neutral zone gives the base unchanged.
+export function effectiveGap(base, C) {
+  if (C == null) return base;
+  const d = confidenceGaps(C);
+  return d < 0 ? Math.max(2, base + d) : base + d;
+}
+
+// One mood's profile with the effective gap; every reader of the gap (tactic feasibility, targets, move facts,
+// the failing test, the sentiment question, the mood lines below) takes it from here so Jev reads one number.
+// The mood lines hard-code "at least N steps": templated from the gap, byte-identical while the gap is the base.
+// C null (toggle off) returns the SENTIMENTS entry itself.
+export function effectiveSentiment(id, C) {
+  const base = SENTIMENTS[id];
+  if (C == null) return base;
+  const g = effectiveGap(base.min_gap, C);
+  if (g === base.min_gap) return base;
+  const fix = (t) => t.replace(/at least \d+ steps/, `at least ${g} steps`);
+  return { ...base, min_gap: g, priority: fix(base.priority), move_priority: fix(base.move_priority) };
+}
+
+// effectiveProfile(memory, C): the current mood's profile at confidence C.
+export const effectiveProfile = (memory, C) => effectiveSentiment(SENTIMENTS[memory.sentiment?.id] ? memory.sentiment.id : DEFAULT_SENTIMENT, C);
+const profileNote = (id, C = null) => {
+  const s = effectiveSentiment(id, C);
+  return `min gap ${s.min_gap}; alert ${s.end_ticks} tick${s.end_ticks === 1 ? '' : 's'} after losing sight. ${s.note}`;
+};
+
+// The one place Jev is told what self.confidence means (sentiment question only; rules() rides on every request).
+export const CONFIDENCE_SENTENCE = ' `self.confidence` sums up how your fights in this dungeon went; `threats` and the tactic facts say how this one stands.';
 
 const TRIGGER_TEXT = {
   start: 'The explorer is about to start exploring the dark dungeon.',
@@ -211,9 +244,20 @@ export class ExplorerBrain {
   // id -> the step the explorer last struck it (its own action, so fog-safe): engage closes in on a ghost
   // it stunned (#stunnedIds) instead of waiting for it.
   #struck = new Map();
+  // Engage hold (P7a): { cell, n, adj } = where the explorer waits, consecutive hold ticks there, ticks spent beside the ghost.
+  #hold = { cell: null, n: 0, adj: 0 };
+  #holdOn = true;
   #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
+  // Confidence model (PLAN-confidence C2, off by default): #cs is confidence.js's state (value, counts, the
+  // encounter's flags); memory.progress.confidence mirrors { value, counts } only with the toggle on.
+  // #csLast / #csWhy feed the turn's `confidence` report (value change and events since the last report).
+  #csOn = false;
+  #cs = null;
+  #csLast = 50;
+  #csWhy = [];
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer' } = {}) {
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
+    this.#holdOn = hold; // false only for the duel checks that prove what the hold buys (P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#ask = ask ?? askReal;
@@ -230,6 +274,56 @@ export class ExplorerBrain {
     this.#review = { step: 0, targetSteps: approachTarget(world, 'nearest_frontier')?.steps ?? null };
     memory.progress.known_floor_cells = world.knownFloorCount();
     this.#encounter.pending = 'start';
+    if (confidence) { // no request text uses it yet (C3): it only moves and is reported
+      this.#csOn = true;
+      this.#cs = createConfidence(typeof confidence === 'object' ? confidence : {}); // an object = C4's weights / model arm
+      this.#syncConfidence();
+    }
+  }
+
+  // Applies one confidence event with the lives left now (own state: fog-safe) and mirrors the result into memory.
+  #confide(type) {
+    if (!this.#csOn) return;
+    this.#cs = applyConfidence(this.#cs, type, this.#world.health, this.#world.maxHealth);
+    this.#csWhy.push(type);
+    this.#syncConfidence();
+  }
+
+  // C for the gates: null with the toggle off (then every effective value is the plain SENTIMENTS one).
+  #C() {
+    return this.#csOn ? this.#cs.value : null;
+  }
+
+  // The current mood's profile at the current C (all gap readers below use it, never SENTIMENTS directly).
+  #profile() {
+    return effectiveProfile(this.#memory, this.#C());
+  }
+
+  // engage needs the sword ready and, with the model on, C >= ENGAGE_MIN.
+  #engageArmed() {
+    return this.#armed() && (!this.#csOn || engageOpen(this.#cs.value));
+  }
+
+  #syncConfidence() {
+    this.#memory.progress.confidence = { value: this.#cs.value, counts: { ...this.#cs.counts } };
+  }
+
+  // The turn's `confidence` object for the UI: value, band word, change since the last report and why.
+  #confidenceReport() {
+    const value = this.#cs.value;
+    const why = [...new Set(this.#csWhy)];
+    const reason = (why.filter((w) => w !== 'calm').join(', ') || why[0]) ?? null;
+    const delta = Math.round((value - this.#csLast) * 100) / 100;
+    this.#csLast = value;
+    this.#csWhy = [];
+    return { value, band: confidenceBand(value), delta, reason };
+  }
+
+  // Own shield stopped a claw (called by turn.js from the 'blocked' event) and saves.
+  async noteBlocked() {
+    if (!this.#csOn) return;
+    this.#confide('blocked');
+    await this.#save();
   }
 
   get memory() {
@@ -266,7 +360,7 @@ export class ExplorerBrain {
     const i = a.interrupted;
     return {
       game: rules(this.#skills.size > 0, this.#combat()),
-      self: { ...sit.self, ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
+      self: { ...sit.self, ...(this.#csOn ? { confidence: `${Math.floor(this.#cs.value)} ${confidenceBand(this.#cs.value)}` } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
@@ -378,6 +472,35 @@ export class ExplorerBrain {
     return { name: k.name, damage: k.damage, cooldown: k.cooldown, stun: c.stunTicks, coinChance: c.coinDropChance, clawCooldown: c.clawCooldown, shield: block ? block.effectiveness : null };
   }
 
+  // The engage hold (PLAN-motivation P7a): approach engage, ONE adversary in sight, hunting and not stunned by the
+  // explorer's own strike, the sword ready, and the explorer already on the engage target (the cell 2 known-path steps
+  // off, or next to it): code stays put with no move question. Stepping toward a hunting ghost hands it the first claw
+  // (stubbed duels: check-skills section 12, check-duels), and the live runs lost 3 of 8 fights to exactly that step.
+  // The skill question still goes out whenever the sword has an option, so the strike lands the tick the ghost steps
+  // adjacent. Released (the normal question) after HOLD_MAX ticks without it coming, or HOLD_ADJACENT_MAX ticks beside
+  // it without a strike; a stunned or patrolling ghost, a second adversary in sight or no sword keep the normal path.
+  // Fog-safe: visible adversaries, the explorer's own strike record and its own sword only.
+  #holding() {
+    const world = this.#world;
+    const h = this.#hold;
+    const stop = () => { this.#hold = { cell: null, n: 0, adj: 0 }; return false; };
+    if (!this.#holdOn || this.#memory.approach.id !== 'engage' || !this.#armed()) return stop();
+    const threats = threatsOf(world);
+    if (threats.length !== 1) return stop();
+    const [th] = threats;
+    const stunned = this.#stunnedIds();
+    if (!th.chasing || stunned.has(th.id)) return stop();
+    if (approachTarget(world, 'engage', { stunned })?.steps !== 0) return stop();
+    const here = world.pos;
+    const same = h.cell && sameCell(h.cell, here);
+    if (threatDistance(th, here) <= 1) {
+      this.#hold = { cell: [...here], n: 0, adj: (same ? h.adj : 0) + 1 };
+      return this.#hold.adj <= HOLD_ADJACENT_MAX;
+    }
+    this.#hold = { cell: [...here], n: (same ? h.n : 0) + 1, adj: 0 };
+    return this.#hold.n <= HOLD_MAX;
+  }
+
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
   #target(id, opts = {}) {
     return approachTarget(this.#world, id, { avoid: this.#zone, ...opts });
@@ -411,6 +534,9 @@ export class ExplorerBrain {
     if (!legal.length) throw new Error('No legal moves');
     const forced = legal.length === 1;
     const inSight = sit.threats.visible.length > 0;
+    // Confidence context at the start of the tick (what the request shows): sword ready, ghosts the own strike stunned.
+    const csArmed = this.#csOn ? this.#armed() : false;
+    const csStunned = this.#csOn ? this.#stunnedIds() : null;
     const skillOptions = this.#skillOptions(); // computed before the move, like the facts Jev reads
 
     // A decision without an adversary in sight waits for the next tick with a real choice. When an
@@ -436,10 +562,10 @@ export class ExplorerBrain {
       info.lastDecision = step;
       const sentiment = await this.#askSentiment(sit, trigger);
       apiMs += sentiment.ms;
-      const profile = profileOf(memory);
+      const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight() });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#engageArmed(), stunned: this.#stunnedIds(), fight: this.#fight() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -454,12 +580,20 @@ export class ExplorerBrain {
       }
     }
 
-    const profile = profileOf(memory);
+    const profile = this.#profile();
     this.#keepEscapeGoal(profile);
     const hasSkillOptions = Object.keys(skillOptions).length > 0;
+    // engage hold: stay, no move question (P7a). A decision tick (tactic question) is not a hold tick, so it restarts
+    // the count: HOLD_MAX counts consecutive hold ticks, not ones split by a re-decision on the same cell.
+    if (tacticIds.length) this.#hold = { cell: null, n: 0, adj: 0 };
+    const held = !tacticIds.length && this.#holding();
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
+    // A lone fight the duels back (#loneFight): under steady or greedy engaging is the default, so the mood's caution
+    // does not talk the explorer out of the one fight it should take.
+    const loneEngage = tacticIds.includes('engage') && this.#loneFight(sit) &&
+      (memory.sentiment.id === 'steady' || memory.sentiment.id === 'greedy');
     if (tacticIds.length) {
       questions.tactic = {
         type: 'choice',
@@ -467,11 +601,17 @@ export class ExplorerBrain {
           question:
             `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps adversaries ` +
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
-          priorities: [
-            profile.priority,
-            'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
-            `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
-          ],
+          priorities: loneEngage
+            ? [
+              'Default: engage a lone adversary while the sword is ready (you act first). Run away when cramped or without the sword.',
+              profile.priority,
+              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+            ]
+            : [
+              profile.priority,
+              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+              `Engage a lone adversary when the sword is ready: ${engagePays(skillConfig().coinDropChance)}. Run away when outnumbered, cramped or without the sword.`,
+            ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
       };
@@ -484,7 +624,7 @@ export class ExplorerBrain {
           if (id !== 'engage' || !sharedMoves) sharedMoves = q.shared;
         }
       }
-    } else if (!forced) {
+    } else if (!forced && !held) {
       const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions);
       questions.next_move = q.question;
       moveOptions[memory.approach.id] = q.options;
@@ -523,7 +663,7 @@ export class ExplorerBrain {
     const skillQ = hasSkillOptions ? skillQuestion(skillOptions, profile.skill_priority, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
-    let dir = legal[0];
+    let dir = held ? STAY : legal[0];
     let moveDecision = null;
     let review = null;
     let pendingSwitch = null;
@@ -581,6 +721,7 @@ export class ExplorerBrain {
     }
     if (decision) decision.apiMs = apiMs; // the whole decision tick: sentiment + tick request
 
+    const csEngaging = memory.approach.id === 'engage'; // after this tick's decision, like the request's plan.approach
     // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
     if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
 
@@ -616,11 +757,17 @@ export class ExplorerBrain {
     }
     if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last adversary and won.');
     this.#skills.turnPassed();
+    if (this.#csOn) {
+      // Calm repairs toward the start; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
+      if (!sit.threats.visible.length) this.#confide('calm');
+      else if (!csArmed && !csEngaging && sit.threats.visible.some((v) => v.chasing && v.distance <= PRESSED_RANGE && !csStunned.has(v.id))) this.#confide('pressed');
+    }
     await this.#save();
 
     return {
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
-      move_decision: moveDecision, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
+      move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
+      ...(this.#csOn ? { confidence: this.#confidenceReport() } : {}),
     };
   }
 
@@ -637,10 +784,12 @@ export class ExplorerBrain {
     for (const e of events) {
       if (e.type === 'struck') {
         this.#struck.set(e.id, step);
+        this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {
         const coin = events.some((x) => x.type === 'coin_drop' && x.id === e.id);
         countEncounter(memory, 'dispelled', step);
+        this.#confide('dispelled');
         addEvent(memory, step, `Dispelled ${e.id}${coin ? '; it dropped a coin' : ''}.`);
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
         this.#everSeen.delete(e.id); // so a lone survivor in sight may still be "the only one it knows of"
@@ -674,6 +823,7 @@ export class ExplorerBrain {
     const memory = this.#memory;
     const at = Math.max(world.steps, 1);
     countEncounter(memory, 'hits', at);
+    this.#confide('hit');
     addEvent(memory, at, `Hit by ${adversaryId}: ${world.health} of ${world.maxHealth} lives left.`);
     // A tactic never fails on a lost life by itself (engage never fails by gap): ask again next tick.
     if (isTactic(memory.approach.id)) this.#encounter.pending = 'hit';
@@ -697,6 +847,25 @@ export class ExplorerBrain {
     }
   }
 
+  // A fight the duels bear out (check-skills section 12): one adversary in sight and none remembered, the sword
+  // ready, the stun outlasting the sword's cooldown, at most 2 strikes to dispel it (then it costs at most one claw),
+  // and one claw cannot end the game: lives above the claw's damage and full lives or hit protection (bold's `when`).
+  // Reads only the explorer's own state, the visible adversary's hp and the sword.
+  #loneFight(sit) {
+    const world = this.#world;
+    const fight = this.#fight();
+    const [v] = world.visibleAdversaries();
+    if (!fight?.steady || !this.#armed() || sit.threats.visible.length !== 1 || sit.threats.remembered.length || !v) return false;
+    if (Math.ceil(v.hp / fight.damage) > 2) return false;
+    return world.health > skillConfig().clawDamage && (world.health >= world.maxHealth || world.graceLeft > 0);
+  }
+
+  // The encounter's stakes in one sentence, only for a #loneFight. Otherwise ''.
+  #stakes(sit, trigger) {
+    if (!['encounter', 'tactic_failed', 'hit'].includes(trigger) || !this.#loneFight(sit)) return '';
+    return ' A lone adversary you can strike first costs at most one claw and a dispel removes it for good; running may leave it hunting you.';
+  }
+
   // Request 1 of a decision step. Sets memory.sentiment and returns { choice, probabilities, ms }.
   async #askSentiment(sit, trigger) {
     const world = this.#world;
@@ -705,23 +874,25 @@ export class ExplorerBrain {
     const inSight = sit.threats.visible.length > 0;
     // With an adversary in sight, each mood also says which tactics its minimum gap leaves open here.
     const allowed = new Map();
+    const C = this.#C();
     if (inSight) {
-      for (const g of new Set(ids.map((id) => SENTIMENTS[id].min_gap))) {
-        allowed.set(g, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds() })).map((id) => id.replace(/_/g, ' ')));
+      for (const g of new Set(ids.map((id) => effectiveSentiment(id, C).min_gap))) {
+        allowed.set(g, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#engageArmed(), stunned: this.#stunnedIds() })).map((id) => id.replace(/_/g, ' ')));
       }
     }
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
-      const s = SENTIMENTS[id];
+      const s = effectiveSentiment(id, C);
       const here = inSight ? ` Tactics it leaves here: ${allowed.get(s.min_gap).join(', ') || 'none, only luck'}.` : '';
-      return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
+      return [id, `${s.when} Effect: ${profileNote(id, C)}${here}`];
     }));
     const questions = {
       sentiment: {
         type: 'choice',
         instructions:
-          `${TRIGGER_TEXT[trigger]} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
+          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)? ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
-          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.',
+          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
+          (this.#csOn ? CONFIDENCE_SENTENCE : ''),
         criteria,
       },
     };
@@ -756,7 +927,7 @@ export class ExplorerBrain {
     const dirs = shuffle(world.availableMoves());
     const whole = (p) => p.whole ?? [p.shared, p.target].filter(Boolean).join(' ');
     // `stay` is the same under every tactic, so its whole fact goes to the shared facts and the option is short.
-    const specOption = (d) => (d === STAY ? 'Stand still.' : parts[d].whole ?? parts[d].target);
+    const specOption = (d) => (d === STAY ? (parts[d].holding ? parts[d].whole : 'Stand still.') : parts[d].whole ?? parts[d].target);
     const options = Object.fromEntries(dirs.map((d) => [d, speculative ? specOption(d) : whole(parts[d])]));
     const shared = Object.fromEntries(world.availableMoves().filter((d) => d === STAY || !parts[d].whole).map((d) => [d, parts[d].shared ?? parts[d].whole]));
     const question = speculative
@@ -772,6 +943,7 @@ export class ExplorerBrain {
       : speculative
         ? 'Onto the portal only to leave or dodge a strike.'
         : 'A move onto the portal ends the game: take it only if leaving now is the plan or an adversary would otherwise strike you.';
+    const engaging = approachId === 'engage';
     const hint = TACTIC_MOVE_HINT[approachId] ?? 'Avoid known dead ends where you can be cornered; keep the distance growing.';
     const safety = sit.threats.visible.length
       ? [
@@ -784,7 +956,15 @@ export class ExplorerBrain {
       : [];
     // The one-per-tactic questions decide the move on a decision tick, so they keep the mood's rule (shortened).
     const priorities = speculative
-      ? [...(portalSeen ? [portalLine] : []), ...safety, profile.move_priority]
+      ? [...(portalSeen ? [portalLine] : []), ...safety, ...(engaging ? [] : [profile.move_priority])]
+      : engaging ? [
+          // engage: the hint in `safety` is the whole plan. The mood's lines ("moving toward one is fine"), "stay makes no
+          // progress" and "reveal new cells" would talk the explorer off the holding cell (P7a).
+          ...(portalSeen ? [portalLine] : []),
+          ...safety,
+          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
+        ]
       : [
           ...(portalSeen ? [portalLine] : []),
           ...safety,
@@ -878,7 +1058,7 @@ export class ExplorerBrain {
     const visible = world.visibleAdversaries();
     const at = Math.max(prev, 1);
     const step = prev + 1;
-    const profile = profileOf(memory);
+    const profile = this.#profile();
     const a = memory.approach;
 
     if (visible.length && !info.active) {
@@ -889,6 +1069,7 @@ export class ExplorerBrain {
 
     if (visible.length) info.unseen = 0;
     else info.unseen += 1;
+    if (this.#csOn && visible.some((v) => v.mode === 'chase')) this.#cs = seeChase(this.#cs);
 
     let trigger = null;
     let policy = null;
@@ -918,6 +1099,11 @@ export class ExplorerBrain {
       this.#review = { step: at, targetSteps: this.#target(a.id)?.steps ?? null };
       policy = { from, to: a.id, reason: `no adversary in sight for ${info.unseen} tick${info.unseen === 1 ? '' : 's'}` };
       trigger = 'chase_over';
+      if (this.#csOn) { // evaded: it had a chasing sighting and ended with no hit and no dispel
+        const evaded = this.#cs.counts.evaded;
+        this.#cs = closeEncounter(this.#cs, world.health, world.maxHealth);
+        if (this.#cs.counts.evaded > evaded) { this.#csWhy.push('evaded'); this.#syncConfidence(); }
+      }
       info.active = false;
       this.#exclude = null;
       info.encIds = new Set();
@@ -1017,11 +1203,12 @@ export class ExplorerBrain {
     const reason = `Jev decided to leave (${Math.round(p * 100)}%): ${memory.progress.coins} coins held.`;
     addEvent(memory, at, `Decided to leave through the portal (${Math.round(p * 100)}%).`);
     if (isTactic(a.id)) {
+      const from = a.interrupted?.id ?? a.id;
       replaceInterrupted(memory, { id: 'go_to_exit', text: APPROACHES.go_to_exit.text }, reason, at);
-      return null;
+      return { from, to: 'go_to_exit', reason };
     }
     const from = a.id;
-    switchApproach(memory, approachOf('go_to_exit'), reason, at);
+    changeApproach(memory, approachOf('go_to_exit'), at); // leaving is a decision, not a failure: no plan.tried row
     this.#review = { step: at, targetSteps: this.#target('go_to_exit')?.steps ?? null };
     return { from, to: 'go_to_exit', reason };
   }
