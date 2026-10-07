@@ -17,7 +17,7 @@ One game is a `Run` (src/turn.js). The explorer sees the world only through a `K
 
 Explorer modules form a chain: `known-map.js` (pure known-floor helpers) ← `encounter.js` (encounter model) ← `perception.js` (approaches, tactic options, situation, move facts) ← `brain.js`. No file in the chain imports a later one, so keep it acyclic.
 
-`opts = { ask, decide, dir, memoryDir }` (all optional). `ask` replaces the explorer's Jev call, `decide` the adversaries', `memoryDir` is where `memory.json`/`memory.md` go, `dir` where `adversaries.json` goes. Omitting `ask` or `decide` means the real, paid Jev.
+`opts = { ask, decide, dir, memoryDir, confidence, hold }` (all optional; `confidence` (default false) is the `confidenceModel` toggle, `hold` (default true) the engage hold, off only in the duel checks). `ask` replaces the explorer's Jev call, `decide` the adversaries', `memoryDir` is where `memory.json`/`memory.md` go, `dir` where `adversaries.json` goes. Omitting `ask` or `decide` means the real, paid Jev.
 
 ## Read this first
 
@@ -77,7 +77,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 | `server.js`, `package.json` | HTTP server, static whitelist, the single `Run`, `/api/settings` | UI agent (testbed change: `/api/new` parses `{ testbed }`) |
 | `public/index.html`, `public/app.js`, `public/style.css`, `public/settings.html` | Step loop, iso renderer, pane (events / encounters / landmarks / recent from explorer memory), minimap, the `/settings` page | UI agent (testbed change: `?testbed` query in `api`/`init`, chest guards in renderer and minimap) |
 | `public/sprites.js` | Pixel-art knight, ghost, chest | sprites agent |
-| `src/settings.js` | The tunables' schema, validation, per-port persistence, and the hooks `configureWorld` / `configureAdversaries` (incl. the toggles `adversaryCharacters` and `limitedMap`, both off by default, `when: 'next'`) | shared: add a knob here, wire it in the module it tunes |
+| `src/settings.js` | The tunables' schema, validation, per-port persistence, and the hooks `configureWorld` / `configureAdversaries` (incl. the toggles `adversaryCharacters`, `limitedMap` and `confidenceModel` (Explorer group, PLAN-confidence; `server.js` reads it with `settings.appliedValue`), all off by default, `when: 'next'`) | shared: add a knob here, wire it in the module it tunes |
 | `src/dungeon.js`, `scripts/check-dungeon.mjs` | Map gen, the `Game` class (lighting, movement, damage, `publicView`, `twin`), LOS; the check holds the static fog guard | world agent (testbed change: `applyMove` treats a `null` treasure as no win) |
 | `src/characters/explorer/known-world.js` | `KnownWorld`: the explorer's fog-safe window on a `Game` | world agent. The only explorer file that may hold a `Game` |
 | `src/characters/explorer/known-map.js`, `encounter.js`, `perception.js` | Known state → plain-language facts for Jev: pure known-floor helpers, the encounter model, approaches/tactics/situation/move facts | world agent (testbed change: the chest comes from `KnownWorld.seenTreasure()`, which returns `null` for a `null` treasure) |

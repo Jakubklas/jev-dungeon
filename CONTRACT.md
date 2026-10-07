@@ -213,7 +213,7 @@ export class Run {                               // one game in progress
 export function newGame(seed?, opts = {})        // generateDungeon, then dungeon.coins = spawnCoins(dungeon), then spawnAdversaries -> Run. No Jev calls.
 export function newTestGame(config, opts = {})   // buildArena(config) -> Run. Throws TestbedError on a bad config. The config key `characters`
 //   ('standard' default | 'mixed' | one preset id | a list, URL form 'ambusher;timid', applied per ghost in id order and cycled) sets the ghosts' characters.
-//   opts = { ask, decide, dir, memoryDir } (all optional). The config keys `explorerSkills`, `ghostSkills`, `ghostHp` (testbed.js) set the explorer's SkillSet
+//   opts = { ask, decide, dir, memoryDir, skills, hold, confidence } (all optional; hold and confidence go to the ExplorerBrain). The config keys `explorerSkills`, `ghostSkills`, `ghostHp` (testbed.js) set the explorer's SkillSet
 //   (`explorerSkillSetOf(config)`, handed to `new ExplorerBrain(world, { skills })` through the Run) and each ghost's (`ghostSkillSetOf(config)`, `ghostHp ?? skillConfig().ghostHp`):
 //     ask       replaces the explorer's Jev call: ({ kind: 'sentiment'|'tick', state, questions, body }) => answers
 //     decide    replaces the adversaries' Jev call: ({ id, state, questions, body }) => answers
@@ -324,7 +324,7 @@ The brain's `confidence` option may be `true` (default weights) or such an objec
 
 ```js
 export class ExplorerBrain {
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true } = {})  // hold: the engage hold (AGENTS.md, P7a), false only in the duel checks; builds the initial memory (runs approachTarget); null ask = real Jev; skills: a SkillSet, a loadout-id list or 'explorer' | 'none'
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {})  // confidence: false | true | { weights?, model? } (PLAN-confidence, below); hold: the engage hold (AGENTS.md, P7a), false only in the duel checks; builds the initial memory (runs approachTarget); null ask = real Jev; skills: a SkillSet, a loadout-id list or 'explorer' | 'none'
   get memory()                                 // plain JSON object, saved as memory.json; Jev reads a regrouped state built from it (below)
   async takeTurn()                             // -> ExplorerTurn
   async noteCaught(adversaryId)                // event "Caught by a2: the last life is gone.", encounters.hits + 1, a hit_here landmark, save
@@ -439,7 +439,7 @@ Read `AGENTS.md` first; it is the current guide.
 ## Shapes the UI relies on
 - `memory.approach.thought`: string ≤ 60 chars, first person, set for **every** approach, exploration ones too (e.g. `nearest_frontier` "Let's check the closest dark edge.").
 - `memory.sentiment = { id, since_step }` (the old `profile_note` is gone; the profile text comes from `SENTIMENTS`). `memory.sentiment_history`: last 5 `[{ id, step }]`. Also in memory for the pane: `events`, `encounters`, `landmarks`, `recent` (see the memory shape above).
-- `turn.decision = null | { trigger: 'encounter'|'tactic_failed'|'chase_over'|'exit'|'review'|'start', sentiment: { choice, probabilities }, tactic: { choice, probabilities, options } | null, apiMs }`. `turn.confidence = { value, band, delta, reason }` only with the confidenceModel toggle on. `turn.move_decision = { choice, probabilities, confidence, options } | null`.
+- `turn.decision = null | { trigger: 'encounter'|'tactic_failed'|'chase_over'|'hit'|'exit'|'review'|'coins'|'dispelled'|'start', sentiment: { choice, probabilities }, tactic: { choice, probabilities, options } | null, apiMs }`. `turn.confidence = { value, band, delta, reason }` only with the confidenceModel toggle on. `turn.move_decision = { choice, probabilities, confidence, options } | null`.
 - The bubble key for the explorer is `${approach.id}@${approach.since_step}`. Its text is `approach.thought`, with the sentiment shown as a tag.
 
 # v4: props and wall decor
