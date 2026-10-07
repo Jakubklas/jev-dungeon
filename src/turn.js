@@ -15,16 +15,17 @@ const DIR = new URL('../', import.meta.url); // dungeon-game/ (adversaries.json 
 // One game in progress. `opts`: `ask` / `decide` replace the explorer's / adversaries' Jev call
 // (the checks pass stubs), `memoryDir` is where the explorer's memory files go, `dir` where
 // adversaries.json goes. Without them a Run talks to the real Jev and writes next to the server.
+// `confidence` (default false) switches on the explorer's confidence model (PLAN-confidence, the `confidenceModel` setting).
 export class Run {
   #dir;
   #memoryDir;
   #decide; // null = the real Jev
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = true } = {}) {
+  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;
-    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold });
+    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold, confidence });
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
   }
@@ -59,6 +60,8 @@ export class Run {
     const hit = events.find((e) => e.type === 'hit');
     if (game.lost && !wasLost) await this.explorer.noteCaught(game.caughtBy);
     else if (hit) await this.explorer.noteHit(hit.id);
+    // The explorer's own shield stopped a claw (the confidence model's +3). Its own cell, its own shield: fog-safe.
+    if (!(game.lost && !wasLost)) for (const e of events) if (e.type === 'blocked') await this.explorer.noteBlocked();
     return { ...explorer, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns };
   }
 

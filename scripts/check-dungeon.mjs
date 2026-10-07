@@ -41,6 +41,8 @@ const sees = (dungeon, a, b) => euclid(a, b) <= SIGHT_RANGE && hasLineOfSight(du
 //    anything beyond the allowlist, so a hidden-state read cannot slip in unnoticed.
 const ALLOWED_IMPORTS = {
   './perception.js': null, './memory.js': null, './encounter.js': null, './known-map.js': null,
+  // confidence.js (PLAN-confidence C2): the explorer's confidence score. Pure, imports nothing (check-confidence asserts it), so brain.js and memory.js may import it.
+  './confidence.js': null,
   '../../jev.js': null, 'node:fs/promises': null,
   // SIGHT_RANGE is a constant, not hidden state: brain.js uses it to expire a remembered sighting once
   // the explorer stands within sight range of the frozen cell with a known line of sight to it.
