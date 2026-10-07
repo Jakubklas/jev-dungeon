@@ -148,6 +148,8 @@ Adversaries:
 
 ## P3: capability-ready options (design now, build when the first capability lands)
 
+**Superseded by PLAN-skills.md** (attack and block built as skills; `src/capabilities/` is deleted).
+
 ### Goals
 - `pick_up`, `sprint`, `attack` and others plug in without touching brain.js question code.
 - The same capabilities work for explorer and adversaries.

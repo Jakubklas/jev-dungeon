@@ -238,6 +238,30 @@ for (const { name, config } of scenarios) {
     fail(`pack alert scenario: threw ${err.stack}`);
   }
 }
+// 6b. Scripted adjacency: a ghost next to the explorer, the stub picks sword_strike_<dir>. The ghost takes the
+//     hit (struck event through Run.playTurn, hp down, stunned) and no life is lost by a touch alone.
+{
+  const strikeAsk = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+    if (q.type === 'noul') return [k, { noul: 0.9 }];
+    const keys = Object.keys(q.criteria);
+    const c = k === 'skill' ? (keys.find((x) => x.startsWith('sword_strike_')) ?? 'none') : keys[0];
+    return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
+  }));
+  try {
+    const run = newTestGame({ map: ['#######', '#.....#', '#.@A..#', '#.....#', '#######'], seed: 1, ghostHp: 3 }, { ask: strikeAsk, decide, memoryDir: url, dir: url });
+    const ghost = run.game.adversaries[0];
+    check(ghost.hp === 3, `adjacency: ghostHp 3 reached the ghost (${ghost.hp})`);
+    const turn = await run.playTurn();
+    check(turn.events.some((e) => e.type === 'struck' && e.id === 'a1'), `adjacency: no struck event in playTurn (${turn.events.map((e) => e.type)})`);
+    check(ghost.hp === 2 && ghost.stun > 0, `adjacency: ghost hp ${ghost.hp} stun ${ghost.stun}`);
+    check(run.game.health === run.game.maxHealth, 'adjacency: a strike on a ghost cost the explorer a life');
+    const none = newTestGame({ map: ['#######', '#.....#', '#.@A..#', '#.....#', '#######'], seed: 1, ghostSkills: 'none', explorerSkills: 'none' }, { ask: strikeAsk, decide, memoryDir: url, dir: url });
+    check(none.explorer.memory.skills.length === 0 && none.game.adversaries[0].skills.skills.length === 0, 'adjacency: skills none reach the explorer and the ghost');
+    console.log('adjacency: sword strike hits the ghost, struck event reaches playTurn');
+  } catch (err) {
+    fail(`adjacency scenario: threw ${err.stack}`);
+  }
+}
 check(explorerCalls > 0, 'stub explorer was asked');
 console.log(`stub calls: explorer ${explorerCalls}, adversaries ${adversaryCalls} (no network)`);
 rmSync(dir, { recursive: true, force: true });

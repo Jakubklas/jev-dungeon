@@ -288,6 +288,10 @@ export class Game {
     this.adversaries = [];
     this.adversaryTicks = 0; // world ticks the adversaries have run (adversary.js)
     this.patrolRand = null; // per-game patrol RNG, created on the first patrol goal (adversary.js)
+    this.facing = 'right'; // the explorer's 4-way facing: last step's direction or last strike's aim
+    this.block = null; // the explorer's shield stance: null | { effectiveness, until_step }
+    this.strikes = []; // strikes this tick: { by, cells, result } (src/skills/resolve.js)
+    this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
     lightAround(this, this.pos);
   }
 
@@ -308,6 +312,19 @@ export class Game {
       this.caughtBy = sourceId;
     }
     return { health: this.health, lost: this.lost };
+  }
+
+  // Next number of the per-game skill RNG (block rolls). Its own stream, created on the first call, so
+  // it never touches generateDungeon / spawnAdversaries rng order.
+  skillRandom() {
+    this.skillRand ??= rng(((this.dungeon.seed ?? 1) ^ 0x2545f491) >>> 0);
+    return this.skillRand();
+  }
+
+  // Start-of-tick cleanup for skill state: strikes are per tick, a block lapses once steps passes until_step.
+  clearTickState() {
+    this.strikes = [];
+    if (this.block && this.steps > this.block.until_step) this.block = null;
   }
 
   legalMoves() {
@@ -337,6 +354,7 @@ export class Game {
     const revisit = (this.visits[k] ?? 0) > 0;
     this.visits[k] = (this.visits[k] ?? 0) + 1;
     this.pos = next;
+    this.facing = dir;
     this.steps++;
     this.trail.push([...next]);
     const revealed = lightAround(this, next);
@@ -378,6 +396,8 @@ export class Game {
       won: this.won,
       lost: this.lost,
       health: this.health,
+      facing: this.facing,
+      strikes: this.strikes,
       max_health: this.maxHealth,
       light: this.light.map((row) => row.slice()),
       visits: this.visits,

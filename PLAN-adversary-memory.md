@@ -14,6 +14,8 @@ Give every ghost (1) a **fixed character** made of five small traits, set at spa
 | **A4** | Flip the view to `limited` (home zone + seen cells, fading, capped) | ghosts can be outwitted; tune with metrics | Needs A1 (the view), A2 (radius/ttl per character) and A3 (memory to compensate). |
 | **A5** | Capability hookup (`who: ['adversary']`, `prefers`/`avoids`, `self.inventory`) | when the first capability lands | Design now so A1-A3 do not need a restructure. |
 
+**A5 is superseded by PLAN-skills.md** (ghosts get a claw strike through the shared skills layer; `src/capabilities/` is deleted).
+
 Recommended defaults: toggles `adversaryCharacters` and `limitedMap` both **off** until A3 is measured; then on. Everything is deterministic from the seed.
 
 Status (2026-10-07, after commit db86226): the explorer memory work is finished and committed, so its files are free to change. Its `memory.js` has `recent`, `landmarks`, `encounters`, `events` (with `backAndForth` and `addLandmark` as exported helpers), and `perception.js` has `rememberedView`/`avoidZone` (zone radius 10 for sightings under 10 steps old, 6 up to 15, plus a sector for chasing sightings). Reuse their pure helpers by extracting a shared kit (A3) rather than copying or importing across character folders. **Already built on the adversary side** (the "P2" rebuild, not part of A1-A5): `tally` + `events` instead of findings, search-only `tried`, `surroundings`, `team` roles, regrouped state `{ game, tick, self, surroundings, explorer, last_seen, team, recent }`, rules text following live tunables. **Still to build:** everything character-, view- and sighting-memory-related (A1-A5).

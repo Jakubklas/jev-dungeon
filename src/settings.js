@@ -6,6 +6,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { configureWorld } from './dungeon.js';
 import { configureAdversaries } from './characters/adversary/adversary.js';
+import { configureSkills } from './skills/config.js';
 
 export const SCHEMA = [
   { key: 'speed', group: 'Adversaries', label: 'Speed', hint: 'Fraction of the explorer\'s speed (1 = as fast).', type: 'range', min: 0.1, max: 1, step: 0.05, def: 0.6, when: 'live' },
@@ -15,13 +16,20 @@ export const SCHEMA = [
   { key: 'keepHuntingMin', group: 'Adversaries', label: 'Give-up threshold', hint: 'Jev\'s keep-hunting answer below this ends the hunt.', type: 'range', min: 0, max: 1, step: 0.05, def: 0.5, when: 'live' },
   { key: 'adversaryCharacters', group: 'Adversaries', label: 'Ghost characters', hint: 'Each ghost gets a fixed character (mixed presets) and its own patrol stream. Off = every ghost is standard.', type: 'toggle', def: false, when: 'next' },
   { key: 'limitedMap', group: 'Adversaries', label: 'Limited ghost map', hint: 'Ghosts know only their home zone and what they have seen (fading), not the real map. Needs Ghost characters; ignored without it.', type: 'toggle', def: false, when: 'next' },
-  { key: 'hitDamage', group: 'Damage', label: 'Hit damage', hint: 'Lives one touch takes.', type: 'range', min: 1, max: 5, step: 1, def: 1, when: 'live' },
   { key: 'graceTicks', group: 'Damage', label: 'Grace after a hit', hint: 'Ticks of protection after a hit.', type: 'range', min: 0, max: 12, step: 1, def: 4, when: 'live' },
   { key: 'packAlert', group: 'Pack', label: 'Pack alert', hint: 'A spotter calls nearby patrolling ghosts into the hunt.', type: 'toggle', def: true, when: 'live' },
   { key: 'alertSteps', group: 'Pack', label: 'Alert reach', hint: 'Path steps within which a call is heard.', type: 'range', min: 1, max: 80, step: 1, def: 24, when: 'live' },
   { key: 'teamSight', group: 'Pack', label: 'Team sight', hint: 'Hunters track the explorer through a packmate\'s eyes.', type: 'toggle', def: true, when: 'live' },
   { key: 'floorPerAdversary', group: 'Spawn', label: 'Floor cells per ghost', hint: 'Fewer cells = more ghosts on a map.', type: 'range', min: 40, max: 1000, step: 10, def: 150, when: 'next' },
   { key: 'maxAdversaries', group: 'Spawn', label: 'Max ghosts', hint: '0 = none.', type: 'range', min: 0, max: 24, step: 1, def: 12, when: 'next' },
+  { key: 'swordDamage', group: 'Skills', label: 'Sword damage', hint: 'Hit points a sword strike takes from a ghost.', type: 'range', min: 1, max: 3, step: 1, def: 1, when: 'next' },
+  { key: 'swordCooldown', group: 'Skills', label: 'Sword cooldown', hint: 'Steps before the sword strike is ready again.', type: 'range', min: 0, max: 6, step: 1, def: 1, when: 'next' },
+  { key: 'shieldChance', group: 'Skills', label: 'Shield chance', hint: 'Chance a raised shield stops an attack on the explorer.', type: 'range', min: 0, max: 1, step: 0.05, def: 0.6, when: 'next' },
+  { key: 'shieldCooldown', group: 'Skills', label: 'Shield cooldown', hint: 'Steps before the shield can be raised again.', type: 'range', min: 0, max: 6, step: 1, def: 2, when: 'next' },
+  { key: 'clawDamage', group: 'Skills', label: 'Claw damage', hint: 'Lives a ghost claw strike takes.', type: 'range', min: 1, max: 3, step: 1, def: 1, when: 'next' },
+  { key: 'clawCooldown', group: 'Skills', label: 'Claw cooldown', hint: 'Steps before a ghost can strike again.', type: 'range', min: 0, max: 6, step: 1, def: 2, when: 'next' },
+  { key: 'ghostHp', group: 'Skills', label: 'Ghost hit points', hint: 'Hits a ghost takes before it is dispelled.', type: 'range', min: 1, max: 5, step: 1, def: 2, when: 'next' },
+  { key: 'stunTicks', group: 'Skills', label: 'Stun ticks', hint: 'Ticks a struck ghost loses (no step, no Jev call).', type: 'range', min: 0, max: 6, step: 1, def: 2, when: 'next' },
   { key: 'lives', group: 'Explorer', label: 'Lives', hint: 'Lives the explorer starts with.', type: 'range', min: 1, max: 9, step: 1, def: 2, when: 'next' },
   { key: 'lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },
   { key: 'minSize', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', type: 'range', min: 25, max: 90, step: 1, def: 25, when: 'next' },
@@ -64,6 +72,7 @@ let applied = defaults(); // what the game modules run with right now
 function push() {
   configureWorld({ lightRadius: applied.lightRadius, sightRange: applied.sightRange, minSize: applied.minSize, maxSize: applied.maxSize, lives: applied.lives, roomArea: applied.roomArea });
   configureAdversaries(applied);
+  configureSkills(applied);
 }
 
 // Loads (or starts) this server's settings and applies everything. Bad or stale entries fall back to defaults.

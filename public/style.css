@@ -251,3 +251,21 @@ ul:empty { display: none; }
 .landmarks { list-style: none; padding-left: 0; }
 .landmarks .lm-glyph { display: inline-block; width: 14px; text-align: center; margin-right: 2px; }
 .landmarks .lm-note { color: var(--muted); }
+
+/* skills block (S5) and strike log lines */
+.events li.strike { color: var(--accent); }
+.events li.blocked { color: #8fb4ff; }
+.events li.dispelled { color: var(--brain); }
+.events li.bump { color: var(--muted); }
+.skills { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.skill { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border: 1px solid var(--line); background: var(--panel-2); font-size: 12px; }
+.skill-pip { width: 8px; height: 8px; flex: none; background: var(--safe); }
+.skill.cooling .skill-pip { background: var(--line-hi); }
+.skill.cooling .skill-name { color: var(--muted); }
+.skill-name { font-weight: 700; }
+.skill-kind { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+.skill-state { margin-left: auto; font-size: 10px; color: var(--safe); text-transform: uppercase; letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.skill.cooling .skill-state { color: var(--muted); }
+.skill.used { border-color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.skill-used { font-size: 10px; padding: 0 5px; color: var(--accent-ink); background: var(--accent); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.events li.struck { color: var(--accent); }

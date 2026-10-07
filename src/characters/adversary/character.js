@@ -4,7 +4,7 @@
 import { rng } from '../../dungeon.js';
 
 export const TRAITS = ['aggression', 'persistence', 'horizon', 'roaming', 'pack'];
-export const RESERVED_TRAITS = ['caution']; // dormant until an explorer attack capability exists
+export const RESERVED_TRAITS = ['caution']; // not in any preset; wakes keepDistance (brain.js) when set to 3 through a traits object
 
 // Order: aggression, persistence, horizon, roaming, pack. Style is the one sentence sent to Jev.
 export const PRESETS = {
@@ -33,6 +33,12 @@ const AGGRESSION_LINE = [
   'Close in only when it is near; keep other moves in front of you.',
   'Close the distance while keeping its escape routes cut off.',
   'Go straight at it: close the path distance first, cut-off second.',
+];
+// The skill question's priority line (PLAN-skills.md S4): level 2 adds nothing.
+const STRIKE_LINE = [
+  'Strike only when cornered.',
+  '',
+  'Strike whenever the explorer is adjacent and the claw is ready.',
 ];
 const PACK_LINE = [
   'This is your prey; do not wait for others.',
@@ -66,7 +72,7 @@ const TABLE = {
   recentCells: ['horizon', [6, 8, 8]],
   seenTtl: ['horizon', [40, 120, 300]],
   seenCap: ['horizon', [120, 300, 600]],
-  keepDistance: ['caution', [0, 0, 2]], // reserved
+  keepDistance: ['caution', [0, 0, 2]], // cells kept from an explorer whose sword is ready (0 = off)
 };
 
 export function normalizeTraits(traits) {
@@ -98,6 +104,7 @@ export function profileOf(traitsIn) {
   p.homeRadius = [14, 24, null][traits.roaming - 1];
   p.preferredSearch = ['sweep_last_seen', null, 'cut_off'][traits.horizon - 1];
   p.priority = priorityLine(traits);
+  p.skillPriority = at(STRIKE_LINE, traits.aggression);
   p.words = Object.fromEntries(TRAITS.map((t) => [t, at(WORDS[t], traits[t])]));
   return p;
 }

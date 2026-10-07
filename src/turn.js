@@ -4,7 +4,7 @@
 import { Game, generateDungeon } from './dungeon.js';
 import { brainView, graceLeft, seesExplorer, spawnAdversaries, stepAdversaries } from './characters/adversary/adversary.js';
 import { saveMemories } from './characters/adversary/memory.js';
-import { buildArena } from './testbed.js';
+import { buildArena, explorerSkillSetOf } from './testbed.js';
 import { saveMemory } from './characters/explorer/memory.js';
 import { ExplorerBrain } from './characters/explorer/brain.js';
 import { KnownWorld } from './characters/explorer/known-world.js';
@@ -19,11 +19,11 @@ export class Run {
   #memoryDir;
   #decide; // null = the real Jev
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null } = {}) {
+  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer' } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;
-    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir });
+    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills });
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
   }
@@ -43,10 +43,15 @@ export class Run {
   async playTurn() {
     const { game } = this;
     const wasLost = game.lost;
+    game.clearTickState(); // strikes are per tick; a lapsed block stance goes
     const explorer = await this.explorer.takeTurn();
-    // stepAdversaries first checks whether the explorer stepped onto an adversary, and does
+    // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
+    // read from game.strikes (struck / dispelled need the brain's list).
+    const skillEvents = explorer.skill_events ?? game.strikes.filter((s) => s.by === 'explorer').map((s) => ({ id: s.by, type: 'strike', cells: s.cells, result: s.result }));
+    // stepAdversaries first bumps an adversary the explorer stepped onto (knockback only), and does
     // nothing once the game is won or lost.
-    const { events, turns } = await stepAdversaries(game, { decide: this.#decide });
+    const { events: adversaryEvents, turns } = await stepAdversaries(game, { decide: this.#decide });
+    const events = [...skillEvents, ...adversaryEvents];
     await saveMemories(game.adversaries.map((a) => a.memory), game.steps, this.#dir);
     const hit = events.find((e) => e.type === 'hit');
     if (game.lost && !wasLost) await this.explorer.noteCaught(game.caughtBy);
@@ -59,8 +64,10 @@ export class Run {
     return {
       ...game.publicView(),
       adversaries: game.adversaries.map((a) => ({
-        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, // character: Reveal-only display, the explorer never reads it
+        id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, // character, facing, hp: Reveal-only display, the explorer never reads them
+        facing: a.facing, hp: a.hp, max_hp: a.maxHp,
       })),
+      block: game.block, // the explorer's shield stance: null | { effectiveness, until_step } (its own state)
       grace_ticks: graceLeft(game),
       invulnerable: graceLeft(game) > 0,
       over: game.won || game.lost,
@@ -77,6 +84,6 @@ export function newGame(seed, opts = {}) {
 // A small configured arena (src/testbed.js) instead of a generated dungeon. Throws TestbedError
 // on a bad config. Costs no Jev calls.
 export function newTestGame(config, opts = {}) {
-  const { dungeon, adversaries } = buildArena(config);
-  return new Run(dungeon, adversaries, opts);
+  const { dungeon, adversaries, config: cfg } = buildArena(config);
+  return new Run(dungeon, adversaries, { skills: explorerSkillSetOf(cfg), ...opts });
 }

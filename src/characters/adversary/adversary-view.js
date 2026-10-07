@@ -80,6 +80,12 @@ export class AdversaryView {
     return Object.keys(DIRS).find((d) => DIRS[d][0] === dx && DIRS[d][1] === dy) ?? null;
   }
 
+  // Is the explorer's sword a threat right now? It carries the sword openly, so a ghost that has the explorer in
+  // sight knows it; the cooldown itself is not visible (and the default cooldown is one turn), so in sight = armed.
+  explorerArmed() {
+    return this.#a.hunt.inSight;
+  }
+
   // Can a ghost standing on `cell` see the explorer? Only asked while it is in sight. In limited mode
   // an unknown cell on the line blocks, like the explorer's knownLineOfSight.
   seesExplorerFrom(cell) {

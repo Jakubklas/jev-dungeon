@@ -3,12 +3,12 @@
 Jev steers an explorer through a pre-generated 2D dungeon one cell at a time (up/down/left/right, or stay).
 The explorer wins by stepping on the treasure chest. Every visited cell permanently lights everything
 within `LIGHT_RADIUS` (7, Euclidean, no line of sight needed). Lit cells are **known territory**.
-Adversaries roam the dungeon. An adversary that sees the explorer gives chase, and each touch costs the
-explorer a life (2 at the start); the game is lost when the last life goes. Reload regenerates everything.
+Adversaries roam the dungeon. An adversary that sees the explorer gives chase, and a ghost's claw strike costs the
+explorer a life (2 at the start; a touch only bumps the ghost back); the game is lost when the last life goes. The explorer can strike back with a sword and raise a shield (skills, below). Reload regenerates everything.
 
 Zero dependencies (Node ≥ 20.12, ES modules). `JEV_API_KEY` is in `../.env` and never reaches the browser. Port 3003 standalone; `hub.js` (port 3000) routes `/arena/<name>/` and `/gym/<name>/` to per-instance `server.js` processes (see AGENTS.md).
 
-**The code is the source of truth.** This file describes it as of the memory redesign on top of the OOP refactor (`Game`, `KnownWorld`, `ExplorerBrain`, `Adversary`, `Run`, injected Jev calls, regrouped explorer state, explorer and adversary memory, settings, capability scaffold). Numbers quoted here are the **defaults**: the tunables live in `src/settings.js` and are edited on the `/settings` page. [AGENTS.md](AGENTS.md) is the working guide (rules, checks, caveats); if the two disagree with the code, fix them.
+**The code is the source of truth.** This file describes it as of the memory redesign on top of the OOP refactor (`Game`, `KnownWorld`, `ExplorerBrain`, `Adversary`, `Run`, injected Jev calls, regrouped explorer state, explorer and adversary memory, settings), plus the skills work (attack and block for both sides, see PLAN-skills.md). Numbers quoted here are the **defaults**: the tunables live in `src/settings.js` and are edited on the `/settings` page. [AGENTS.md](AGENTS.md) is the working guide (rules, checks, caveats); if the two disagree with the code, fix them.
 
 ## Layout and ownership
 
@@ -20,7 +20,7 @@ dungeon-game/
   src/turn.js                        Run: one game in progress (tick, view); newGame / newTestGame    -> adversary agent
   src/testbed.js                     small configurable test arenas (buildArena, normalizeConfig)    -> shared
   src/settings.js                    tunables: schema, validation, per-port persistence, configure hooks -> shared
-  src/capabilities/index.js          capability scaffold: empty registry, not wired into any brain   -> shared
+  src/skills/{skill,attack,block,skill-set,loadouts,question,config,resolve}.js   skills: classes, loadouts, SkillSet, the `skill` question, tunables, strike resolution -> shared (resolve.js is world rules)
   src/props/{catalog,place}.js       props and wall decor placement                                   -> props-world agent
   src/characters/adversary/adversary.js   Adversary class, spawning, senses, state machine, movement -> adversary agent
   src/characters/adversary/{brain,memory,perception}.js   adversary Jev brains                       -> adversary agent
@@ -33,10 +33,10 @@ dungeon-game/
   src/characters/explorer/perception.js   approaches, tactics, situation, move facts, as plain text  -> world agent
   src/characters/explorer/memory.js       explorer memory (memory.json / memory.md)                  -> brain agent
   src/characters/explorer/brain.js        ExplorerBrain: Jev decisions for the explorer              -> brain agent
-  scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, capabilities, characters, memory-kit; no Jev)
+  scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, skills, characters, memory-kit; no Jev)
   scripts/run-testbed.mjs            testbed runner (no Jev unless --live)
-  scripts/measure-memory.mjs, scripts/arenas/{door,open,corridor,explore,ambush,home,pack,charline}.json   request-size and behaviour metrics over fixture arenas (stubbed unless --live; `--who adversary` is stubbed only)
-  PLAN-memory.md, PLAN-adversary-memory.md, PLAN-multiplayer.md   plans, not specs of the code (adversary-memory plan: A1-A4 built behind toggles that default to off; A5, mood, wait and caution not built)
+  scripts/measure-memory.mjs, scripts/arenas/{door,open,corridor,explore,ambush,home,pack,charline,skills}.json   request-size and behaviour metrics over fixture arenas (stubbed unless --live; `--who adversary` is stubbed only)
+  PLAN-memory.md, PLAN-adversary-memory.md, PLAN-multiplayer.md   plans, not specs of the code (adversary-memory plan: A1-A4 built behind toggles that default to off; A5 superseded by PLAN-skills.md; mood and wait not built, caution reserved)
 ```
 Only edit files your role owns; the full ownership table is in AGENTS.md ("Repo map & ownership").
 
@@ -50,7 +50,7 @@ Only edit files your role owns; the full ownership table is in AGENTS.md ("Repo 
 - **Sight (symmetric).** An adversary and the explorer see each other when `hasLineOfSight(dungeon, a, b)` is true **and** their Euclidean distance is `<= SIGHT_RANGE` (7). Line of sight is physical: walls block it, and it uses the real tiles, not light.
 - **Chase rule.** An adversary that sees the explorer within `CHASE_RANGE` (7) switches to `chase`. While chasing, it moves toward the explorer (adversaries know the map). When it loses sight, it goes to `search`: it hunts from `lastSeen`, and after `MAX_SEARCH_TICKS` (18) without sight, or if Jev's `keep_hunting` falls below `KEEP_HUNTING_MIN` (0.5), it goes back to `patrol`. `patrol` wanders between random room cells.
 - **Speed.** Adversaries move at 0.6 of the explorer's speed (`ADVERSARY_SPEED`). Each tick an adversary gains 0.6 to `budget` and moves one step per whole point (3 steps every 5 ticks). Patrolling adversaries use the same speed.
-- **Damage, not instant loss.** An adversary on the explorer's cell (it stepped in, or the explorer stepped onto it) costs one life (`HIT_DAMAGE = 1`, event `hit`). The game is lost only at 0 lives (`hit` then `caught`). At most one hit per tick; a hit starts `GRACE_TICKS` (4) of protection and the adversary is knocked back off the explorer's cell. The explorer moves first in a tick. A win on the explorer's step ends the tick before the adversaries move.
+- **Bumps, strikes, no instant loss.** A touch (an adversary on the explorer's cell, whoever stepped in) is a **bump**: the adversary is knocked back off the cell (event `bump`), no life is lost and no grace starts. Only a **strike** takes a life: a hunting ghost's claw strike costs `clawDamage` (1), event `hit`. The game is lost only at 0 lives (`hit` then `caught`). At most one hit per tick; a hit starts `GRACE_TICKS` (4) of protection (a strike during grace flashes with result `protected`). The explorer moves first in a tick: its skill resolves before its step. A win on the explorer's step ends the tick before the adversaries move.
 - **Injected Jev.** Every class that calls Jev takes the call as an option (`ask` for the explorer, `decide` for the adversaries). Left out, it is the real, paid Jev. There are no global setters.
 
 ## `src/dungeon.js` (world agent)
@@ -81,15 +81,21 @@ export class Game {
   //   litOutside /* Set of lit keys beyond the map edge: known rock */, floorCount,
   //   won, lost, caughtBy, health, maxHealth /* = EXPLORER_LIVES */, graceTicks /* hit protection left */,
   //   trail, adversaries /* Adversary[] */,
-  //   adversaryTicks /* world ticks the adversaries have run */, patrolRand /* patrol RNG, created lazily */
+  //   adversaryTicks /* world ticks the adversaries have run */, patrolRand /* patrol RNG, created lazily */,
+  //   facing /* 'up'|'down'|'left'|'right', starts 'right': last step's direction or last strike's aim */,
+  //   block /* null | { effectiveness, until_step }: the shield stance */,
+  //   strikes /* [{ by, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
+  //   skillRand /* block-roll RNG, null until the first roll */
   applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won }. No-op when won or lost. STAY keeps the cell, counts a step.
                          //    A null treasure never wins.
   damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
+  skillRandom()          // next number of the per-game block-roll stream (seed ^ 0x2545f491, created on first call; never touches generation rng order)
+  clearTickState()       // strikes = []; drops `block` once steps > until_step. Run.playTurn calls it first.
   legalMoves()           // dirs whose destination is floor ([] once won or lost)
   availableMoves()       // legalMoves plus STAY ([] once won or lost)
   isKnown([x,y]), knownTile([x,y]) /* '#' | '.' | null */, knownFloorCount(), exploredPct()
   publicView()           // -> { seed, width, height, tiles, start, treasure, props, decor, pos, steps, won, lost, health, max_health,
-                         //      light /* copy */, visits, trail, explored_pct }
+                         //      light /* copy */, visits, trail, explored_pct, facing, strikes /* live array */ }
   twin(overrides = {})   // shallow copy that keeps the prototype (for fog twin tests). `litOutside` must stay a Set.
 }
 ```
@@ -100,22 +106,29 @@ Performance: maps are up to 90×90. Per-tick work should stay cheap (no full-gri
 ## `src/characters/adversary/adversary.js` (adversary agent)
 
 ```js
-export let ADVERSARY_SPEED = 0.6, CHASE_RANGE = 7, MAX_SEARCH_TICKS = 18, ALERT_STEPS = 24, HIT_DAMAGE = 1, GRACE_TICKS = 4;   // defaults; live bindings
-export function configureAdversaries({ speed, chaseRange, maxSearchTicks, hitDamage, graceTicks, alertSteps, floorPerAdversary, maxAdversaries, packAlert, teamSight, keepHuntingMin, adversaryCharacters, limitedMap })
+export let ADVERSARY_SPEED = 0.6, CHASE_RANGE = 7, MAX_SEARCH_TICKS = 18, ALERT_STEPS = 24, GRACE_TICKS = 4;   // defaults; live bindings
+export function configureAdversaries({ speed, chaseRange, maxSearchTicks, graceTicks, alertSteps, floorPerAdversary, maxAdversaries, packAlert, teamSight, keepHuntingMin, adversaryCharacters, limitedMap })
 //   called by src/settings.js; any key optional. Private tunables behind it: FLOOR_PER_ADVERSARY 150, MAX_ADVERSARIES 12, PACK_ALERT true, TEAM_SIGHT true;
 //   toggles (both default false, apply from the next game): adversaryCharacters (mixed characters at spawn, per-ghost patrol RNG, smart memory and the regrouped state);
 //   limitedMap (ghosts know a limited map; acts only together with adversaryCharacters, see limitedActive()). Live bindings CHARACTERS_ON, LIMITED_ON.
 //   keepHuntingMin (0.5) lives in adversary/brain.js (KEEP_HUNTING_MIN). MIN_SPAWN_STEPS (20) is fixed.
 export class Adversary {
-  // Public fields, in this order. This is also its whole JSON shape (adversaries are never spread or cloned).
+  // Public fields, in this order. This is also its whole JSON shape (skills, facing, hp, stun are private, so still six keys) (adversaries are never spread or cloned).
   id /* 'a1' */, pos /* [x,y] */, mode /* 'patrol'|'chase'|'search' */, budget /* 0 */, lastSeen /* [x,y]|null */, goal /* [x,y]|null */
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard' })   // character: a preset id from character.js; unknown id throws
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', hp = skillConfig().ghostHp, skills = 'ghost' })
+  //   character: a preset id from character.js; unknown id throws. skills: a SkillSet, a loadout-id list, or 'ghost' | 'none' (buildSkillSet).
   // Private state behind prototype accessors (not own properties, so JSON/Object.keys show only the six fields):
   get character                  // preset id, fixed at spawn ('standard' by default)
   get profile                    // profileOf(traits of the character): every per-ghost number, the priority line and the words for Jev
   get home                       // spawn cell: centre of the patrol territory and of the limited map's home zone
   get hunt                       // brain state (adversary/brain.js newHunt)
   get memory                     // the adversary's plain-JSON memory (adversaries.json)
+  get skills                     // the ghost's SkillSet (claw strike by default, no block)
+  get facing / set facing        // 4-way: last step's direction or last strike's aim ('down' at spawn); a bad value throws
+  get hp, get maxHp, get stun    // hit points, their maximum, stun ticks left
+  tickStun()                     // -> bool: was stunned this tick (counts one tick down)
+  takeHit(damage, fromPos, game = null)   // -> { hp, dispelled }. Loses hp; unless it hit 0, knocked 1 cell directly away from fromPos (floor, not fromPos) and stunned skillConfig().stunTicks, budget 0, route cleared. At 0 hp the caller removes it.
+  syncSkills()                   // copies SkillSet summaries into memory.skills
   get route / set route          // cached patrol route, or null
   get lastRequestBody / set ...  // exact body of its last Jev request, or null
   lastRequest()                  // that body parsed, or null
@@ -133,13 +146,15 @@ export function visibleAdversaries(game)         // -> [{ id, pos, mode, distanc
 export function graceLeft(game)                  // -> game.graceTicks
 export async function stepAdversaries(game, { decide = null } = {})   // mutates game.adversaries and the game's health/lost/caughtBy
 //   -> { events, turns }. `decide({ id, state, questions, body })` replaces the Jev call of a brain-on adversary (null = the real Jev).
-//   events = [{ id, type: 'spotted'|'lost_sight'|'hit'|'caught'|'brain_on'|'brain_off'|'alerted', at: [x,y] }]  // 'alerted' also has `by`
-//            hit adds `health` (after the hit); brain_off adds `reason`. `caught` is emitted only right after the life-ending `hit`.
+//   events = [{ id, type: 'spotted'|'lost_sight'|'hit'|'caught'|'bump'|'blocked'|'strike'|'brain_on'|'brain_off'|'alerted', at: [x,y] }]  // 'alerted' also has `by`
+//            hit adds `health` (after the hit; only a claw strike makes one); brain_off adds `reason`. `caught` is emitted only right after the life-ending `hit`.
+//            bump: a touch knocked the ghost back, no life lost. blocked: the explorer's shield stopped a strike. strike: { id, type, cells, result } (no `at`), one per strike.
 //            (`gave_up` is never emitted.)
-//   turns  = [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, error? }]
+//   turns  = [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision?, stunned?, error? }]
+//            skill_decision = { choice, probabilities, used: key|null } when the `skill` question was asked; stunned: true when it lost its tick to a stun.
 export { brainView } from './brain.js'
 ```
-`stepAdversaries` order: return at once if the game is won or lost; read grace, then decrement it; touch check for every adversary in id order before anything moves (catches the explorer stepping into one); bump `game.adversaryTicks`; sense; add `ADVERSARY_SPEED` to every budget; brain-on adversaries with `budget >= 1` call `decide` in parallel from the same snapshot; apply steps in id order with a touch check after each (knockback to the previous cell). Request bodies are built synchronously in id order, so never add an `await` before `buildRequest` in `adversary/brain.js`. `adversary/brain.js` also exports `newHunt(id)` and `decide(game, a, tick, cfg, ask)`.
+`stepAdversaries` order: return at once if the game is won or lost; read grace, then decrement it; stunned ghosts lose a stun tick (`tickStun`); bump check for every adversary in id order before anything moves (knocks back a ghost the explorer stepped onto; no life lost); bump `game.adversaryTicks`; update views; sense; add `ADVERSARY_SPEED` to every budget (a stunned ghost gets none); brain-on, unstunned adversaries with `budget >= 1` call `decide` in parallel from the same snapshot (a stunned ghost makes no call); then in id order each acting ghost does **skill, step, bump check**: a hunting ghost's picked claw strike runs first through `resolveAttack` (block roll, then grace and the one-hit-per-tick latch, then damage; a lethal strike returns at once), then the step (knockback to the previous cell on a bump), then `skills.turnPassed()`. Brain-off ghosts patrol and never strike. Request bodies are built synchronously in id order, so never add an `await` before `buildRequest` in `adversary/brain.js`. `adversary/brain.js` also exports `newHunt(id)` and `decide(game, a, tick, cfg, ask)`.
 
 ## `src/characters/adversary/adversary-view.js` (adversary agent)
 
@@ -160,7 +175,7 @@ export class AdversaryView {                      // one per (game, ghost), priv
   kindOf(cell)                                    // room / doorway / junction / corridor / dead end, from known cells only
 }
 ```
-It is the only adversary file (with adversary.js, which owns physics, touch checks and spawning) that may hold a `Game` or touch `dungeon.tiles`; `perception.js`, `brain.js` and `memory.js` take a `view`, never a `game`. Static guard: `scripts/check-dungeon.mjs` section 0b. Never exposed: the treasure, the explorer's light/visits/trail/health, real tiles outside K. In limited mode K is the home zone (spawn room plus cells within `homeRadius` path steps of the spawn cell, computed once), cells seen (fading after `seenTtl`, capped at `seenCap`), cells heard from a call, and the four cells around the ghost; a wall is known only when 8-adjacent to a known floor cell.
+It is the only adversary file (with adversary.js, which owns physics, bump checks, claw strikes and spawning) that may hold a `Game` or touch `dungeon.tiles`; `perception.js`, `brain.js` and `memory.js` take a `view`, never a `game`. Static guard: `scripts/check-dungeon.mjs` section 0b. Never exposed: the treasure, the explorer's light/visits/trail/health, real tiles outside K. In limited mode K is the home zone (spawn room plus cells within `homeRadius` path steps of the spawn cell, computed once), cells seen (fading after `seenTtl`, capped at `seenCap`), cells heard from a call, and the four cells around the ghost; a wall is known only when 8-adjacent to a known floor cell.
 
 ## `src/characters/adversary/character.js` (adversary agent)
 
@@ -186,7 +201,8 @@ export class Run {                               // one game in progress
 export function newGame(seed?, opts = {})        // generateDungeon + spawnAdversaries -> Run. No Jev calls.
 export function newTestGame(config, opts = {})   // buildArena(config) -> Run. Throws TestbedError on a bad config. The config key `characters`
 //   ('standard' default | 'mixed' | one preset id | a list, URL form 'ambusher;timid', applied per ghost in id order and cycled) sets the ghosts' characters.
-//   opts = { ask, decide, dir, memoryDir } (all optional):
+//   opts = { ask, decide, dir, memoryDir } (all optional). The config keys `explorerSkills`, `ghostSkills`, `ghostHp` (testbed.js) set the explorer's SkillSet
+//   (`explorerSkillSetOf(config)`, handed to `new ExplorerBrain(world, { skills })` through the Run) and each ghost's (`ghostSkillSetOf(config)`, `ghostHp ?? skillConfig().ghostHp`):
 //     ask       replaces the explorer's Jev call: ({ kind: 'sentiment'|'tick', state, questions, body }) => answers
 //     decide    replaces the adversaries' Jev call: ({ id, state, questions, body }) => answers
 //     memoryDir URL of the folder for memory.json / memory.md (default: dungeon-game/)
@@ -194,14 +210,60 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 //   A Run without `ask` / `decide` calls the real, paid Jev.
 ```
 `playTurn`:
-1. `explorer = await this.explorer.takeTurn()` (decides, moves, saves memory).
-2. `{ events, turns } = await stepAdversaries(game, { decide })`. It first hits an explorer that stepped onto an adversary, and does nothing once the game is won or lost.
+0. `game.clearTickState()` (strikes emptied, a lapsed block dropped).
+1. `explorer = await this.explorer.takeTurn()` (decides, uses its skill, moves, saves memory). The explorer's skill events (`strike`, `struck`, `dispelled`) come from `explorer.skill_events`, which the brain returns every turn (`[]` when no skill was used).
+2. `{ events, turns } = await stepAdversaries(game, { decide })`. It first bumps an adversary the explorer stepped onto (knockback only), and does nothing once the game is won or lost. `events` = the explorer's skill events, then the adversaries'.
 3. `saveMemories(...)` writes `adversaries.json` (`{ tick, adversaries: memories }`, in `game.adversaries` order).
 4. If newly lost, `explorer.noteCaught(game.caughtBy)`; else if a `hit` event fired, `explorer.noteHit(id)`.
 
 `Turn = { ...ExplorerTurn, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns }`.
 
-`view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character }], grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees it now. `brain` is the adversary-brain view under "v3" below. `character` is the ghost's preset id, a Reveal-only display (the explorer never reads it).
+`view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character, facing, hp, max_hp }], block /* null | { effectiveness, until_step }: the explorer's own shield stance */, grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. `publicView` also carries `facing` and `strikes` (`[{ by, cells, result }]` of this tick, from both sides). The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees now. `brain` is the adversary-brain view under "v3" below. `character`, `facing`, `hp` and `max_hp` are Reveal-only displays (the explorer never reads them); the UI hides strikes outside the explorer's sight unless Reveal is on.
+
+## `src/skills/*` (shared)
+
+Skills are an attack and a block for the explorer, and a claw strike for each ghost. All free to check (`scripts/check-skills.mjs`). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
+
+```js
+export class Skill {                              // skill.js. One stateful instance per character per skill.
+  static kind = 'skill'
+  constructor({ id, name, source = '', text = '', cooldown = 0 })  // id snake_case and not 'none'; cooldown a whole number >= 0
+  id, name, source /* 'sword'|'shield'|'claw' */, text, cooldown
+  get kind, ready, cooldownLeft, uses, lastUsedStep
+  markUsed(step), turnPassed()                    // use starts the cooldown; the owner's turn end counts it down
+  options(view, self)                             // -> [{ key, fact, target }]; base offers nothing. Reads only its arguments (fog).
+  summary()                                       // -> { id, kind, name, text, ready, cooldown_left }
+}
+export class AttackSkill extends Skill {          // attack.js. kind 'attack'
+  constructor({ shape = [[1, 0]], damage = 1, ...rest })   // shape cells are [forward, right]; [[1,0]] = the cell in front
+  cells(pos, facing)                              // shape rotated to the aim (walls and off-map cells included; callers drop them)
+  options(view, self)                             // needs ready and self.opponentsNear; one { key: `${id}_${dir}`, fact, target: { dir, cells } } per aim whose cells hold a visible opponent (self.visibleOpponents)
+}
+export class BlockSkill extends Skill {           // block.js. kind 'block'
+  constructor({ effectiveness = 0.5, ...rest })   // 0..1
+  options(view, self)                             // needs ready and self.threatNear (true or { id, steps }); one { key: id, fact, target: null }
+}
+export const MAX_SKILLS = 4
+export class SkillSet {                           // skill-set.js. Throws over 4 skills or on a duplicate id.
+  constructor(skills = [])
+  get skills, size
+  options(view, self)                             // -> { key: { fact, target, skill } } in skill order; remembers the keys for get()
+  get(key)                                        // -> { skill, target } from the latest options() call, else null
+  summaries(), turnPassed()
+}
+export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), claw_strike (attack 1, cd 2)
+export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block'], ghost: ['claw_strike'], none: [] }
+export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: loadout < skillConfig() (settings) < tuning
+export const SKILL_MIN = 0.5                      // question.js
+export function skillQuestion(options, priorityLine = '')         // -> a Choice question, `none` first (never shuffled), or null when options is empty
+export function pickSkill(answer, options)        // -> the chosen key, or 'none' (not an option, `none`, or probability < SKILL_MIN)
+export function configureSkills(values), skillConfig(), skillDefaults(), loadoutTuning()   // config.js: swordDamage 1, swordCooldown 1, shieldChance 0.6, shieldCooldown 2, clawDamage 1, clawCooldown 2, ghostHp 2, stunTicks 2
+export const EXPLORER = { id: 'explorer' }        // resolve.js
+export function resolveAttack(game, attacker, cells, damage, { canHit, onHit, rand } = {})   // -> events
+```
+`resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if `game.block` is set and `game.steps <= block.until_step` and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`). Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
+
+**The `skill` question.** Asked in the same request as `next_move`, at most one per request (never per tactic, never in the explorer's sentiment request). Explorer gate: some skill is ready and an adversary is visible within 10 cells or a sighting up to 10 steps old lies within 10; the attack then lists only aims that hold a visible adversary, the block needs a visible chaser within 2 path steps. Ghost gate: a hunting ghost with the explorer in sight within 10 cells. With one legal move, a skill-only request is sent instead (dormant for the explorer: `stay` is always legal). The explorer's mind adds a `skill_priority` line. Fog: explorer skill facts use only visible adversaries, its own sightings and its own strike tally, never a ghost's hp, stun or cooldown.
 
 ## `src/characters/explorer/*`
 
@@ -211,14 +273,16 @@ The explorer's only window on a game (the one explorer file allowed to hold a `G
 
 ```js
 new KnownWorld(game)
-get pos, steps, visits, health, maxHealth, graceLeft, won   // the explorer's own state
+get pos, steps, visits, health, maxHealth, graceLeft, won, facing   // the explorer's own state
 get width, height                       // grid size, only for sizing arrays; says nothing about the layout
 isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()
 visibleAdversaries()                    // -> [{ id, pos, mode, distance }] the explorer sees now
 seenTreasure()                          // -> the chest cell once lit, else null (also null when there is no chest)
 move(dir)                               // the explorer's own step (Game.applyMove)
+useSkill(skillSet, key)                 // before the step: an attack turns to its aim (game.facing) and runs resolveAttack (events strike, struck, dispelled);
+                                        // a block sets game.block = { effectiveness, until_step: steps + 1 }. Marks the skill used. -> events[] | null (unknown key, not ready, game over)
 ```
-Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characters/explorer/*.js` file must not contain `game.x`, `game[...]`, `.dungeon`, dynamic or namespace imports, or imports outside this allowlist: `DIRS, LIGHT_RADIUS, STAY, EXPLORER_LIVES, SIGHT_RANGE` from dungeon.js (`SIGHT_RANGE` is a constant, used only to expire a remembered sighting); `ADVERSARY_SPEED, GRACE_TICKS` from adversary.js; sibling explorer files; `../../jev.js`; `node:fs/promises`.
+Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characters/explorer/*.js` file must not contain `game.x`, `game[...]`, `.dungeon`, dynamic or namespace imports, or imports outside this allowlist: `DIRS, LIGHT_RADIUS, STAY, EXPLORER_LIVES, SIGHT_RANGE` from dungeon.js (`SIGHT_RANGE` is a constant, used only to expire a remembered sighting); `ADVERSARY_SPEED, GRACE_TICKS` from adversary.js; sibling explorer files; `../../jev.js`; `node:fs/promises`; the `src/skills/` exports (`buildSkillSet`, `skillQuestion`, `pickSkill`, and the `resolve.js` pair that only `known-world.js` imports). `src/skills/` has its own guard (section 0c): `options()` reads only its arguments.
 
 ### `known-map.js`, `encounter.js`, `perception.js` (world agent)
 
@@ -231,13 +295,13 @@ All take a `world` (a `KnownWorld`). Layering, acyclic: `known-map.js` ← `enco
   - `self = { lives, max_lives, hit_protection_steps }`.
   - `surroundings = { here ('room'|'junction'|'corridor'|'dead end'), steps, known_floor_cells /* a count, not a % */, chest /* sentence */, unexplored_by_direction /* none|little|some|a lot per side, fixed 12-cell window */, frontier_cells, landmarks[] }`. A landmark is `{ kind, note, direction, distance, steps_ago }`, `memory.landmarks` made relative to the explorer every tick.
   - `threats = { visible[], remembered[], encounter }`. `visible` is `[]` or `{ id, direction: 'north-east', distance: 5, chasing: true }` per adversary in sight (8-point compass words). `remembered` is `{ id, last_seen_steps_ago, was_chasing, direction ('here' on the frozen cell), distance }` per frozen sighting not in sight now. `encounter` is `null` unless an adversary is visible.
-- `describeMoveParts` returns, per legal move, `{ shared, target }` (or `{ whole }` for a winning move and for `stay`). `shared` is approach-independent: threat sentences, a sentence about the nearest remembered sighting (also "Heads back toward where a chasing adversary was N steps ago (D steps from that spot after this)." for a chasing sighting up to 15 steps old, whatever the distance), chest, reveal estimate, visits, a "Goes back to the cell you left 2 steps ago" fact, dead-end warnings; `target` is progress toward the approach's target. `describeMoves` joins them into one sentence per move. Threat sentences, for example: "Moves toward an adversary", "Steps into the adversary: costs 1 life (N of M left) and it is knocked back" (or "costs your last life and the game is lost", or "no life lost while your hit protection lasts"), "Leads into a known dead end: risk of being cornered", "Heads toward where an adversary was last seen N steps ago", and the gap warning "below your minimum gap of N". Distances to adversaries use BFS over known floor if the adversary's cell is known, else Euclidean. Only visible adversaries count as threats; remembered sightings only produce the "last seen" sentence.
+- `describeMoveParts` returns, per legal move, `{ shared, target }` (or `{ whole }` for a winning move and for `stay`). `shared` is approach-independent: threat sentences, a sentence about the nearest remembered sighting (also "Heads back toward where a chasing adversary was N steps ago (D steps from that spot after this)." for a chasing sighting up to 15 steps old, whatever the distance), chest, reveal estimate, visits, a "Goes back to the cell you left 2 steps ago" fact, dead-end warnings; `target` is progress toward the approach's target. `describeMoves` joins them into one sentence per move. Threat sentences, for example: "Moves toward an adversary", "Steps into the adversary: only bumps it back, no life lost.", "Leads into a known dead end: risk of being cornered", "Heads toward where an adversary was last seen N steps ago", and the gap warning "below your minimum gap of N". Distances to adversaries use BFS over known floor if the adversary's cell is known, else Euclidean. Only visible adversaries count as threats; remembered sightings only produce the "last seen" sentence.
 
 ### `memory.js` + `brain.js`: `ExplorerBrain` (brain agent)
 
 ```js
 export class ExplorerBrain {
-  constructor(world, { ask = null, memoryDir = null } = {})  // builds the initial memory (runs approachTarget); null ask = real Jev
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer' } = {})  // builds the initial memory (runs approachTarget); null ask = real Jev; skills: a SkillSet, a loadout-id list or 'explorer' | 'none'
   get memory()                                 // plain JSON object, saved as memory.json; Jev reads a regrouped state built from it (below)
   async takeTurn()                             // -> ExplorerTurn
   async noteCaught(adversaryId)                // event "Caught by a2: the last life is gone.", encounters.hits + 1, a hit_here landmark, save
@@ -258,17 +322,18 @@ Review info, encounter bookkeeping, the tactic goal, the remembered sightings an
   recent { moves[], cells[], back_and_forth },
   encounters { count, escaped, hits, last_at_step },
   events[{ step, text }],
-  landmarks[{ kind, cell, step, note }] }
+  landmarks[{ kind, cell, step, note }],
+  skills[{ id, kind, name, text, ready, cooldown_left }] }   // <= 4 (LIMITS.skills), text <= 120; rewritten from the live SkillSet before every save, never read back
 ```
 `objective`, `findings`, `latest_action`, `danger` and `sentiment.profile_note` no longer exist. Limits (`LIMITS`): approach text 240, `tried` 5, thought 60, `sentiment_history` 5, `events` 6 (text 200, oldest dropped, the step never repeated in the text), `landmarks` 8 (note 120; kinds `chest`, `dead_end_explored`, `hit_here`, `hiding_spot_used`; one per kind + cell, the chest is never evicted), `recent.moves` 6, `recent.cells` 8. `recent.back_and_forth` counts moves that returned to the cell two positions back. `encounters.count` / `escaped` / `hits` count encounters begun, ended unhurt, and hits taken. The remembered sightings are **not** in memory: they are a private field of the brain.
 
 **Jev state (explorer).** Memory is not sent verbatim. Every explorer request carries `state = { game, self, surroundings, threats, plan, recent }`:
-- `game`: `rules()`, a sentence block saying that adversaries roam, move slower (derived from `ADVERSARY_SPEED`), chase on sight, that a touch costs one life (`EXPLORER_LIVES`, `GRACE_TICKS` of protection afterwards), and what `threats.visible` / `threats.remembered` mean. The objective is folded in.
-- `self`: `situation().self` plus `mind: { id, since_step, recent }` (`recent` = the last 5 picks as runs, "cautious×3 → scared").
+- `game`: `rules()`, a sentence block saying that adversaries roam, move slower (derived from `ADVERSARY_SPEED`), chase on sight, that a touch only bumps and an adjacent adversary's claw costs one life (`EXPLORER_LIVES`, `GRACE_TICKS` of protection afterwards), and, when it has skills, "You have up to 4 skills (`self.skills`). Besides moving you may use at most one per step; most steps need none.", and what `threats.visible` / `threats.remembered` mean. The objective is folded in.
+- `self`: `situation().self` plus `skills` (the memory mirror **without `text`**, to stay inside the size bounds) plus `mind: { id, since_step, recent }` (`recent` = the last 5 picks as runs, "cautious×3 → scared").
 - `surroundings`: `situation().surroundings`, plus `moves` (`{ dir: shared facts }`, sent once) on a decision tick that asks tactic questions.
 - `threats`: `situation().threats`. `plan`: `{ approach { id, current, since_step, interrupted | null }, tried[{ id, steps, reason }] }`.
 - `recent`: `{ path /* compass words */, back_and_forth, revealed_since_approach, steps_since_approach, revisits_last_10, encounters, events }`.
-- Request size: the largest explorer decision tick is about 9-10 KB; `check-dungeon.mjs` asserts ≤ 9500 bytes (a chasing adversary, 5 tactics) and ≤ 10500 (a patrolling one, 6 tactics).
+- Request size: the largest explorer decision tick is about 9-10 KB (9436 / 10389 B measured with skills); `check-dungeon.mjs` asserts ≤ 9500 bytes (a chasing adversary, 5 tactics) and ≤ 10500 (a patrolling one, 6 tactics). About 60-110 B of headroom.
 
 **Minds.** `SENTIMENTS` has `scared` (min_gap 5, end_ticks 6), `risk_averse` (4, 5), `cautious` (3, 4; the default before the first pick), `curious` (3, 2; the opposite of cautious; replaced `calculated`, which is gone), `courageous` (2, 2) and `aggressive` (2, 1). Each also has `priority` (a line in `next_move` and `tactic`), `move_priority` (the same rule, short, for the speculative `move_if_<tactic>` questions), `when` (the circumstances that call for it, shown in the sentiment question) and `note`. `profileOf(memory)` returns the current profile.
 
@@ -276,7 +341,7 @@ Review info, encounter bookkeeping, the tactic goal, the remembered sightings an
 - **Remembered sightings.** The brain freezes each adversary in `visibleAdversaries()` as `{ id, cell, step, chasing }` and drops it after `REMEMBER_STEPS` (30) steps or when the explorer sees the frozen cell empty. The ones not in sight form `threats.remembered`, a per-move "last seen" fact, and an avoid zone (`avoidZone`) that exploration targets steer around: known cells within 10 known-path steps of a sighting under 10 steps old, or 6 of one up to 15 steps old, plus a sector for the 3 latest chasing sightings (known cells nearer the sighting than the explorer, and cells whose shortest route from the explorer runs through the frozen cell). `approachTarget`'s `exclude` (cell keys not to pick) and `remembered` (the sightings) feed `run_away`.
 - **Triggers** of a decision tick (`turn.decision.trigger`): `start`, `encounter`, `tactic_failed`, `chase_over`, `chest`, `review`. A pending `start` / `chest` / `review` decision and an `encounter` on the same tick share **one** sentiment call (the encounter wins). `tactic_failed` fires when the tactic's target is gone, when the gap fell below `min_gap` (not for `run_away`), or on **back-and-forth** (`PINGPONG_FAILS` = 3 moves since the last decision returning to the cell just left; the bounce cells and the old target are then excluded from the re-decision's targets, until the encounter starts or ends); at most once per `REDECIDE_COOLDOWN` (3) ticks.
 - Approach reviews (every `REVIEW_EVERY` = 8 steps; `approach_working` below 0.5 switches) do not run during `go_to_treasure` or any tactic.
-- `ExplorerTurn = { step, dir, forced, revealed, won, move_decision, decision, review, policy, apiMs }`. `policy: { from, to, reason } | null` is for code-driven approach switches, separate from `review`.
+- `ExplorerTurn = { step, dir, forced, revealed, won, move_decision, decision, review, policy, skill_decision, apiMs }`. `policy: { from, to, reason } | null` is for code-driven approach switches, separate from `review`. `skill_decision = null | { choice, probabilities, used: key | null }`: set when a `skill` question was asked; `used` is the key that was applied (`null` for `none`, below `SKILL_MIN`, or refused by the world).
 
 ## `server.js` + `public/*` (UI agent)
 
@@ -300,7 +365,7 @@ Review info, encounter bookkeeping, the tactic goal, the remembered sightings an
 - `unexplored_by_direction` uses a fixed 12-cell window.
 - Line of sight is supercover: a line passing exactly through a corner needs both side cells open, so you can't see through a diagonal gap between walls.
 - Memory adds `approach.interrupted: { id, approach, since_step, reason } | null`, which holds the approach parked during an encounter tactic. Tactic interruptions never go into `tried`.
-- `stepAdversaries` itself detects the explorer stepping onto an adversary (the touch check runs before anything moves). Patrol routes are cached on the `Adversary`.
+- `stepAdversaries` itself detects the explorer stepping onto an adversary (the bump check runs before anything moves). Patrol routes are cached on the `Adversary`.
 
 # v3: bigger rooms, and adversaries with their own Jev brains
 
@@ -315,20 +380,20 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 - **on:** it switches on when `startsChase` fires (event `brain_on`). While on, every adversary step is a Jev Choice over its legal directions. Each tick the adversary is either in sight of the explorer (`mode: 'chase'`) or hunting from memory (`mode: 'search'`).
 - While searching, the brain also gets a `keep_hunting` Noul each step: "Is it still worth hunting the explorer?" If the answer is below 0.5 (`KEEP_HUNTING_MIN`), the brain switches off (event `brain_off`, reason recorded). The adversary stops chasing and goes back to code patrol. Code also switches it off after `MAX_SEARCH_TICKS` (18) without sight. Alerted ghosts count `ALERT_STEPS` (24) in path steps.
 - **Pack hunting.** When an adversary spots the explorer (`startsChase`), every patrolling adversary within `ALERT_STEPS` (24) path steps joins in `search` mode with `last_seen` at the explorer's cell (events `alerted` with `by`, then `brain_on`; only while `PACK_ALERT` is on, and alerted ghosts do not alert further). While hunting, an adversary also tracks the explorer through any hunting packmate's sight (team sight, `TEAM_SIGHT`), so it stays in `chase` mode and gets the explorer's position while a packmate sees it. In sight, each move option states how many of the explorer's reachable cells (within 12 steps) the move cuts off, and how many of those no other adversary covers.
-- Movement keeps the speed budget, at most 1 step per tick. Only adversaries whose brain is on and that have a step this tick make a Jev call. Their calls for one tick are **made in parallel** from the state after the explorer's move, then applied in id order with a touch check after each step. Two adversaries may share a cell, but never the living explorer's.
+- Movement keeps the speed budget, at most 1 step per tick. Only adversaries whose brain is on and that have a step this tick make a Jev call. Their calls for one tick are **made in parallel** from the state after the explorer's move, then applied in id order (skill, step, bump check). Two adversaries may share a cell, but never the living explorer's.
 - **Adversary fog of war:** by default adversaries know the real map (tiles, rooms, their own position and the other adversaries' positions), read through an `AdversaryView` in `full` mode. With the `limitedMap` toggle (off by default, and only together with `adversaryCharacters`) a ghost knows only its limited map K (home zone, fading seen cells, cells heard from a call, the four cells around it; see the AdversaryView section); a spot with no known route has `path_steps: null` and the brain heads for the edge of what it knows. In both modes they know the explorer's position **only while `seesExplorer` is true** (or a hunting packmate sees it, with `TEAM_SIGHT`). Otherwise they know only `last_seen` (cell + ticks ago + the direction the explorer was heading when last seen), plus, with memory on, frozen sightings. They never know the treasure location or what the explorer has explored.
-- **Per-adversary memory** (`createMemory(id, character)` in adversary/memory.js, validated by `validateMemory`): `{ id, character: { id }, objective, brain: { on, since_tick, last_reason }, approach: { id | null, current, since_step, tried[{ id, steps, reason }] }, tally: { sightings, lost_sight, hits, alerts_heard }, events[{ tick, text }], progress: { ticks_hunting, ticks_since_seen, distance_trend }, latest_action: null | { choice, confidence, forced, fallback }, sightings[{ cell, tick, heading, source: 'seen'|'called', by? }], recent: { moves[], cells[], back_and_forth }, landmarks[{ kind, cell, tick, note }], lifetime: { hunts, escapes, hits, last_hunt_end_tick } }`. The last four are filled only while the `adversaryCharacters` toggle is on (ticks as units; sightings stored only when the explorer moved at least 3 cells from the newest, newest first; landmark kinds `home` (pinned), `explorer_seen`, `explorer_lost`, `explorer_hid`, `hit_here`, `area_checked`, and **`chest` throws**; capacities and ttls come from the character's `horizon`; `lifetime` is never reset, and with the toggle on `events` are kept across hunts). `findings` is gone: `tally` (counters) and `events` (at most 5: first sighting, called for help, a hit, "Gave up: reason"; text ≤ 200, the tick never repeated in the text) describe the **current hunt** and are reset when the brain switches on. `approach.id` is `null` exactly while the brain is off, and `tried` holds only the outcomes of search approaches. `latest_action` has **no probabilities** (validation rejects the key); they sit in the private hunt state and `brainView` still returns them for the UI. The objective is "Catch the explorer before it finds the treasure". There are 3 approaches: `direct_pursuit` (close the path distance), `cut_off` (head for the junction or corridor the explorer is most likely to pass through next, judged from its heading and the map), and `sweep_last_seen` (search outward from the last-seen cell). Code sets `direct_pursuit` while the explorer is in sight. When sight is lost, Jev picks between `cut_off` and `sweep_last_seen` with a Choice on the first search tick. `noteHit(a, tick)` (adversary/brain.js) is called from `touchCheck` in adversary.js when the ghost hits the explorer: it bumps `tally.hits` and adds an event.
+- **Per-adversary memory** (`createMemory(id, character)` in adversary/memory.js, validated by `validateMemory`): `{ id, character: { id }, objective, brain: { on, since_tick, last_reason }, approach: { id | null, current, since_step, tried[{ id, steps, reason }] }, tally: { sightings, lost_sight, hits, alerts_heard }, events[{ tick, text }], progress: { ticks_hunting, ticks_since_seen, distance_trend }, latest_action: null | { choice, confidence, forced, fallback }, skills[{ id, kind, name, text, ready, cooldown_left }] /* <= 4, mirror of the ghost's SkillSet, rewritten each tick by syncSkills, always present */, sightings[{ cell, tick, heading, source: 'seen'|'called', by? }], recent: { moves[], cells[], back_and_forth }, landmarks[{ kind, cell, tick, note }], lifetime: { hunts, escapes, hits, last_hunt_end_tick } }`. The last four are filled only while the `adversaryCharacters` toggle is on (ticks as units; sightings stored only when the explorer moved at least 3 cells from the newest, newest first; landmark kinds `home` (pinned), `explorer_seen`, `explorer_lost`, `explorer_hid`, `hit_here`, `area_checked`, and **`chest` throws**; capacities and ttls come from the character's `horizon`; `lifetime` is never reset, and with the toggle on `events` are kept across hunts). `findings` is gone: `tally` (counters) and `events` (at most 5: first sighting, called for help, a hit, "Gave up: reason"; text ≤ 200, the tick never repeated in the text) describe the **current hunt** and are reset when the brain switches on. `approach.id` is `null` exactly while the brain is off, and `tried` holds only the outcomes of search approaches. `latest_action` has **no probabilities** (validation rejects the key); they sit in the private hunt state and `brainView` still returns them for the UI. The objective is "Catch the explorer before it finds the treasure". There are 3 approaches: `direct_pursuit` (close the path distance), `cut_off` (head for the junction or corridor the explorer is most likely to pass through next, judged from its heading and the map), and `sweep_last_seen` (search outward from the last-seen cell). Code sets `direct_pursuit` while the explorer is in sight. When sight is lost, Jev picks between `cut_off` and `sweep_last_seen` with a Choice on the first search tick. `noteHit(a, tick)` (adversary/brain.js) is called from `strikeWith` in adversary.js when a claw strike takes a life: it bumps `tally.hits` and adds an event.
 - **Jev state (adversary)** (`jevState` in adversary/brain.js): `{ game, tick, self: { id, position, mode, approach, latest_action }, surroundings, explorer, last_seen, [approach_target, checked_cells_near_last_seen], team: [{ id, direction, path_steps, role }], recent: { tally, events, progress } }`. `explorer` holds a position, direction, `path_steps` and `heading` only while in sight (else `{ in_sight: false }`); `last_seen` is `{ cell, ticks_ago, heading, direction, path_steps } | null`; `approach_target` and `checked_cells_near_last_seen` appear only while searching; `team[].role` is `pursuing`, `searching` or `patrolling`. With the `adversaryCharacters` toggle on the state is regrouped: `self.character { id, traits (words), style }` (also sent for any non-standard ghost), `surroundings.landmarks[]` (direction, `path_steps`, `ticks_ago`, fresh/stale/cold word) and, in limited mode, `surroundings.map_note`; `explorer.sightings[]` (`ticks_ago`, freshness, direction, `path_steps | null`, heading, source) and `explorer.trail`; `team` only lists packmates the ghost can hear or see (nearest 4, each with a `report` taken from that packmate's freshest sighting, never a cell, plus `{ others: N }`); `recent: { path: { moves, back_and_forth }, tally, lifetime, events, progress }`; a shorter rules text (with a fog line in limited mode). A non-standard ghost's priority line is added to `next_move`, `search_approach` and `keep_hunting`. A standard ghost with the toggle off sends exactly the pre-character state. Budget asserted by `measure-memory --who adversary`: average ≤ 5.5 KB, max ≤ 8 KB.
 - Move descriptions are plain language and come from the ghost's map facts (the real map, or its known set K in limited mode) plus the adversary fog of war: path distance to the explorer (or to the last-seen cell or approach target) before → after, whether the move keeps or gains line of sight, whether it blocks a corridor or junction, and whether it hits the explorer.
 - Memories live on each `Adversary` (`a.memory`) and are all written together to `dungeon-game/adversaries.json` each tick. `Run.view()` exposes them.
 
 ## `view().adversaries[]` (v3)
 
-`{ id, pos, mode, visible, character: string /* preset id */, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
+`{ id, pos, mode, visible, character: string /* preset id */, facing, hp, max_hp, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs }] }`. The event types are `spotted`, `lost_sight`, `hit`, `caught`, `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`).
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision?, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 

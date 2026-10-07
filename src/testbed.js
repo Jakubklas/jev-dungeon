@@ -360,7 +360,9 @@ export function buildArena(rawConfig = {}) {
   }
   // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
   const characters = charactersFor(cfg.characters, cfg.seed, positions.length);
-  const adversaries = positions.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos, character: characters[i] }));
+  const adversaries = positions.map((pos, i) => new Adversary({
+    id: `a${i + 1}`, pos, character: characters[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
+  }));
 
   const dungeon = {
     seed: cfg.seed,
