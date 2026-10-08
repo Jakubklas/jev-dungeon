@@ -85,6 +85,7 @@ const SLASH_MS = 340;             // the slash crescent sweeps in the first part
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
   claw: ['#6b0f12', '#c22a2a', '#ff8f80', '#fff1ea'],
+  shield: ['#1c2f66', '#4f7fd6', '#f0a640', '#ffe9b0'], // the shield's steel-blue rim and amber face
 };
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
@@ -893,7 +894,8 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   let dx = tx - ox, dy = ty - oy;
   if (Math.hypot(dx, dy) < 2) { dx = FACE_X[game.facing] ?? 1; dy = 0; } // no aim known: slash across the cell
   const aim = Math.atan2(dy, dx);
-  const reach = Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
+  const small = st.by === 'shield'; // the block spark: a smaller slash round the knight
+  const reach = small ? 12 : Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
   const flip = dx >= 0 ? 1 : -1; // the swing is mirrored for a cut toward the left of the screen
   const frame = Math.min(SLASH_FRAMES - 1, Math.floor(t * SLASH_FRAMES));
   const sweepFull = 2.3; // radians covered by a finished slash
@@ -901,7 +903,8 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const tail = Math.max(0, p * 1.35 - 1) * sweepFull;       // the tail catches up late: the crescent thins out
   const head = p * sweepFull;
   const fade = frame >= SLASH_FRAMES - 2 ? .55 : 1;
-  const pal = SLASH_COLORS[st.by === 'explorer' ? 'sword' : 'claw'];
+  const pal = SLASH_COLORS[small ? 'shield' : st.by === 'explorer' ? 'sword' : 'claw'];
+  const wScale = small ? .55 : 1;
   const lead = flip > 0 ? aim - sweepFull / 2 : aim + sweepFull / 2; // where the sweep starts
   b.globalAlpha = (st.result === 'miss' ? .6 : 1) * fade;
   const R = Math.ceil(reach + 6);
@@ -912,7 +915,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
       ang = Math.atan2(Math.sin(ang), Math.cos(ang)) * flip; // signed angle along the sweep, 0 at its start
       if (ang < tail || ang > head) continue;
       const u = (ang - tail) / Math.max(.001, head - tail);    // 0 at the tail, 1 at the head
-      const w = 1.5 + 6 * Math.sin(Math.min(1, u * .9 + .1) * Math.PI * .5) * (1 - .35 * (1 - u) * (1 - u)); // half-width
+      const w = wScale * (1.5 + 6 * Math.sin(Math.min(1, u * .9 + .1) * Math.PI * .5) * (1 - .35 * (1 - u) * (1 - u))); // half-width
       const off = r - reach + (u - .5) * 1.5;                 // the arc bows: the head sits a touch further out
       if (Math.abs(off) > w) continue;
       const f = 1 - Math.abs(off) / w;                        // 0 at the rim, 1 on the centre line
@@ -950,18 +953,42 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   // The slash rides on the 'edge' pass (after the entities, so nothing hides it) for its own shorter time.
   if (pass === 'edge') {
     const t = (now - strikeFx.t0) / SLASH_MS;
-    if (t < 1) for (const st of strikeFx.strikes) drawSlash(st, t, cx, cy, known, reveal);
+    if (t < 1) {
+      for (const st of strikeFx.strikes) {
+        drawSlash(st, t, cx, cy, known, reveal);
+        // A blocked claw also sparks a small shield-coloured slash at the knight, toward the attacker.
+        if (st.result === 'blocked' && st.by !== 'explorer' && Array.isArray(st.from) && Array.isArray(game.pos)) {
+          drawSlash({ by: 'shield', from: game.pos, cells: [st.from], result: 'blocked' }, t, cx, cy, known, reveal);
+        }
+      }
+    }
   }
 }
 
-// Shield glyph beside the knight while game.block is active (5x6 art px).
-const SHIELD_ROWS = ['EEEEE', 'EBBBE', 'EBHBE', 'EBBBE', '.EBE.', '..E..'];
-const SHIELD_COLORS = { E: '#0b1430', B: '#8fb4ff', H: '#e4eeff' };
-function drawShield(x, y) {
+// Shield over the knight while game.block is active: a 15x20 art px heater shield (steel-blue rim, dark
+// outline, a lit left half and a shaded right half of amber) that covers the whole sprite. Built once.
+const SHIELD_W = 15, SHIELD_H = 20;
+const SHIELD_COLORS = { E: '#0b1430', B: '#4f7fd6', L: '#f0a640', D: '#b8652a', H: '#ffe0a0' };
+const SHIELD_ROWS = (() => {
+  const half = (r) => (r < 12 ? 7 : Math.round(7 * (1 - (r - 12) / 8)));
+  const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half(r);
+  const rows = [];
+  for (let r = 0; r < SHIELD_H; r++) {
+    let row = '';
+    for (let x = 0; x < SHIELD_W; x++) {
+      if (!inside(x, r)) { row += '.'; continue; }
+      const nb = (d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([ox, oy]) => !inside(x + ox, r + oy));
+      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 3 && r < 8 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
+    }
+    rows.push(row);
+  }
+  return rows;
+})();
+function drawShield(x, y) { // x: centre column, y: top row
   SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
     if (ch === '.') return;
     b.fillStyle = SHIELD_COLORS[ch];
-    b.fillRect(x + rx, y + ry, 1, 1);
+    b.fillRect(x - 7 + rx, y + ry, 1, 1);
   }));
 }
 
@@ -1060,7 +1087,7 @@ function drawEntity(en, now, cx, cy) {
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
     drawCoinGlow(px, py, now);
-    if (game?.block) drawShield(px + (en.face < 0 ? -12 : 8), py - 16);
+    if (game?.block) drawShield(px, py - 22);
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
