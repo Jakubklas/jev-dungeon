@@ -29,9 +29,9 @@ export const D_PRESSED = -1;
 export const PRESSED_MAX = 8; // per encounter
 export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
 export const REGEN_WAIT = 10; // ticks since C last changed before regen starts
-export const TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..75, high > 75
-export const TIER_HIGH_MIN = 76;
-export const TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 71)
+export const TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..69, high >= 70
+export const TIER_HIGH_MIN = 70; // the start C (70) is already high: Jev begins confident and takes on enemies unless it has a reason not to
+export const TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 65)
 export const PANIC_ENTER = 20; // panic starts below this
 export const PANIC_EXIT = 25; // and ends only at or above this
 export const BLOCK_CEILING = 65;

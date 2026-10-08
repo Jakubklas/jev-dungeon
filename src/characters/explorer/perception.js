@@ -309,7 +309,8 @@ function hereKind(world) {
 // `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false } = {}) {
+const HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -326,6 +327,17 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   };
   add('slip_past', s.slip && s.slip.gap >= minGap);
   add('run_away', true);
+  // Low tier or panic and hurt with a heart in reach: run toward the heart, by a route that keeps clear of every enemy.
+  if (heartRun && out.run_away && world.health < world.maxHealth) {
+    const safe = safeDistances(world, threats, HEART_RUN_GAP);
+    const hearts = world.seenHearts().filter((c) => safe.has(c) && !sameCell(c, world.pos) && !exclude?.has(key(c)))
+      .map((c) => ({ cell: c, steps: safe.get(c) })).sort((a, b) => a.steps - b.steps || a.cell[1] - b.cell[1] || a.cell[0] - b.cell[0]);
+    if (hearts[0]) {
+      const h = hearts[0];
+      const why = `Run to a seen heart that restores a life, ${plural(h.steps, 'step')} to the ${compass(world.pos, h.cell)} by a route that keeps clear of the enemies.`;
+      out.run_away = { target: { cell: [...h.cell], steps: h.steps, why }, fact: why };
+    }
+  }
   add('engage', armed && (!panic || blocksOnlyRoute(world, threats))); // panic fights only an enemy that shuts the only way out
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);

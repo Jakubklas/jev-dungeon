@@ -87,7 +87,7 @@ export const SENTIMENTS = {
     note: 'Explores away from enemies; no detours, no fights.',
     skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.',
   },
-  // Mid tier (36..75).
+  // Mid tier (36..69).
   cautious: {
     min_gap: 4, end_ticks: 4,
     move_priority: 'Cautious: keep your distance; slip past enemies rather than meet them.',
@@ -112,7 +112,7 @@ export const SENTIMENTS = {
     note: 'Goes after coins and unexplored rooms; detours are fine.',
     skill_priority: 'Strike an adjacent enemy whenever the sword is ready, then carry on looting.',
   },
-  // High tier (> 75).
+  // High tier (>= 70).
   bold: {
     min_gap: 2, end_ticks: 1,
     move_priority: 'Bold: take the fight; moving toward an enemy is fine.',
@@ -178,8 +178,8 @@ const TACTIC_MOVE_HINT = {
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null, directive = false) =>
-  'Goal: loot this dark dungeon and get out alive. Your score is the coins you hold when you win. ' +
-  'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every enemy. At 0 lives you lose, coins and all. ' +
+  'Goal: clear this dark dungeon alive by dispelling every enemy. Your score is the coins you hold when you win, so loot on the way. ' +
+  'The portal is only an early way out that ends the game: take it when clearing the dungeon is out of reach. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
   `A touch only bumps. An adjacent enemy's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
@@ -712,7 +712,7 @@ export class ExplorerBrain {
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic' });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#lowTier(memory) });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -1021,10 +1021,17 @@ export class ExplorerBrain {
   // PLAN-moods: is a fight worth talking up? The sword is ready, the explorer is not panicking or in the low tier, and it is a single
   // monster, a hurt one, or confidence in the high tier / a mood that wants the fight (bold, fearless). No counts of enemies, hp or claws: Jev gets the specs
   // (hp bars, the sword's numbers) and decides. Reads only the explorer's own state and the hp bars in sight.
+  // Low tier or panic: the moods that run. With a heart in reach, run_away heads for it (perception.js tacticFeasibility).
+  #lowTier(memory) {
+    const id = memory.sentiment?.id;
+    return id === 'panic' || tierOfMood(id) === 'low';
+  }
+
   #fightOn(sit) {
     const id = this.#memory.sentiment.id;
     if (id === 'panic' || !this.#armed() || !sit.threats.visible.length) return false;
-    const tier = tierOf(this.#capState().C, tierOfMood(id));
+    const cap = this.#capState();
+    const tier = cap.ctx.lastLife ? 'low' : tierOf(cap.C, tierOfMood(id)); // a last life forces the low tier
     if (tier === 'low') return false;
     if (tier === 'high' || id === 'bold' || id === 'fearless') return true;
     return sit.threats.visible.length === 1 || this.#world.visibleAdversaries().some((v) => v.hp < v.maxHp);
@@ -1383,10 +1390,10 @@ export class ExplorerBrain {
     return {
       type: 'noul',
       instructions:
-        `Leave through the portal now (it ends the game)? ${leaveFacts(this.#world, sit)}`,
+        `Give up clearing the dungeon and leave through the portal now (it ends the game)? ${leaveFacts(this.#world, sit)}`,
       criteria: {
-        true: 'Leave: little left worth the risk.',
-        false: 'Stay: coins or ground still worth getting.',
+        true: 'Leave: clearing the dungeon is out of reach and little else is worth the risk.',
+        false: 'Stay: keep clearing the dungeon, and the coins or ground still worth getting.',
       },
     };
   }
