@@ -6,6 +6,7 @@ import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS, KINDS, FOOTPRINT_STANDIN, FORGE_SHAPES } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
+import { KIND_IDS, kindsFor } from './characters/adversary/kinds.js';
 import { LOADOUTS } from './skills/loadouts.js';
 import { MAX_SKILLS } from './skills/skill-set.js';
 import { spawnCoins } from './coins.js';
@@ -22,6 +23,7 @@ export const DEFAULTS = {
   adversaries: null,
   minAdversaryGap: 4,
   adversariesInSight: null,
+  kinds: 'ghost', // the monsters' kind: 'ghost' | 'troll' | 'mixed' | a list cycled per monster (kinds.js)
   characters: 'standard',
   props: 'none',
   map: null,
@@ -101,6 +103,16 @@ export function normalizeConfig(raw = {}) {
     if (cfg.minAdversaryGap < 1) bad('minAdversaryGap must be at least 1');
   }
   if (given('adversariesInSight')) cfg.adversariesInSight = toBool(raw.adversariesInSight, 'adversariesInSight');
+  if (given('kinds')) {
+    let k = raw.kinds;
+    if (typeof k === 'string' && /[;|,\s]/.test(k.trim())) k = k.trim().split(/[;|,\s]+/).filter(Boolean);
+    const ok = (id) => typeof id === 'string' && KIND_IDS.includes(id);
+    if (Array.isArray(k)) {
+      if (!k.length) bad('kinds list must not be empty');
+      k.forEach((id) => { if (!ok(id)) bad(`kinds entry ${JSON.stringify(id)} is not one of ${KIND_IDS.join(', ')}`); });
+    } else if (k !== 'mixed' && !ok(k)) bad(`kinds must be 'mixed', one of ${KIND_IDS.join(', ')} or a list, got ${JSON.stringify(k)}`);
+    cfg.kinds = k;
+  }
   if (given('characters')) {
     // 'standard', 'mixed', one preset id, or a list (URL: "ambusher;timid") applied per ghost in id order, cycled.
     let c = raw.characters;
@@ -386,8 +398,9 @@ export function buildArena(rawConfig = {}) {
   }
   // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
   const characters = charactersFor(cfg.characters, cfg.seed, positions.length);
+  const kinds = kindsFor(cfg.kinds, cfg.seed, positions.length);
   const adversaries = positions.map((pos, i) => new Adversary({
-    id: `a${i + 1}`, pos, character: characters[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
+    id: `a${i + 1}`, pos, character: characters[i], kind: kinds[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
   }));
 
   const dungeon = {

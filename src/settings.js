@@ -27,6 +27,7 @@ export const SCHEMA = [
   { key: 'alertSteps', group: 'Pack', label: 'Alert reach', hint: 'Path steps within which a call is heard.', type: 'range', min: 1, max: 80, step: 1, def: 24, when: 'live' },
   { key: 'teamSight', group: 'Pack', label: 'Team sight', hint: 'Hunters track the explorer through a packmate\'s eyes.', type: 'toggle', def: true, when: 'live' },
   { key: 'floorPerAdversary', group: 'Spawn', label: 'Floor cells per ghost', hint: 'Fewer cells = more ghosts on a map.', type: 'range', min: 40, max: 1000, step: 10, def: 150, when: 'next' },
+  { key: 'trollShare', group: 'Spawn', label: 'Troll share', hint: 'Chance a spawned monster is a troll instead of a ghost (trolls behave like ghosts for now).', type: 'range', min: 0, max: 1, step: 0.05, def: 0.25, when: 'next' },
   { key: 'maxAdversaries', group: 'Spawn', label: 'Max ghosts', hint: '0 = none.', type: 'range', min: 0, max: 24, step: 1, def: 12, when: 'next' },
   { key: 'floorPerCoin', group: 'Spawn', label: 'Floor cells per coin', hint: 'Fewer cells = more coins lying around a map.', type: 'range', min: 10, max: 1000, step: 10, def: 60, when: 'next' },
   { key: 'maxCoins', group: 'Spawn', label: 'Max coins', hint: 'Coins lying around at the start. 0 = none (ghost drops still happen).', type: 'range', min: 0, max: 100, step: 1, def: 30, when: 'next' },

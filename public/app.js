@@ -268,6 +268,9 @@ function fallbackSprites() {
       ['#c3c9da', 3, 0, 8, 2], ['#c3c9da', 1, 2, 12, 11], ['#919bb8', 1, 13, 3, 3], ['#919bb8', 5, 13, 3, 4], ['#919bb8', 10, 13, 3, 3],
       ['#ff3030', 7, 5, 2, 2], ['#ff3030', 10, 5, 2, 2],
     ]),
+    troll: spriteFrom(20, 24, 10, 23, [
+      ['#3f4422', 3, 6, 14, 14], ['#7b8443', 6, 1, 8, 7], ['#ffc633', 8, 4, 2, 1], ['#ffc633', 12, 4, 2, 1], ['#2e4220', 5, 20, 4, 4], ['#2e4220', 11, 20, 4, 4],
+    ]),
     chest: spriteFrom(14, 11, 7, 9, [
       ['#723c15', 1, 1, 12, 9], ['#97551d', 1, 1, 12, 3], ['#ffc633', 1, 4, 12, 1], ['#ffc633', 6, 4, 2, 3],
     ]),
@@ -280,7 +283,7 @@ let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'chest', 'coin', 'heart']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'troll', 'chest', 'coin', 'heart']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -736,7 +739,7 @@ function drawScene(now) {
     const a = actors.get(ad.id);
     if (!a) continue;
     const [gx, gy] = actorPos(a, now);
-    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', face: a.face,
+    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind === 'troll' ? 'troll' : 'ghost', face: a.face,
       id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
       maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
@@ -1129,21 +1132,23 @@ function drawEntity(en, now, cx, cy) {
     return;
   }
   // Ghost: hovering bob with a floor shadow that shrinks as it rises; red glow when chasing.
+  // A troll walks (no hover bob) and casts a wider shadow; its sprite is twice the ghost's height.
+  const troll = en.sub === 'troll';
   const wave = Math.sin(((now / BOB_MS) + en.phase) * Math.PI * 2);
-  const bob = Math.round(wave * BOB_PX);
+  const bob = troll ? 0 : Math.round(wave * BOB_PX);
   b.globalAlpha = en.alpha;
   b.fillStyle = PALETTE.shadow;
-  pixelEllipse(px, py, 6 - (bob < 0 ? 1 : 0), 2);
+  pixelEllipse(px, py, troll ? 9 : 6 - (bob < 0 ? 1 : 0), troll ? 3 : 2);
   if (en.chase) {
     const pulse = .75 + .25 * Math.sin(now / 180);
     b.fillStyle = PALETTE.enemy;
     for (const [rx, ry, a] of [[15, 12, .16], [12, 9, .2], [9, 7, .28]]) {
       b.globalAlpha = en.alpha * a * pulse;
-      pixelEllipse(px, py - 10 + bob, rx, ry);
+      pixelEllipse(px, py - (troll ? 20 : 10) + bob, troll ? Math.round(rx * 1.4) : rx, troll ? ry * 2 : ry);
     }
   }
   b.globalAlpha = 1;
-  const spr = frameOf(sprites.ghost, now, en.phase * 4);
+  const spr = frameOf(sprites[troll ? 'troll' : 'ghost'] ?? sprites.ghost, now, en.phase * 4);
   blitSprite(spr, px, py - 2 + bob, en.face, en.alpha);
   const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
   heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
