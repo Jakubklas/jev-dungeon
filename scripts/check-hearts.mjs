@@ -114,5 +114,33 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
   run.game.health = run.game.maxHealth;
   ok(!/heart/.test(tacticFeasibility(world, 3, { heartRun: true }).run_away.fact), 'at full lives no heart run');
 }
+// ---- 4. midlow's cautious retreat also runs to a heart (brain #heartRun), through the real ExplorerBrain
+{
+  const seen = [];
+  const ask = async ({ kind, questions }) => {
+    seen.push({ kind, questions });
+    const out = {};
+    for (const [k, q] of Object.entries(questions)) {
+      if (q.type === 'noul') { out[k] = { noul: 0.1 }; continue; }
+      const keys = Object.keys(q.criteria);
+      if (k === 'sentiment') out[k] = answer(keys.includes('cautious') ? 'cautious' : keys[0]);
+      else if (k === 'tactic') out[k] = answer(keys.includes('run_away') ? 'run_away' : keys[0]);
+      else out[k] = answer(k === 'skill' ? 'none' : keys.filter((d) => d !== 'stay')[0] ?? 'stay');
+    }
+    return out;
+  };
+  // 3 lives, 2 left (not the last life), C pushed into midlow: cautious is offered and the retreat tactics are on the menu
+  const run = newTestGame({ map: [WALL, FL, '#@' + '.'.repeat(18) + '#', FL, WALL], numAdversaries: 0, adversaries: [[7, 2]], hearts: [[1, 3]], treasure: null }, { ask, decide: clawDecide, dir, memoryDir: dir, confidence: { start: 40 } });
+  run.game.maxHealth = 3; run.game.health = 2;
+  await run.playTurn();
+  const sent = seen.find((r) => r.questions.sentiment);
+  const tac = seen.find((r) => r.questions.tactic)?.questions.tactic;
+  const offered = sent ? Object.keys(sent.questions.sentiment.criteria) : [];
+  ok(offered.includes('cautious'), `midlow: cautious is offered (${offered})`);
+  {
+    const fact = JSON.stringify(tac?.criteria?.run_away ?? '');
+    ok(/seen heart/.test(fact), `cautious + hurt: run_away targets the heart (${fact.slice(0, 160)})`);
+  }
+}
 console.log(fails ? `${fails} FAIL(S)` : 'check-hearts: ok');
 process.exit(fails ? 1 : 0);
