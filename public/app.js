@@ -543,6 +543,7 @@ function pixelEllipse(cx, cy, rx, ry) {
 }
 
 function blitSprite(spr, x, y, face, alpha = 1) {
+  if (!spr?.canvas) return;
   b.save();
   b.globalAlpha = alpha;
   b.translate(x, y);
@@ -1152,7 +1153,9 @@ function drawEntity(en, now, cx, cy) {
   }
   b.globalAlpha = 1;
   const art = sprites[troll ? 'troll' : 'ghost'] ?? sprites.ghost;
-  const sinceStep = en.stepAt === undefined ? Infinity : now - en.stepAt;
+  // Clamped at 0: a rAF timestamp can be a little older than the performance.now() a step was stamped with,
+  // and a negative age would index walk[-1] (undefined) and throw, killing the frame loop.
+  const sinceStep = en.stepAt === undefined ? Infinity : Math.max(0, now - en.stepAt);
   const spr = art.walk && sinceStep < WALK_MS
     ? art.walk[Math.min(art.walk.length - 1, Math.floor(sinceStep / (WALK_MS / art.walk.length)))]
     : frameOf(art, now, en.phase * 4);
@@ -1256,7 +1259,8 @@ function thoughtFor(charId, approachId, fallback, moodId = null, kind = null) {
   const pool = (moodId && MOOD_THOUGHTS[moodId]) || (kind === 'troll' && TROLL_THOUGHTS[approachId]) || THOUGHTS[approachId];
   if (!pool) return fallback;
   const prev = lastPick.get(charId);
-  const options = pool.filter((t) => t !== prev);
+  const fresh = pool.filter((t) => t !== prev);
+  const options = fresh.length ? fresh : pool; // a one-line pool (e.g. troll 'caught') repeats rather than picking nothing
   const pick = options[Math.floor(Math.random() * options.length)];
   lastPick.set(charId, pick);
   return pick;
@@ -2212,12 +2216,20 @@ resizeBoard();
 
 let lastFrame = performance.now();
 (function frame(now) {
-  if ((window.devicePixelRatio || 1) !== dpr) resizeBoard(); // e.g. moved to another monitor
-  moveCamera(now - lastFrame);
-  easeLight(now - lastFrame);
-  lastFrame = now;
-  draw(now);
+  // Schedule first: one bad frame must not stop drawing for good (the step loop keeps going without it).
   requestAnimationFrame(frame);
+  try {
+    if ((window.devicePixelRatio || 1) !== dpr) resizeBoard(); // e.g. moved to another monitor
+    moveCamera(now - lastFrame);
+    easeLight(now - lastFrame);
+    lastFrame = now;
+    draw(now);
+  } catch (err) {
+    b.setTransform(1, 0, 0, 1, 0, 0); // a throw between save() and restore() would leak the transform
+    b.globalAlpha = 1;
+    if (!frame.warned) console.error('draw failed:', err);
+    frame.warned = true;
+  }
 })(performance.now());
 
 init().catch((err) => setStatus(`Could not reach the server: ${err.message}`, true));
