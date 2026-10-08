@@ -64,6 +64,18 @@ export function threatsOf(world) {
   }));
 }
 
+// The ghost the engage hold waits for (PLAN-confidence-mood phase 2). One ghost in sight: it, when hunting and not
+// stunned (today's hold). With `multi`, 2-3 in sight: the nearest hunting unstunned one (ties by id). 4 or more, or
+// none hunting: null. `stunned` is a Set of ids the explorer's own strike stunned (the brain's record).
+export function holdGhost(threats, stunned, here, multi = false) {
+  const n = threats.length;
+  if (n < 1 || n > (multi ? 3 : 1)) return null;
+  const live = threats.filter((th) => th.chasing && !stunned?.has(th.id));
+  if (n === 1) return live[0] ?? null;
+  const d = (th) => threatDistance(th, here);
+  return live.reduce((b, th) => (!b || d(th) < d(b) || (d(th) === d(b) && th.id < b.id) ? th : b), null);
+}
+
 export function threatDistance(threat, cell) {
   return threat.dist?.get(cell) ?? Math.round(euclid(threat.pos, cell));
 }

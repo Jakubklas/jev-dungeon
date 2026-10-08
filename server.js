@@ -21,8 +21,8 @@ const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
 // Options for the Run being built: the paths above plus the explorer's confidence mode (two 'next' settings, so they are read after applyNextGame).
 const gameOpts = () => ({
   ...GAME_OPTS,
-  // true = the model (gates and the word Jev reads); 'display' = the same score tracked and shown as the UI bar only, requests unchanged; false = neither.
-  confidence: settings.appliedValue('confidenceModel') === true ? true : settings.appliedValue('confidenceMeter') !== false ? 'display' : false,
+  // 'caps' = confidence caps the moods (PLAN-confidence-mood, wins over the rest); true = the model (gates and the word Jev reads); 'display' = the same score tracked and shown as the UI bar only, requests unchanged; false = neither.
+  confidence: settings.appliedValue('confidenceCaps') === true ? 'caps' : settings.appliedValue('confidenceModel') === true ? true : settings.appliedValue('confidenceMeter') !== false ? 'display' : false,
 });
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
 await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
@@ -82,7 +82,7 @@ async function step() {
   busy = p;
   try {
     const turn = await p;
-    return { ...snapshot(), turn };
+    return { ...snapshot(), directive: run.directive, turn };
   } finally {
     busy = null;
   }
@@ -129,6 +129,24 @@ createServer(async (req, res) => {
         if (err instanceof TestbedError) return send(res, 400, { error: `Bad testbed config: ${err.message}` });
         throw err;
       }
+    }
+
+    // The player's directive for the explorer (PLAN-inject). No Jev call. Policy lives in Run.submitDirective.
+    if (req.method === 'POST' && path === '/api/inject') {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}') ?? {};
+      } catch {
+        return send(res, 400, { error: 'Body must be JSON.' });
+      }
+      if (!run) return send(res, 409, { error: 'No game. Call /api/new first.' });
+      if (settings.appliedValue('injectEnabled') === false) return send(res, 403, { error: 'Player directives are switched off in the settings.' });
+      const out = run.submitDirective(body.text, {
+        maxChars: settings.appliedValue('injectMaxChars'),
+        steps: settings.appliedValue('injectSteps'),
+        cooldownMs: settings.appliedValue('injectCooldownS') * 1000,
+      });
+      return send(res, out.status, out.body);
     }
 
     if (req.method === 'POST' && path === '/api/step') {

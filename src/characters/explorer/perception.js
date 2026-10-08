@@ -23,7 +23,7 @@ import {
   compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, reachableFrontier, sameCell, step, wouldReveal,
 } from './known-map.js';
 import {
-  encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, hpText, isRoomCell, safeDistances,
+  encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
   threatDistance, threatsOf,
 } from './encounter.js';
 
@@ -502,7 +502,7 @@ function sightingSentence(world, sightings, here, dest) {
 // so with an adversary in sight it only lets the gap shrink as the adversary moves.
 function stayFacts(world, approachId, threats, minGap, holding = false) {
   // engage, standing 2 steps from the one hunting adversary it holds against: staying IS the plan (P7a).
-  if (holding) return 'Holds this cell, 2 steps from it: it steps next to you and you can strike first.';
+  if (holding) return `Holds this cell, 2 steps from ${threats.length > 1 ? 'the nearest' : 'it'}: it steps next to you and you can strike first.`;
   const facts = ['Stands still: reveals nothing.'];
   for (const th of threats) {
     const d = threatDistance(th, world.pos);
@@ -525,7 +525,7 @@ export function describeMoves(world, approachId, opts = {}) {
 // The same facts split in two: `shared` (threats, sightings, portal, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
-export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null } = {}) {
+export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false } = {}) {
   const target = approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned });
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();
@@ -626,8 +626,8 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     out[dir] = { shared: facts.join(' '), target: targetFacts.join(' ') };
   }
   if (world.legalMoves().length) {
-    const holding = approachId === 'engage' && target?.steps === 0 && threats.length === 1 && threats[0].chasing &&
-      !stunned?.has(threats[0].id) && threatDistance(threats[0], here) === 2;
+    const hg = approachId === 'engage' && target?.steps === 0 ? holdGhost(threats, stunned, here, multiHold) : null;
+    const holding = !!hg && threatDistance(hg, here) === 2;
     out[STAY] = { whole: stayFacts(world, approachId, threats, minGap, holding), ...(holding ? { holding } : {}) };
   }
   return out;

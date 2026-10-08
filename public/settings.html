@@ -72,6 +72,7 @@ const TABS = [
   { id: 'ghosts', label: 'Ghosts', groups: ['Adversaries', 'Pack'] },
   { id: 'combat', label: 'Combat', groups: ['Skills', 'Damage'] },
   { id: 'world', label: 'World', groups: ['Explorer', 'Map', 'Spawn'] },
+  { id: 'player', label: 'Player', groups: ['Player'] },
 ];
 const tabOf = (group) => (TABS.find((t) => t.groups.includes(group)) || { id: 'other' }).id;
 let activeTab = location.hash.slice(1);

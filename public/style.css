@@ -285,3 +285,32 @@ ul:empty { display: none; }
 @keyframes coin-pop { 0% { transform: scale(1.5); color: #fff0a8; } 100% { transform: scale(1); } }
 .events li.coin, .events li.coin_drop { color: #ffc633; }
 .events li.coin { font-weight: 700; }
+
+/* Whisper: the player's one-line directive to the explorer (under the board). */
+.whisper { margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.whisper-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.whisper-row { display: flex; gap: 8px; align-items: center; }
+.whisper input[type="text"] {
+  flex: 1; min-width: 0; font: inherit; padding: 7px 10px; color: var(--ink); border-radius: 0;
+  background: var(--panel); border: 2px solid var(--line-hi); box-shadow: inset 2px 2px 0 var(--drop);
+}
+.whisper input[type="text"]::placeholder { color: var(--muted); opacity: .7; }
+.whisper input[type="text"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.whisper input[type="text"]:disabled { opacity: .5; }
+.whisper-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.whisper-count.full { color: var(--accent); }
+#whisper-send { min-width: 6.5em; white-space: nowrap; }
+#whisper-send:disabled { opacity: .55; cursor: not-allowed; background: var(--panel-2); border-color: var(--line-hi); color: var(--muted); }
+.whisper-live {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 8px;
+  background: var(--panel); border: 2px solid var(--accent); box-shadow: 3px 3px 0 var(--drop);
+}
+.whisper-live[hidden], .whisper-msg[hidden] { display: none; }
+.whisper-chip { background: var(--accent); color: var(--accent-ink); }
+.whisper-live-text { flex: 1 1 12ch; min-width: 0; overflow-wrap: anywhere; }
+.small-btn { padding: 2px 10px; font-size: 12px; box-shadow: 2px 2px 0 var(--drop); }
+.whisper-msg { margin: 0; font-size: 13px; color: var(--muted); }
+.whisper-msg.error { color: var(--warn); }
+@media (max-width: 520px) {
+  .whisper-count { display: none; }
+}

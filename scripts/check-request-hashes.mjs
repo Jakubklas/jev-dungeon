@@ -7,10 +7,10 @@
 // differing key path (depth 2). Free, no Jev. Regenerate the baseline only on purpose, in its own commit:
 //   node scripts/request-hashes.mjs --write
 import { readFileSync } from 'node:fs';
-import { computeAll, FIXTURE, playScenario, scenarios } from './request-hashes.mjs';
+import { computeAll, FIXTURE, FIXTURE_CAPS, playScenario, scenarios } from './request-hashes.mjs';
 import { CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
 
-const base = JSON.parse(readFileSync(FIXTURE, 'utf8')).scenarios;
+let base = JSON.parse(readFileSync(FIXTURE, 'utf8')).scenarios;
 let fails = 0;
 
 function compare(label, got) {
@@ -38,6 +38,11 @@ function compare(label, got) {
 }
 
 compare('confidence off', await computeAll());
+const nOff = Object.values(base).reduce((s, v) => s + v.requests.length, 0);
+// Caps mode has its own fixture (scripts/fixtures/request-hashes-caps.json, written on purpose: node scripts/request-hashes.mjs --caps --write).
+base = JSON.parse(readFileSync(FIXTURE_CAPS, 'utf8')).scenarios;
+compare('confidence caps', await computeAll({ confidence: 'caps' }));
+const nCaps = Object.values(base).reduce((s, v) => s + v.requests.length, 0);
 
 // Toggle on, neutral zone: identical to the toggle-off run once the two additions are removed.
 let neutral = 0, left = 0;
@@ -65,6 +70,5 @@ for (const sc of scenarios()) {
 }
 if (neutral < 100) { fails++; console.log(`FAIL: only ${neutral} neutral-zone requests compared`); }
 console.log(`toggle on: ${neutral} neutral-zone requests identical to toggle off; ${left} scenarios left the zone (not compared further)`);
-const n = Object.values(base).reduce((s, v) => s + v.requests.length, 0);
 if (fails) { console.log(`check-request-hashes: ${fails} failure(s)`); process.exit(1); }
-console.log(`check-request-hashes: ok (${Object.keys(base).length} scenarios, ${n} requests, toggle off; neutral-zone identity with it on)`);
+console.log(`check-request-hashes: ok (${Object.keys(base).length} scenarios: ${nOff} requests with the toggle off, ${nCaps} in caps mode; neutral-zone identity with the model on)`);
