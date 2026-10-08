@@ -218,6 +218,14 @@ for (const { name, config } of scenarios) {
   const a = buildArena({ explorerSkills: ['sword_strike'], ghostSkills: 'none', ghostHp: 4 });
   check(a.config.explorerSkills.join() === 'sword_strike' && a.config.ghostSkills === 'none' && a.config.ghostHp === 4, 'skills: buildArena returns the knobs in config');
   check(JSON.stringify(buildArena({ seed: 3 }).dungeon) === JSON.stringify(buildArena({ seed: 3, explorerSkills: 'none', ghostHp: 5 }).dungeon), 'skills: knobs do not change the arena');
+  // Monster morale: the arena may start its monsters at a given morale (PLAN-monster-morale.md M5).
+  check(normalizeConfig({}).morale === null && normalizeConfig({ morale: '15' }).morale === 15, 'morale: default null, parsed from a URL string');
+  throwsBad({ morale: -1 }, 'morale below 0');
+  throwsBad({ morale: 101 }, 'morale above 100');
+  throwsBad({ morale: 'low' }, 'morale not a number');
+  const mo = buildArena({ morale: 15, numAdversaries: 1 });
+  check(mo.config.morale === 15 && mo.adversaries[0].hunt.morale.value === 15 && mo.adversaries[0].hunt.morale.baseline === 15, 'morale: the arena morale reaches the monster');
+  check(JSON.stringify(buildArena({ seed: 3 }).dungeon) === JSON.stringify(buildArena({ seed: 3, morale: 5 }).dungeon), 'morale: the knob does not change the arena');
 }
 
 // 6. Pack alert (P0 coverage): one ghost spots the explorer while the other is within ALERT_STEPS

@@ -43,6 +43,8 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
       if (out.dispelled) {
         game.adversaries.splice(game.adversaries.indexOf(a), 1); // in place: other holders of the array see it
         result = 'dispelled';
+        // The tick's dispels, for the death cry: surviving monsters within sight or earshot lose morale (stepAdversaries).
+        game.dispelled = [...(game.dispelled ?? []), { id: a.id, at: [...at] }];
         events.push({ id: a.id, type: 'dispelled', at });
         // One roll per dispel, even at chance 0 or 1, so the stream stays stable.
         if (game.coinRandom() < skillConfig().coinDropChance) {
@@ -57,7 +59,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
           events.push({ id: 'explorer', type: 'cleared', at });
         }
       } else {
-        events.push({ id: a.id, type: 'struck', at, hp: out.hp });
+        events.push({ id: a.id, type: 'struck', at, hp: out.hp, staggered: out.staggered });
       }
     }
   }

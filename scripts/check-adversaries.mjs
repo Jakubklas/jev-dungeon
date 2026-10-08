@@ -713,7 +713,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   check(m.approach.tried.every((t) => t.id === 'cut_off' || t.id === 'sweep_last_seen'), `memory: tried holds a non-search approach ${JSON.stringify(m.approach.tried)}`);
   check(m.approach.tried.length === 0, `memory: ${m.approach.tried.length} flip-flop rows in tried after ${CYCLES} cycles`);
   check(m.events.length === 1 && /^First sighting/.test(m.events[0].text), `memory: events after repeated sightings ${JSON.stringify(m.events)}`);
-  check(!('findings' in m) && Object.keys(m).join() === 'id,character,objective,brain,approach,tally,events,progress,latest_action,sightings,recent,landmarks,lifetime,skills', `memory: keys ${Object.keys(m)}`);
+  check(!('findings' in m) && Object.keys(m).join() === 'id,character,objective,brain,approach,tally,events,progress,latest_action,sightings,recent,landmarks,lifetime,morale,skills', `memory: keys ${Object.keys(m)}`);
   // A search approach that is replaced by giving up is recorded once.
   game.pos = [14, 2];
   for (let i = 0; i < MAX_SEARCH_TICKS + 2 && a.memory.brain.on; i++) await step(game);

@@ -309,6 +309,7 @@ export class Game {
     this.facing = 'right'; // the explorer's 4-way facing: last step's direction or last strike's aim
     this.block = null; // the explorer's shield stance: null | { effectiveness, until_step }
     this.strikes = []; // strikes this tick: { by, cells, result } (src/skills/resolve.js)
+    this.dispelled = []; // monsters dispelled this tick: { id, at } (resolve.js); the death cry reads it (monster morale)
     this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
     this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
     this.coins = 0; // the explorer's total
@@ -353,6 +354,7 @@ export class Game {
   // Start-of-tick cleanup for skill state: strikes are per tick, a block lapses once steps passes until_step.
   clearTickState() {
     this.strikes = [];
+    this.dispelled = [];
     if (this.block && this.steps > this.block.until_step) this.block = null;
   }
 

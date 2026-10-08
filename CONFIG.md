@@ -14,6 +14,7 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.global.maxSearchTicks` | 18 | 1..60 | live | no | Ticks without sight before a monster gives up |
 | `monsters.global.keepHuntingMin` | 0.5 | 0..1 | live | no | Jev keep-hunting answer below this ends the hunt (0-1) |
 | `monsters.characters.enabled` | false | on/off | next | no | true = each monster gets a personality (see characters); false = all standard |
+| `monsters.morale.enabled` | false | on/off | next | no | true = monsters keep a morale score that changes how they hunt (PLAN-monster-morale.md) |
 | `monsters.global.limitedMap` | false | on/off | next | no | true = monsters only know their home zone and what they saw (needs adversaryCharacters) |
 | `monsters.pack.alert` | true | on/off | live | no | A spotter calls nearby patrolling monsters into the hunt |
 | `monsters.pack.alertSteps` | 24 | 1..80 | live | no | Path steps within which a call is heard |
@@ -26,6 +27,7 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.kinds.troll.hp` | 4 | 1..10 | next | no | Hits a troll takes before it is dispelled (a ghost has Ghost hit points). |
 | `monsters.kinds.troll.clawDamage` | 2 | 1..3 | next | no | Lives a troll claw strike takes. |
 | `monsters.kinds.troll.speed` | 0.65 | 0.2..1 | next | no | A troll moves at this share of the ghost speed. |
+| `monsters.kinds.troll.stunTicks` | 0 | 0..6 | next | no | Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step). |
 | `monsters.spawn.minSteps` | 20 | 1..60 | next | no | Path steps a monster spawns away from the explorer start |
 | `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
 | `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
@@ -49,6 +51,10 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.characters.traits.seenTtl` | [40,120,300] | 3 numbers 1..1000 | next | no | Limited map: ticks before a seen cell is forgotten (levels 1/2/3) |
 | `monsters.characters.traits.seenCap` | [120,300,600] | 3 numbers 10..2000 | next | no | Limited map: most seen cells it keeps (levels 1/2/3) |
 | `monsters.characters.traits.keepDistance` | [0,0,2] | 3 numbers 0..10 | next | no | Cells kept from an explorer whose sword is ready (0 = off) (levels 1/2/3) |
+| `monsters.characters.traits.moraleStart` | [40,55,70] | 3 numbers 0..100 | next | no | Morale it starts at and comes back to (levels 1/2/3) |
+| `monsters.characters.traits.moraleRegen` | [0.15,0.25,0.4] | 3 numbers 0..5 | next | no | Morale regained per quiet tick (levels 1/2/3) |
+| `monsters.characters.traits.moraleHurt` | [0.6,1,1.6] | 3 numbers 0..3 | next | no | Multiplier on every morale setback (levels 1/2/3) |
+| `monsters.characters.traits.moralePack` | [0,0.5,1] | 3 numbers 0..3 | next | no | Worth of each nearby packmate to its morale (levels 1/2/3) |
 | `monsters.characters.traits.homeRadius` | [14,24,null] | 3 numbers 1..200 | next | no | Home zone radius in path steps (levels 1/2/3; null = the whole map) |
 | `monsters.characters.lonerHearing` | 10 | 1..60 | next | no | A loner answers a call only when the explorer is this close, steps |
 | `monsters.brain.pingpongs` | 3 | 2..10 | live | no | Back-and-forth steps while searching before a monster re-picks its search approach |
@@ -71,6 +77,37 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.characters.words.pack` | (built-in wording) | 3 texts, up to 60 chars | live | no | Plain words for the pack trait at level 1/2/3 |
 | `monsters.prompts.objective` | (built-in wording) | text, up to 300 chars | live | no | A monster's objective text |
 | `monsters.prompts.offText` | (built-in wording) | text, up to 300 chars | live | no | What a monster's memory says while its brain is off |
+| `monsters.morale.clawed` | 8 | -100..100 | live | no | Morale gained when its claw takes a life |
+| `monsters.morale.wounded` | -10 | -100..100 | live | no | Morale lost to a sword strike that takes all its health (scaled by the share lost) |
+| `monsters.morale.blocked` | -5 | -100..100 | live | no | Morale lost when its claw is blocked |
+| `monsters.morale.shrugged` | -2 | -100..100 | live | no | Morale lost when its claw lands during the explorer's grace |
+| `monsters.morale.packmateLost` | -15 | -100..100 | live | no | Morale lost when a packmate is dispelled within sight or earshot |
+| `monsters.morale.help` | 4 | -100..100 | live | no | Morale gained when a packmate answers its call |
+| `monsters.morale.cornered` | 3 | -100..100 | live | no | Morale gained when the explorer is cornered close by |
+| `monsters.morale.slipped` | -2 | -100..100 | live | no | Morale lost each time it loses sight of the explorer |
+| `monsters.morale.slippedMax` | 8 | 0..100 | live | no | Most morale losing sight can cost in one hunt |
+| `monsters.morale.gaveUp` | -6 | -100..100 | live | no | Morale lost when a hunt ends without a catch |
+| `monsters.morale.helpCeiling` | 65 | 0..100 | live | no | Help never raises morale above this |
+| `monsters.morale.corneredCeiling` | 65 | 0..100 | live | no | A cornered explorer never raises morale above this |
+| `monsters.morale.regenWait` | 10 | 0..100 | live | no | Quiet ticks before morale starts to recover |
+| `monsters.morale.tiers.lowMax` | 35 | 0..100 | live | no | Morale up to this is the low tier |
+| `monsters.morale.tiers.highMin` | 70 | 0..100 | live | no | Morale from this up is the high tier |
+| `monsters.morale.tiers.hysteresis` | 5 | 0..50 | live | no | A tier is kept this far past its edge |
+| `monsters.morale.rout.enter` | 12 | 0..100 | live | no | Below this morale a monster breaks off (rout) |
+| `monsters.morale.rout.exit` | 20 | 0..100 | live | no | A routed monster hunts again only at this morale |
+| `monsters.morale.rout.rest` | 8 | 0..100 | live | no | Ticks a routed monster will not start a new hunt |
+| `monsters.morale.cap.lastHp` | 40 | 0..100 | live | no | Highest morale on its last hit point |
+| `monsters.morale.cap.floor` | 0.3 | 0..1 | live | no | Share of morale left to a monster at no health |
+| `monsters.morale.span` | 30 | 0..100 | live | no | Most its history can shift capability, either way |
+| `monsters.morale.capability.max` | 70 | 0..100 | live | no | Capability alone never exceeds this |
+| `monsters.morale.capability.exposure` | 0.5 | 0..1 | live | no | How much an armed explorer that can kill it in one strike takes away (share) |
+| `monsters.morale.capability.packBonus` | 8 | 0..50 | live | no | Capability per supporting packmate |
+| `monsters.morale.capability.packMax` | 3 | 0..12 | live | no | Supporting packmates counted |
+| `monsters.morale.capability.stunMax` | 20 | 0..100 | live | no | Capability while stunned |
+| `monsters.morale.bands.savage` | 80 | 0..100 | live | no | Morale from this up reads savage |
+| `monsters.morale.bands.eager` | 65 | 0..100 | live | no | Morale from this up reads eager |
+| `monsters.morale.bands.steady` | 40 | 0..100 | live | no | Morale from this up reads steady |
+| `monsters.morale.bands.wavering` | 30 | 0..100 | live | no | Morale from this up reads wavering |
 | `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls) |
 | `monsters.kinds.troll.weight` | 0.25 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds |
 | `monsters.characters.mix` | "mixed" | "mixed" / "standard" / weights | next | no | Character mix of spawned monsters |
@@ -199,8 +236,8 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.history.dispelled` | 8 | 0..50 | live | no | History change when an enemy is dispelled |
 | `explorer.confidence.history.blocked` | 3 | 0..50 | live | no | History change when the shield stops a claw |
 | `explorer.confidence.history.evaded` | 2 | 0..50 | live | no | History change when a chase is escaped |
-| `explorer.confidence.history.pressed` | -1 | -10..0 | live | no | History change per tick under a chasing enemy |
-| `explorer.confidence.history.pressedMax` | 8 | 0..50 | live | no | Most pressure loss per encounter |
+| `explorer.confidence.history.coin` | 2 | 0..50 | live | no | History change per coin picked up |
+| `explorer.confidence.history.heart` | 5 | 0..50 | live | no | History change when a heart is picked up |
 | `explorer.confidence.history.blockCeiling` | 65 | 0..100 | live | no | A block lifts confidence only up to this |
 | `explorer.confidence.history.evadeCeiling` | 65 | 0..100 | live | no | An escape lifts confidence only up to this |
 | `explorer.confidence.regen.rate` | 0.25 | 0..5 | live | no | Points per tick that history moves back toward neutral |
@@ -212,10 +249,10 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.panic.exit` | 25 | 0..100 | live | no | Panic ends at or above this confidence |
 | `explorer.confidence.cap.lastLife` | 45 | 0..100 | live | no | Highest confidence on the last life |
 | `explorer.confidence.cap.floor` | 0.3 | 0..1 | live | no | Share of the cap kept at one life of many |
-| `explorer.confidence.cap.pressedRange` | 2 | 1..10 | live | no | Steps within which a chaser presses, for replay |
 | `explorer.confidence.capability.perExtraEnemy` | 0.35 | 0..2 | live | no | Expected lives lost per extra enemy, per claw point |
 | `explorer.confidence.capability.histSpan` | 30 | 1..100 | live | no | History shifts capability by at most this; sightings fade over it |
 | `explorer.confidence.capability.max` | 75 | 0..100 | live | no | Capability of an unhurt explorer, scaled by the share of lives left |
+| `explorer.confidence.capability.unhurtFloor` | 50 | 0..100 | live | no | Lowest capability of an armed explorer at full lives, whatever it sees |
 | `explorer.confidence.capability.noSwordMax` | 20 | 0..100 | live | no | Capability without an attack skill never exceeds this |
 | `explorer.confidence.capability.hpBase` | 0.75 | 0..3 | live | no | Enemy weight base |
 | `explorer.confidence.capability.hpSlope` | 0.125 | 0..1 | live | no | Enemy weight added per strike needed |
@@ -408,6 +445,7 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.bubbleOut` | 400 | 0..3000 | live | no | Thought bubble fade-out, ms |
 | `ui.blinkMs` | 120 | 20..1000 | live | no | Knight blink half-period while hit-protected, ms |
 | `ui.coinGlowMs` | 700 | 0..3000 | live | no | Coin pickup glow, ms |
+| `ui.stepDelayMs` | 100 | 0..200 | live | no | Pause between steps in the browser step loop, ms |
 | `ui.thoughts.approach.nearest_frontier` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Bubble lines for the nearest_frontier approach (explorer and monsters) |
 | `ui.thoughts.approach.largest_unexplored` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Bubble lines for the largest_unexplored approach (explorer and monsters) |
 | `ui.thoughts.approach.far_side` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Bubble lines for the far_side approach (explorer and monsters) |

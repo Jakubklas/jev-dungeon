@@ -9,6 +9,8 @@
 //   node scripts/measure-memory.mjs --who adversary [--memory off]   adversary side (stubbed): request bytes,
 //                                hunts, give-up reasons, hits, re-finds, ping-pong, calls per tick; with the
 //                                adversaryCharacters toggle on (default) it asserts avg <= 5.5 KB, max <= 8 KB
+//   node scripts/measure-memory.mjs --who adversary --morale on   same with the monsterMorale toggle: the
+//                                morale wording rides on the same requests, so the same bounds must still hold
 //   node scripts/measure-memory.mjs --who adversary --limited on   same with the limitedMap toggle: also known-map
 //                                size per ghost, cells forgotten, and the longest stretch a ghost idles without a
 //                                target (fails above 5 ticks)
@@ -62,7 +64,8 @@ if (WHO === 'adversary') {
   const { configureAdversaries, adversaryView } = await import('../src/characters/adversary/adversary.js');
   const memoryOn = flags.memory !== 'off';
   const limitedOn = flags.limited === 'on';
-  configureAdversaries({ adversaryCharacters: memoryOn, limitedMap: limitedOn });
+  const moraleOn = flags.morale === 'on'; // monster morale (PLAN-monster-morale.md): the same size bounds apply
+  configureAdversaries({ adversaryCharacters: memoryOn, limitedMap: limitedOn, monsterMorale: moraleOn });
   const advDir = mkdtempSync(join(tmpdir(), 'measure-adv-'));
   const advUrl = pathToFileURL(advDir + '/');
   if (flags.accept === 'true') {
@@ -157,7 +160,7 @@ if (WHO === 'adversary') {
   }
   const REFIND = 8; // ticks after losing sight within which the ghost sees the explorer again
   let failed = false;
-  console.log(`measure-memory --who adversary: dry run, stub answers, up to ${TICKS} ticks per arena, smart memory ${memoryOn ? 'ON' : 'off'}`);
+  console.log(`measure-memory --who adversary: dry run, stub answers, up to ${TICKS} ticks per arena, smart memory ${memoryOn ? 'ON' : 'off'}, morale ${moraleOn ? 'ON' : 'off'}`);
   for (const name of names) {
     const config = JSON.parse(readFileSync(new URL(`${name}.json`, ARENAS), 'utf8'));
     const bytes = new Map(); // character -> sizes

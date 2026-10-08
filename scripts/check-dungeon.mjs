@@ -94,6 +94,9 @@ function fogViolations(name, source, allowedImports = ALLOWED_IMPORTS) {
 //     and adversary-view.js are exempt, like known-world.js.
 const ADVERSARY_ALLOWED_IMPORTS = {
   './perception.js': null, './brain.js': null, './memory.js': null, './character.js': null, './adversary-view.js': null,
+  // morale.js (PLAN-monster-morale.md): the monster's morale model. Pure, imports nothing (check-morale asserts it),
+  // so brain.js, memory.js and adversary.js may import it, exactly as the explorer's confidence.js is treated.
+  './morale.js': null,
   '../shared/memory-kit.js': null, '../../jev.js': null, 'node:fs/promises': null,
   // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
   '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
@@ -109,7 +112,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   if (adv('synthetic', "import { Game } from '../../dungeon.js';").length < 1) fail('adversary fog guard missed a Game import');
   if (adv('synthetic', "import { DIRS, SIGHT_RANGE } from '../../dungeon.js';\nimport { x } from './perception.js';").length) fail('adversary fog guard rejects allowed imports');
   const advUrl = new URL('../src/characters/adversary/', import.meta.url);
-  const guarded = ['perception.js', 'brain.js', 'memory.js', 'character.js'].filter((f) => readdirSync(advUrl).includes(f));
+  const guarded = ['perception.js', 'brain.js', 'memory.js', 'character.js', 'morale.js'].filter((f) => readdirSync(advUrl).includes(f));
   if (guarded.length < 3) fail('adversary fog guard: adversary files not found');
   for (const f of guarded) for (const v of adv(f, readFileSync(new URL(f, advUrl), 'utf8'))) fail(`adversary static fog guard: ${v}`);
 }

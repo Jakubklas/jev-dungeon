@@ -34,6 +34,7 @@ import { configureAdversaryBrain } from '../characters/adversary/brain.js';
 import { configureAdversaryPerception } from '../characters/adversary/perception.js';
 import { configureAdversaryMemory } from '../characters/adversary/memory.js';
 import { configureAdversaryView } from '../characters/adversary/adversary-view.js';
+import { configureMorale } from '../characters/adversary/morale.js';
 import { KNOBS, isUserSetting } from './registry.js';
 import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml, eq } from './load.js';
 
@@ -80,6 +81,7 @@ function push() {
   configureAdversaryPerception(applied);
   configureAdversaryMemory(applied);
   configureAdversaryView(applied);
+  configureMorale(applied);
   configureExplorerMemory(applied);
   configureAdversaryLimits(applied);
   configureAttack(applied);

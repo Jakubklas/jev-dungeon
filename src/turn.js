@@ -145,6 +145,9 @@ export class Run {
       adversaries: game.adversaries.map((a) => ({
         id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, kind: a.kind, // character, facing: Reveal-only display; hp is drawn over ghosts in sight (the explorer reads the same bar)
         facing: a.facing, hp: a.hp, max_hp: a.maxHp,
+        // Monster morale (PLAN-monster-morale.md): null with the monsterMorale toggle off. Reveal-only display,
+        // like `character`: the explorer never reads it, and it never reaches an explorer request.
+        morale: a.memory.morale ? { value: a.memory.morale.value, tier: a.memory.morale.tier, mood: a.memory.morale.mood } : null,
       })),
       block: game.block, // the explorer's shield stance: null | { effectiveness, until_step } (its own state)
       grace_ticks: graceLeft(game),

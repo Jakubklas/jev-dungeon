@@ -33,6 +33,7 @@ dungeon-game/
   src/characters/explorer/perception.js   approaches, tactics, situation, move facts, as plain text  -> world agent
   src/characters/explorer/memory.js       explorer memory (memory.json / memory.md)                  -> brain agent
   src/characters/explorer/brain.js        ExplorerBrain: Jev decisions for the explorer              -> brain agent
+  src/characters/adversary/morale.js      monster morale M, pure, imports nothing; wired into brain.js / adversary.js behind the monsterMorale toggle (PLAN-monster-morale.md) -> adversary agent
   src/characters/explorer/confidence.js   confidence score C, pure, imports nothing; wired into brain.js behind the confidenceModel toggle; C3 adds the gates, `self.confidence` and the UI meter (PLAN-confidence C1-C3) -> brain agent
   scripts/check-*.mjs                checks (dungeon, adversaries, testbed, props, skills, characters, memory-kit, confidence, duels, request-hashes; no Jev); scripts/lib/duel-harness.mjs the duel harness they and later scripts import; scripts/request-hashes.mjs + scripts/fixtures/request-hashes.json the request-hash baseline (sha256 of every explorer request over 39 scenarios, compared by check-request-hashes.mjs)
   scripts/run-testbed.mjs            testbed runner (no Jev unless --live)
@@ -193,7 +194,8 @@ It is the only adversary file (with adversary.js, which owns physics, bump check
 
 ```js
 export const TRAITS /* aggression, persistence, horizon, roaming, pack */, RESERVED_TRAITS /* ['caution'], dormant */, PRESETS /* standard, aggressive, pursuer, ambusher, patient_hunter, short_sighted, timid, territorial, rover */, PRESET_IDS, SPECIAL_IDS
-export function profileOf(traits)               // -> every per-ghost number (chaseRange, restTicks, maxSearchTicks, keepHuntingMin, sweepRadius, cutMax, homeRadius, alertSteps, call/team flags, memory sizes and ttls), the priority line (<= 300 chars) and words for Jev. All traits 2 = today's constants.
+export function profileOf(traits)               // -> every per-ghost number (chaseRange, restTicks, maxSearchTicks, keepHuntingMin, sweepRadius, cutMax, homeRadius, alertSteps, call/team flags, memory sizes and ttls, and the morale knobs moraleStart / moraleRegen / moraleHurt / moralePack), the priority line (<= 300 chars) and words for Jev. All traits 2 = today's constants.
+export const strikeLineFor = (level)           // the strike priority line at level 1-3 (monster morale overrides the character's own level with its mood's)
 export function assignCharacters(seed, count, mode = 'mixed')   // own stream rng(seed ^ 0x6a09e667); 'mixed' = shuffled deck of the non-standard presets, ghost i gets deck[i]; 'standard' = all standard
 export function charactersFor(spec, seed, count)               // testbed `characters` spec ('standard' | 'mixed' | id | list, cycled) -> one id per ghost
 ```
@@ -423,11 +425,11 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 
 ## `view().adversaries[]` (v3)
 
-`{ id, pos, mode, visible, character: string /* preset id */, facing, hp, max_hp, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
+`{ id, pos, mode, visible, character: string /* preset id */, facing, hp, max_hp, morale: null | { value, tier, mood } /* monster morale; null with the toggle off; Reveal-only display, never read by the explorer */, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `cleared` (the dispelled ghost was the last one: the game is won; `id` 'explorer', `at`), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`) and `alerted` (with `by`). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `cleared` (the dispelled ghost was the last one: the game is won; `id` 'explorer', `at`), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`), `alerted` (with `by`) and `routed` (monster morale: morale collapsed, so the monster breaks off; adds `morale`, and a `brain_off` with reason `routed: ...` follows). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 
@@ -546,3 +548,29 @@ export const WALL_ART  = { torch: { palette, frames: [grid, ...], frameMs, glow,
 ## Confidence tiers and moods (PLAN-moods)
 
 Confidence caps are the only model. `ExplorerBrain` always tracks C = `combine(capability(...), history)`; `confidence` in its options is only an arm object `{ start?, wPerExtra?, weights?, model?, fixedMood? }` for checks. `confidence.js` exports, besides the history model and `capability` / `combine` / `sightWeight`: `REGEN` (0.25), `REGEN_WAIT` (10), the `regen` event (history moves toward 50, only after `REGEN_WAIT` ticks without a change; state gains `idle`), `tierOf(C, prev)` ('low' <= 35, 'mid' 36..75, 'high' > 75, 5 points of hysteresis), `panicNext(C, wasPanic)` (enter < 20, leave >= 25), `TIER_MOODS`, `tierOfMood(id)`, `allowedMoods(C, { lastLife, swordDown, current })` and `defaultMood(list)`. The moods are `panic`, `wary`, `guarded` (low), `cautious`, `steady`, `greedy` (mid), `bold`, `fearless` (high); `MOOD_IDS` in memory.js lists all eight. `turn.confidence` = `{ value, band, delta, reason, capability, history, tier, panic }`. See AGENTS.md "Confidence, tiers and moods". The sections above on the toggle, `calm`, `gaps` and `engageOpen` describe the retired model and are kept only as history.
+
+## Monster morale (PLAN-monster-morale.md)
+
+The ghost-side twin of the explorer's confidence, behind the `monsterMorale` toggle (`monsters.morale.enabled`, default off, `when: 'next'`). With it off nothing changes: no morale state, no request text, byte-identical monster requests.
+
+`src/characters/adversary/morale.js` (pure, imports nothing; on the section 0b allowlist, so no guard changes):
+
+```js
+export function createMorale({ start, regen, hurt })   // state { value /* history H */, baseline, hurt, regen, idle, counts, hunt }
+export const moraleOf = (profile)                      // the same from a character profile (moraleStart / moraleRegen / moraleHurt)
+export function apply(state, event, hp, maxHp)         // -> new state; events: clawed, wounded ({ type, damage }), blocked, shrugged,
+                                                       //    packmate_lost, help_came, cornered, slipped, gave_up, regen
+export function startHunt(state)                       // a new hunt: clears the per-hunt slip budget, never the score
+export function cap(hp, maxHp)                         // 100 at full hp, LAST_HP_CAP (40) on the last one, else 100*(0.3+0.7*hp/maxHp)
+export function capability({ hp, maxHp, strikesToDispel, armed, stunned, support, packWeight })   // R, 0..100
+export function combine(R, H, hp, maxHp, baseline)     // M = clamp(R + clamp(H - baseline, -SPAN, SPAN), 0, cap(hp, maxHp))
+export function tierOf(M, prev), routNext(M, wasRout), band(M), moodFor(M, prev), moodKnobs(mood, profile)
+export const MOODS, MOOD_IDS, TIER_MOODS, DEFAULT_MOOD /* 'stalking' */, EVENT_IDS
+export function configureMorale(o); export const moraleSnapshot
+```
+
+`brain.js` adds `queueMorale(a, event)` (a no-op with the toggle off), `applyMorale(a, tick, { hp, maxHp, strikesToDispel, armed, stunned, support, cornered })` -> `{ value, band, tier, mood, rout, entered } | null`, `moraleWord(a)` and `moodKnobsOf(a)`; the hunt state gains `morale`, `moraleQueue`, `mood`, `tier`, `rout` and `knobs`; the memory gains `morale` (`null`, or `{ value, baseline, tier, mood, counts }`, validated). `Adversary` gains no public field: it still has exactly six keys.
+
+Moods (two per tier plus `rout`): low `skittish`, `cagey`; mid `stalking` (the identity row: exactly today's numbers), `pressing`; high `relentless`, `frenzied`. Each row moves `keepDistance`, the strike line level, `keepHuntingMin`, `maxSearchTicks`, whether it calls for help and which search approach it leans to — `knobsOf()` in adversary.js reads them. `rout` is entered by code below M 12 and left at 20 (lower than the explorer's panic on purpose: a monster has less survival instinct): the monster breaks off (`turnOff`, so `mode` goes to `patrol` — no new `mode` value, and the explorer never reads a fleeing monster as chasing) and will not hunt again for `ROUT_REST` ticks.
+
+Jev reads only `self.morale` ("48 steady"), the mood's priority line, one `keep_hunting` clause and a survival sentence in `rules()`. `game.dispelled` (`[{ id, at }]`, cleared by `clearTickState`) carries the tick's dispels so `stepAdversaries` can send the death cry to every monster within sight or earshot.

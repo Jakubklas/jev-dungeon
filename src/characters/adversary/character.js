@@ -53,6 +53,8 @@ const HORIZON_LINE = [
   'Predict where it will go and plan ahead.',
 ];
 export let PRIORITY_MAX = 300;
+// The strike line at a given level (1-3). Monster morale overrides the character's own level with its mood's.
+export const strikeLineFor = (level) => at(STRIKE_LINE, Math.min(3, Math.max(1, level)));
 
 const at = (arr, level) => arr[level - 1];
 let HOME_RADIUS = [14, 24, null]; // path-step radius of the home zone per roaming level; null = the whole map
@@ -77,6 +79,12 @@ const TABLE = {
   seenTtl: ['horizon', [40, 120, 300]],
   seenCap: ['horizon', [120, 300, 600]],
   keepDistance: ['caution', [0, 0, 2]], // cells kept from an explorer whose sword is ready (0 = off)
+  // Morale (morale.js, PLAN-monster-morale.md): where this monster's morale starts and sits, how fast it
+  // recovers, how hard a setback hits it, and how much a packmate is worth to it.
+  moraleStart: ['aggression', [40, 55, 70]],
+  moraleRegen: ['persistence', [0.15, 0.25, 0.4]],
+  moraleHurt: ['caution', [0.6, 1, 1.6]],
+  moralePack: ['pack', [0, 0.5, 1]],
 };
 
 export function normalizeTraits(traits) {

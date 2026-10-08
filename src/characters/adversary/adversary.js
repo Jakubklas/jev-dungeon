@@ -9,7 +9,7 @@
 // ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
 import {
-  KEEP_HUNTING_MIN, ageHunt, applyDecision, decide, hunted, newHunt, lostSight, noteHit, noteStep, searchTick, seen, setKeepHuntingMin, setMemoryOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
+  KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
 } from './brain.js';
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
@@ -18,6 +18,7 @@ import { assignKinds, kindOf } from './kinds.js';
 import { setSkills } from './memory.js';
 import { buildSkillSet } from '../../skills/loadouts.js';
 import { skillConfig } from '../../skills/config.js';
+import { ROUT_REST } from './morale.js';
 import { resolveAttack } from '../../skills/resolve.js';
 
 export { brainView } from './brain.js';
@@ -37,6 +38,7 @@ let PACK_ALERT = true; // a spotter calls in packmates (alertNearby)
 let TEAM_SIGHT = true; // a hunter tracks the explorer through a packmate's sight
 let TROLL_SHARE = 0.25; // chance a spawned monster is a troll (kinds.js)
 export let CHARACTERS_ON = false; // adversaryCharacters toggle: mixed characters at spawn, per-ghost patrol RNG, self.character in state
+export let MORALE_ON_SETTING = false; // monsterMorale toggle: every monster keeps a morale score (morale.js)
 export let LIMITED_ON = false; // limitedMap toggle: ghosts know their home zone + what they have seen, not the real map
 // Limited maps need the characters (home radius, ttl and memory come from the character and its memory
 // compensates for the fog), so limitedMap only acts together with adversaryCharacters.
@@ -56,6 +58,7 @@ export function configureAdversaries(o) {
   if (o.spawnMinSteps !== undefined) MIN_SPAWN_STEPS = o.spawnMinSteps;
   if (o.keepHuntingMin !== undefined) setKeepHuntingMin(o.keepHuntingMin);
   if (o.limitedMap !== undefined) LIMITED_ON = Boolean(o.limitedMap);
+  if (o.monsterMorale !== undefined) { MORALE_ON_SETTING = Boolean(o.monsterMorale); setMoraleOn(o.monsterMorale); }
   if (o.adversaryCharacters !== undefined) {
     CHARACTERS_ON = o.adversaryCharacters;
     setMemoryOn(o.adversaryCharacters); // smart memory comes with the characters
@@ -168,14 +171,22 @@ export class Adversary {
   takeHit(damage, fromPos, game = null) {
     this.#hp = Math.max(0, this.#hp - damage);
     if (this.#hp === 0) return { hp: 0, dispelled: true };
+    const stun = this.stunTicks;
+    if (stun === 0) return { hp: this.#hp, dispelled: false, staggered: false }; // a troll shrugs the blow off: no wound morale, knockback or lost step
+    queueMorale(this, { type: 'wounded', damage }); // morale: the wound and the turn its stun costs
     const dx = this.pos[0] - fromPos[0], dy = this.pos[1] - fromPos[1];
     const step = Math.abs(dx) >= Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)];
     const to = [this.pos[0] + step[0], this.pos[1] + step[1]];
     if (game && (step[0] || step[1]) && isFloor(game.dungeon, to) && !same(to, fromPos)) this.pos = to;
-    this.#stun = skillConfig().stunTicks;
+    this.#stun = stun;
     this.budget = 0;
     this.#route = null; // patrol routes assume contiguous cells
-    return { hp: this.#hp, dispelled: false };
+    return { hp: this.#hp, dispelled: false, staggered: true };
+  }
+
+  // Ticks a sword hit stuns this monster (its kind's own, else the global stunTicks); 0 = it is never staggered.
+  get stunTicks() {
+    return kindOf(this.#kind).stunTicks() ?? skillConfig().stunTicks;
   }
 
   // Mirrors the SkillSet into the memory (plain JSON, at most 4).
@@ -277,6 +288,14 @@ export function spawnAdversaries(dungeon) {
 // The numbers this ghost's code runs with. A standard ghost follows the live settings (today's behaviour);
 // any other character uses its profile (character.js). Loners answer a call only when the explorer is close.
 function knobsOf(a) {
+  const base = plainKnobsOf(a);
+  const mood = MORALE_ON ? a.hunt.knobs : null; // its morale's stance wins over its character's numbers
+  if (!mood) return base;
+  return { ...base, maxSearchTicks: mood.maxSearchTicks, keepHuntingMin: mood.keepHuntingMin, makesCalls: mood.calls };
+}
+
+// The monster's own numbers, before morale: the live settings for a standard character, else its profile.
+function plainKnobsOf(a) {
   if (a.character === 'standard') {
     return { chaseRange: CHASE_RANGE, maxSearchTicks: MAX_SEARCH_TICKS, keepHuntingMin: KEEP_HUNTING_MIN, alertSteps: ALERT_STEPS, teamSight: TEAM_SIGHT, restTicks: 0, makesCalls: true, answersCalls: true, answersWithin: null };
   }
@@ -384,8 +403,9 @@ function turnOn(game, a, events, tick) {
 // The spotter calls out: every patrolling adversary within ALERT_STEPS (path) joins the hunt in
 // search mode, last_seen = where the explorer is now. Alerted ghosts do not alert further.
 function alertNearby(game, spotter, events, tick) {
-  if (!knobsOf(spotter).makesCalls) return; // a loner does not call
+  if (!knobsOf(spotter).makesCalls) return; // a loner does not call (a shaken monster calls anyway: morale)
   const near = floorDistances(game.dungeon, spotter.pos);
+  let answered = false;
   for (const o of game.adversaries) {
     if (o === spotter || o.hunt.on) continue;
     const d = near.get(key(o.pos));
@@ -405,11 +425,14 @@ function alertNearby(game, spotter, events, tick) {
     sweepFrom(viewOf(game, o), o);
     events.push({ id: o.id, type: 'alerted', at: [...o.pos], by: spotter.id });
     events.push({ id: o.id, type: 'brain_on', at: [...o.pos] });
+    answered = true;
   }
+  if (answered) queueMorale(spotter, 'help_came'); // it is not hunting alone any more
 }
 
 function turnOff(a, events, tick, reason) {
-  a.hunt.restUntil = tick + knobsOf(a).restTicks; // a calm ghost does not start a new hunt straight away
+  // A routed monster keeps away for ROUT_REST ticks whatever its character; a calm one rests its own time.
+  a.hunt.restUntil = tick + (reason.startsWith('routed') ? Math.max(ROUT_REST, knobsOf(a).restTicks) : knobsOf(a).restTicks);
   a.mode = 'patrol';
   a.lastSeen = null;
   a.goal = null;
@@ -473,6 +496,65 @@ function senseAfterStep(game, a, events, tick) {
     return;
   }
   senseHunting(game, a, events, tick, false);
+}
+
+// --- morale (PLAN-monster-morale.md) ---------------------------------------------------------
+// One phase per tick, after sensing and before any budget or Jev call, walked in id order, so the
+// parallel decisions can never change what a monster feels. Everything here is fog-safe: a monster's own
+// hit points and skills, what its AdversaryView shows, and the death cry of a packmate within earshot.
+
+// Packmates hunting within this monster's alert reach (the same reach as a call for help).
+function supportFor(game, a) {
+  const mates = viewOf(game, a).teammates().filter((o) => o.role !== 'patrolling');
+  if (!mates.length) return 0;
+  const reach = knobsOf(a).alertSteps;
+  const near = floorDistances(game.dungeon, a.pos);
+  return mates.filter((o) => (near.get(key(o.pos)) ?? Infinity) <= reach).length;
+}
+
+// Is the explorer boxed in right next to this monster? Only ever asked while it is in sight, so it is
+// something the monster can actually see.
+function corneredNow(game, a) {
+  if (!a.hunt.inSight || euclid(a.pos, game.pos) > 2) return false;
+  const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [game.pos[0] + dx, game.pos[1] + dy])).length;
+  return ways <= 2;
+}
+
+// The tick's death cries: every monster that saw or heard a packmate dispelled loses morale for it.
+function deathCries(game, order) {
+  for (const dead of game.dispelled ?? []) {
+    for (const a of order) {
+      const reach = knobsOf(a).alertSteps;
+      const near = floorDistances(game.dungeon, a.pos);
+      const steps = near.get(key(dead.at));
+      const heard = steps !== undefined && steps <= reach;
+      const seenIt = euclid(a.pos, dead.at) <= SIGHT_RANGE && hasLineOfSight(game.dungeon, a.pos, dead.at);
+      if (heard || seenIt) queueMorale(a, 'packmate_lost');
+    }
+  }
+}
+
+function moralePhase(game, order, stunned, events, tick) {
+  if (!MORALE_ON) return;
+  deathCries(game, order);
+  const swordDamage = skillConfig().swordDamage || 1;
+  for (const a of order) {
+    const view = viewOf(game, a);
+    const report = applyMorale(a, tick, {
+      hp: a.hp,
+      maxHp: a.maxHp,
+      strikesToDispel: Math.max(1, Math.ceil(a.hp / swordDamage)),
+      armed: view.explorerArmed(),
+      stunned: stunned.has(a),
+      support: supportFor(game, a),
+      cornered: corneredNow(game, a),
+    });
+    // Rout: morale has collapsed, so the monster breaks off and keeps away until it recovers (ROUT_REST).
+    if (report?.entered && a.hunt.on) {
+      events.push({ id: a.id, type: 'routed', at: [...a.pos], morale: report.value });
+      turnOff(a, events, tick, `routed: morale ${Math.floor(report.value)} (${report.band})`);
+    }
+  }
 }
 
 // --- movement -------------------------------------------------------------------------------
@@ -559,6 +641,10 @@ function strikeWith(game, a, key, latch) {
     },
   });
   picked.skill.markUsed(game.steps);
+  // Morale: what the claw achieved. A hit raises it, the shield and the explorer's grace lower it.
+  if (events.some((e) => e.type === 'hit')) queueMorale(a, 'clawed');
+  else if (events.some((e) => e.type === 'blocked')) queueMorale(a, 'blocked');
+  else if (game.strikes.at(-1)?.result === 'protected') queueMorale(a, 'shrugged');
   return { events, used: key, lost: events.some((e) => e.type === 'caught') };
 }
 
@@ -597,6 +683,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   for (const a of order) ageHunt(a, tick);
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
+  moralePhase(game, order, stunned, events, tick);
   for (const a of order) if (!stunned.has(a)) a.budget += ADVERSARY_SPEED * a.speed; // a stunned ghost gains no budget
 
   const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };

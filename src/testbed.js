@@ -30,6 +30,7 @@ export const DEFAULTS = {
   explorerSkills: 'default', // 'default' | 'none' | a list of loadout ids (<= 4)
   ghostSkills: 'default', // 'default' (claw) | 'none' (harmless ghosts)
   ghostHp: null, // 1..5; null = the Skills setting
+  morale: null, // 0..100 starting morale for every monster (monster morale, morale.js); null = its character's
   hearts: null, // [x, y] cells of floating hearts: display only, no gameplay yet (null = none)
   coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
@@ -193,6 +194,10 @@ export function normalizeConfig(raw = {}) {
   if (given('ghostHp')) {
     cfg.ghostHp = toInt(raw.ghostHp, 'ghostHp');
     if (cfg.ghostHp < 1 || cfg.ghostHp > TESTBED_MAX_GHOST_HP) bad(`ghostHp must be 1..${TESTBED_MAX_GHOST_HP}`);
+  }
+  if (given('morale')) {
+    cfg.morale = toInt(raw.morale, 'morale');
+    if (cfg.morale < 0 || cfg.morale > 100) bad('morale must be 0..100');
   }
   return cfg;
 }
@@ -410,6 +415,9 @@ export function buildArena(rawConfig = {}) {
   const adversaries = positions.map((pos, i) => new Adversary({
     id: `a${i + 1}`, pos, character: characters[i], kind: kinds[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
   }));
+  // A starting morale for the arena (monster morale): the score and the baseline it returns to. It only shows
+  // with the monsterMorale toggle on; with it off the state is there and nothing reads it.
+  if (cfg.morale !== null) for (const a of adversaries) a.hunt.morale = { ...a.hunt.morale, value: cfg.morale, baseline: cfg.morale };
 
   const dungeon = {
     seed: cfg.seed,

@@ -34,6 +34,7 @@ const AB = await import('../src/characters/adversary/brain.js');
 const AP = await import('../src/characters/adversary/perception.js');
 const AM = await import('../src/characters/adversary/memory.js');
 const AV = await import('../src/characters/adversary/adversary-view.js');
+const MR = await import('../src/characters/adversary/morale.js');
 const EM = await import('../src/characters/explorer/memory.js');
 const AT = await import('../src/skills/attack.js');
 const { REQUEST_BYTES } = R;
@@ -56,6 +57,7 @@ const OLD = [
   ['keepHuntingMin', 0.5, 'live'],
   ['adversaryCharacters', false, 'next'],
   ['limitedMap', false, 'next'],
+  ['monsterMorale', false, 'next'],
   ['injectEnabled', true, 'live'],
   ['injectMaxChars', 140, 'live'],
   ['injectSteps', 20, 'live'],
@@ -79,6 +81,7 @@ const OLD = [
   ['trollHp', 4, 'next'],
   ['trollClawDamage', 2, 'next'],
   ['trollSpeed', 0.65, 'next'],
+  ['trollStunTicks', 0, 'next'],
   ['roomsPerHeart', 4, 'next'],
   ['maxHearts', 6, 'next'],
   ['coinDropChance', 0.6, 'next'],
@@ -91,7 +94,7 @@ const OLD = [
 ];
 
 // 1. registry vs the old schema
-check(OLD.length === 39, `frozen list has 39 rows, got ${OLD.length}`);
+check(OLD.length === 41, `frozen list has 41 rows, got ${OLD.length}`);
 const byKey = new Map(L.SCHEMA.map((s) => [s.key, s]));
 for (const [key, def, when] of OLD) {
   const row = byKey.get(key);
@@ -130,9 +133,13 @@ const LIT = {
   ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(),
   // P6: text knobs are null in the registry (= the built-in wording)
   ...Object.fromEntries(R.KNOBS.filter((k) => k.type === 'text').map((k) => [k.key, null])),
+  // P8
+  ...MR.moraleSnapshot(),
   // P7
   ...JV.jevSnapshot(),
   ...Object.fromEntries(Object.entries(UI_CONST).map(([n, c]) => [`ui_${n}`, uiLiteral(c)])),
+  // the step-delay slider's starting value lives in index.html, not app.js
+  ui_stepDelayMs: Number(/id="delay"[^>]*value="(\d+)"/.exec(readFileSync(new URL('../public/index.html', import.meta.url), 'utf8'))?.[1]),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');

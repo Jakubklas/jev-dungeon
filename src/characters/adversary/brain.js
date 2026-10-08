@@ -16,9 +16,10 @@
 // search step, and (in sight, explorer adjacent) the claw `skill` question, in the SAME request as next_move.
 import { SIGHT_RANGE } from '../../dungeon.js';
 import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
-import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach } from './memory.js';
+import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach, setMorale } from './memory.js';
 import { askJev, shuffle, jevModel } from '../../jev.js';
-import { PRESETS, profileOf, traitsOf } from './character.js';
+import { PRESETS, profileOf, strikeLineFor, traitsOf } from './character.js';
+import { DEFAULT_MOOD, apply as applyMoraleEvent, band as moraleBand, capability, combine, moodFor, moodKnobs, moraleOf, routNext, startHunt, tierOf, MOODS } from './morale.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 
 export let KEEP_HUNTING_MIN = 0.5; // keep_hunting.noul below this switches the brain off (live: src/settings.js)
@@ -27,6 +28,10 @@ export const setKeepHuntingMin = (v) => { KEEP_HUNTING_MIN = v; };
 // adversaryCharacters toggle (src/settings.js -> configureAdversaries). Off: memory and requests are as before.
 export let MEMORY_ON = false;
 export const setMemoryOn = (v) => { MEMORY_ON = Boolean(v); };
+// Monster morale (PLAN-monster-morale.md, morale.js) is active only with the monsterMorale toggle
+// (src/settings.js -> configureAdversaries). Off: no morale state reaches a request and every knob is today's.
+export let MORALE_ON = false;
+export const setMoraleOn = (v) => { MORALE_ON = Boolean(v); };
 const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
 let PINGPONGS = 3; // back-and-forth steps while searching before the search approach is chosen again
 
@@ -35,9 +40,13 @@ const key = ([x, y]) => `${x},${y}`;
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 
 // The rules text, built from the live tunables: speed, search time, hit damage, grace ticks (cfg) and SIGHT_RANGE.
-function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited = false }, smart = false) {
+function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited = false }, smart = false, morale = false) {
   const lives = hitDamage === 1 ? 'a life' : `${hitDamage} lives`;
   const ticks = `${graceTicks} tick${graceTicks === 1 ? '' : 's'}`;
+  // With morale on the objective is honest: the explorer also wins by dispelling every monster, so survival counts.
+  const survive = morale
+    ? ' Its sword can dispel you for good, and clearing us all out wins it the dungeon, so surviving is part of your objective; `self.morale` is how your fight is going.'
+    : '';
   const claw = `Touching is harmless: stepping onto the explorer only bumps it and you are knocked back. Only your claw strike (\`self.skills\`, one skill per step at most, most steps need none) hurts it: the explorer loses ${lives} and cannot be hurt for ${ticks} after a hit. `;
   if (smart) {
     // Shorter text for ghosts with memory: the state carries the rest (landmarks, sightings, team reports).
@@ -49,7 +58,7 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
         : 'You know the whole map. ') +
       `You see the explorer only with a clear line of sight within ${SIGHT_RANGE} cells; out of sight you only have your remembered sightings (frozen, with their age) and landmarks. ` +
       claw +
-      `Your objective: catch the explorer before it finds the treasure. After ${maxSearchTicks} ticks without sight, or if you stop hunting, you go back to patrolling.`
+      `Your objective: catch the explorer before it finds the treasure. After ${maxSearchTicks} ticks without sight, or if you stop hunting, you go back to patrolling.` + survive
     );
   }
   return (
@@ -59,7 +68,7 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
     claw +
     'The explorer is caught when its last life is gone. Adversaries may share a cell. ' +
     'Your objective: catch the explorer before it finds the treasure. ' +
-    `If you stop hunting, or go ${maxSearchTicks} ticks without seeing the explorer, you go back to patrolling.`
+    `If you stop hunting, or go ${maxSearchTicks} ticks without seeing the explorer, you go back to patrolling.` + survive
   );
 }
 
@@ -72,7 +81,15 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
 //   profile (the ghost's character numbers: sweepRadius, cutMax, preferredSearch, ...), restUntil (world tick before which a
 //   ghost that just gave up does not start a new hunt)
 export function newHunt(id, profile = profileOf(traitsOf('standard')), character = 'standard') {
-  return { on: false, inSight: false, heading: null, ticksSinceSeen: 0, swept: new Set(), cutOff: null, dists: [], trend: null, pickApproach: false, probabilities: null, profile, restUntil: 0, pingpongs: 0, lostNear: false, hidLogged: false, areaLogged: false, memory: createMemory(id, character) };
+  return {
+    on: false, inSight: false, heading: null, ticksSinceSeen: 0, swept: new Set(), cutOff: null, dists: [], trend: null,
+    pickApproach: false, probabilities: null, profile, restUntil: 0, pingpongs: 0, lostNear: false, hidLogged: false, areaLogged: false,
+    // Morale (morale.js): the score itself, the events waiting for the next morale phase, and the derived
+    // mood. It is never reset by a hunt (startHunt only clears the per-hunt slip budget), so a monster
+    // remembers that it was nearly killed. `knobs` is null while the toggle is off: then nothing changes.
+    morale: moraleOf(profile), moraleQueue: [], mood: DEFAULT_MOOD, tier: 'mid', rout: false, knobs: null,
+    memory: createMemory(id, character),
+  };
 }
 
 // Default Jev call, in the shape of an injected `ask`.
@@ -124,6 +141,7 @@ export function switchOn(view, a, tick) {
   h.on = true;
   h.dists = [];
   brainOn(h.memory, tick, 'spotted the explorer', { keepEvents: MEMORY_ON });
+  h.morale = startHunt(h.morale); // a new hunt, a fresh slip budget; the score itself carries over
   if (MEMORY_ON) addHome(a, tick);
   seen(view, a, tick, { startOfTick: true });
 }
@@ -147,6 +165,8 @@ export function switchOnAlerted(a, tick, at, heading, by) {
   h.pickApproach = true;
   h.trend = null;
   brainOn(h.memory, tick, `${by} spotted the explorer and called for help`, { keepEvents: MEMORY_ON });
+  h.morale = startHunt(h.morale);
+  queueMorale(a, 'help_came'); // it is not alone: the pack is on the explorer
   if (MEMORY_ON) {
     addHome(a, tick);
     addSighting(h.memory, { cell: at, tick, heading, source: 'called', by }, h.profile.sightingsKept);
@@ -165,6 +185,7 @@ export function lostSight(view, a, tick) {
   h.cutOff = null;
   sweepFrom(view, a);
   count(h.memory, 'lost_sight');
+  queueMorale(a, 'slipped');
   if (MEMORY_ON && a.lastSeen) {
     addLandmark(h.memory, { kind: 'explorer_lost', cell: a.lastSeen, tick, note: 'where sight of the explorer broke' }, h.profile.landmarksCap);
     h.lostNear = dist(a.pos, a.lastSeen) <= 4;
@@ -227,6 +248,7 @@ export function switchOff(a, tick, reason) {
   h.ticksSinceSeen = 0;
   brainOff(h.memory, tick, reason);
   addEvent(h.memory, `Gave up: ${reason}`, tick);
+  if (!reason.startsWith('routed')) queueMorale(a, 'gave_up'); // a rout already paid for itself
 }
 
 // This adversary just hit the explorer (called by adversary.js when its claw strike lands).
@@ -260,12 +282,52 @@ export function ageHunt(a, tick) {
   if (MEMORY_ON) ageMemory(a.hunt.memory, tick, a.hunt.profile);
 }
 
+// --- morale (PLAN-monster-morale.md) -------------------------------------------------------
+// Code keeps the score; the mood it derives moves real knobs (knobsOf in adversary.js, the keep-distance
+// and strike lines below). Events are QUEUED where they happen (a strike, a block, a death cry) and applied
+// in one fixed phase per tick, in id order, so the parallel Jev calls can never change the outcome.
+
+// Queues one morale event for the next morale phase. A no-op with the toggle off, so nothing is paid for.
+export function queueMorale(a, event) {
+  if (MORALE_ON) a.hunt.moraleQueue.push(event);
+}
+
+// One morale phase for one monster. `ctx` carries everything morale.js may not read itself (fog-safe, from
+// adversary.js and its AdversaryView): own hit points, how many sword strikes would finish it, whether the
+// explorer's sword is a threat right now, whether it is stunned, how many packmates hunt within earshot and
+// whether the explorer is cornered next to it. Returns the report, or null with the toggle off.
+// -> { value, band, tier, mood, rout, entered } (`entered` = it just broke off this tick)
+export function applyMorale(a, tick, ctx) {
+  const h = a.hunt;
+  if (!MORALE_ON) { h.knobs = null; setMorale(h.memory, null); return null; }
+  const { hp, maxHp, strikesToDispel, armed, stunned, support, cornered } = ctx;
+  for (const e of h.moraleQueue) h.morale = applyMoraleEvent(h.morale, e, hp, maxHp);
+  h.moraleQueue = [];
+  if (cornered) h.morale = applyMoraleEvent(h.morale, 'cornered', hp, maxHp);
+  h.morale = applyMoraleEvent(h.morale, 'regen', hp, maxHp);
+  const R = capability({ hp, maxHp, strikesToDispel, armed, stunned, support, packWeight: h.profile.moralePack });
+  const value = combine(R, h.morale.value, hp, maxHp, h.morale.baseline);
+  const wasRout = h.rout;
+  h.rout = routNext(value, wasRout);
+  h.mood = h.rout ? 'rout' : moodFor(value, h.mood === 'rout' ? null : h.mood);
+  h.tier = MOODS[h.mood].tier;
+  h.knobs = moodKnobs(h.mood, h.profile);
+  setMorale(h.memory, { value, baseline: h.morale.baseline, tier: h.tier, mood: h.mood, counts: h.morale.counts });
+  return { value, band: moraleBand(value), tier: h.tier, mood: h.mood, rout: h.rout, entered: h.rout && !wasRout };
+}
+
+// What Jev reads: "48 steady". The number is floored, like the explorer's self.confidence.
+export const moraleWord = (a) => `${Math.floor(a.memory.morale?.value ?? 0)} ${moraleBand(a.memory.morale?.value ?? 0)}`;
+
+// The knobs in force for this monster: its mood's while morale is on, else its character's.
+export const moodKnobsOf = (a) => a.hunt.knobs;
 // --- the decision -------------------------------------------------------------------------
 
 // What Jev reads, grouped like the explorer's state. `recent` and `self.approach` are the persistent
 // memory (memory.js); the rest is recomputed from the real map each step (perception.js), and the
 // explorer block holds a position only while it is in sight.
 function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
+  const morale = MORALE_ON ? { morale: moraleWord(a) } : {};
   const m = h.memory;
   const { position, surroundings, explorer, last_seen, team, ...search } = situation(view, a, h, { smart, tick });
   return {
@@ -274,7 +336,7 @@ function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
     self: {
       id: a.id,
       ...(withCharacter ? { character: { id: a.character, traits: h.profile.words, style: PRESET_STYLE(a.character) } } : {}),
-      position, mode: h.inSight ? 'chase' : 'search', approach: m.approach, latest_action: m.latest_action,
+      position, mode: h.inSight ? 'chase' : 'search', ...morale, approach: m.approach, latest_action: m.latest_action,
       skills: a.skills.summaries().map(({ text, ...rest }) => rest), // `text` is in the rules sentence
     },
     surroundings,
@@ -312,6 +374,13 @@ export function buildRequest(view, a, tick, cfg) {
   const skillOptions = h.inSight ? skillOptionsOf(view, a) : {};
   const hasSkill = Object.keys(skillOptions).length > 0;
   const searching = !h.inSight;
+  // Morale decides the stance: its line, how close it stays and how freely it claws. With the toggle off
+  // (h.knobs null) these are exactly the character's own, so the request is byte-identical to today's.
+  const strike = {
+    line: MORALE_ON && h.knobs ? h.knobs.line : '',
+    keepDistance: h.knobs?.keepDistance ?? h.profile.keepDistance,
+    priority: MORALE_ON && h.knobs ? strikeLineFor(h.knobs.strikeLevel) : h.profile.skillPriority,
+  };
   const approachIds = searching ? (h.pickApproach ? SEARCH_APPROACHES : [h.memory.approach.id]) : ['direct_pursuit'];
   const questions = {};
   let options = null;
@@ -332,11 +401,12 @@ export function buildRequest(view, a, tick, cfg) {
           'Among moves that cut off about as much, prefer one that closes the path distance (`explorer.path_steps`), then one that keeps the explorer in sight, then one that blocks a corridor, doorway or junction ahead of it (`explorer.heading`).',
         ];
     if (special) priorities.splice(2, 0, h.profile.priority); // third priority: this ghost's character
+    if (strike.line) priorities.splice(special ? 3 : 2, 0, strike.line); // ... then how its morale has it hunting
     // Caution: keep its distance from an explorer whose sword is ready (the trait is 3 only through a traits object).
-    if (h.inSight && h.profile.keepDistance > 0 && view.explorerArmed()) {
-      priorities.push(`The explorer's sword is ready: keep at least ${h.profile.keepDistance} cells away from it, and close in only to strike.`);
+    if (h.inSight && strike.keepDistance > 0 && view.explorerArmed()) {
+      priorities.push(`The explorer's sword is ready: keep at least ${strike.keepDistance} cells away from it, and close in only to strike.`);
     }
-    if (hasSkill && h.profile.skillPriority) priorities.push(`Skills: ${h.profile.skillPriority}`);
+    if (hasSkill && strike.priority) priorities.push(`Skills: ${strike.priority}`);
     questions.next_move = {
       type: 'choice',
       instructions: {
@@ -363,7 +433,8 @@ export function buildRequest(view, a, tick, cfg) {
       instructions:
         'Is it still worth hunting the explorer? Judge from `last_seen` (how long ago, how far), `checked_cells_near_last_seen`, `approach_target` and `recent.progress`. ' +
         `Hunting stops anyway after ${maxSearchTicks} ticks without sight; giving up sends this adversary back to patrolling the dungeon, where it may run into the explorer again.` +
-        (special ? ` You are ${h.profile.words.persistence} (persistence).` : ''),
+        (special ? ` You are ${h.profile.words.persistence} (persistence).` : '') +
+        (MORALE_ON ? ' Weigh `self.morale`: a monster with none left should let this one go.' : ''),
       criteria: {
         true: 'Keep hunting: the explorer was seen recently, and the approach still has a target worth reaching (unchecked space near the last-seen cell, or a cut-off point not reached yet).',
         false: 'Give up: the trail is cold. The explorer was seen long ago, the area around the last-seen cell is checked, or the cut-off point was reached and nothing came.',
@@ -372,9 +443,9 @@ export function buildRequest(view, a, tick, cfg) {
   }
   // ONE skill question, in the same request as next_move. With no move question (one legal move) it is asked alone:
   // a skill-only request (PLAN D4-a), since a strike matters most in a cornered moment.
-  if (hasSkill) questions.skill = skillQuestion(skillOptions, h.profile.skillPriority);
+  if (hasSkill) questions.skill = skillQuestion(skillOptions, strike.priority);
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
-  const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters)), withCharacter, Boolean(cfg.characters));
+  const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters), MORALE_ON), withCharacter, Boolean(cfg.characters));
   const body = JSON.stringify({ model: jevModel(), state, questions });
   return { legal, state, questions, body, options, skillOptions };
 }

@@ -89,6 +89,9 @@ export function crossProblems(values) {
   if (tmax('trait_sightingsKept') > values.limMonster_sightings) out.push('A character sightings level exceeds limits.monster.sightings');
   if (tmax('trait_landmarksCap') > values.limMonster_landmarks) out.push('A character landmarks level exceeds limits.monster.landmarks');
   if (values.advCutMin > values.advCutMax) out.push('Nearest cut-off candidate cannot be farther than the farthest');
+  if (values.morRoutExit < values.morRoutEnter) out.push('A routed monster must recover at or above the morale where it breaks off');
+  if (values.morTierLowMax >= values.morTierHighMin) out.push('The low morale tier must end below the morale where the high tier starts');
+  if (!(values.morBandSavage > values.morBandEager && values.morBandEager > values.morBandSteady && values.morBandSteady > values.morBandWavering && values.morBandWavering >= 0)) out.push('Morale bands must fall: savage > eager > steady > wavering');
   if (values.confPanicExit < values.confPanicEnter) out.push('Panic must end at or above the confidence where it starts');
   if (values.confTierLowMax >= values.confTierHighMin) out.push('The low tier must end below the confidence where the high tier starts');
   if (!(values.confBandDominant > values.confBandSure && values.confBandSure > values.confBandEven && values.confBandEven > values.confBandUnsure && values.confBandUnsure >= 0)) out.push('Confidence bands must fall: dominant > sure > even > unsure');
