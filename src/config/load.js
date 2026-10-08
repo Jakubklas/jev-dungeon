@@ -4,6 +4,7 @@
 import YAML from 'yaml';
 import { KNOBS, KIND_WEIGHTS, CATEGORIES } from './registry.js';
 import { TRAITS, SPECIAL_IDS, defaultPresets } from '../characters/adversary/character.js';
+import { builtinText } from './texts.js';
 
 // The settings page's rows (the shape settings.html has always read). File-only knobs (page: false) are not on it.
 export const SCHEMA = KNOBS.filter((k) => k.page !== false).map(({ key, group, label, hint, type, min, max, step, def, when }) => ({ key, group, label, hint, type, ...(type === 'range' ? { min, max, step } : {}), def, when }));
@@ -19,6 +20,20 @@ const step1 = (def, v) => {
 };
 export function clean(def, v) {
   if (v === null && def.nullable) return null;
+  if (def.type === 'text') {
+    const one = (x) => {
+      if (typeof x !== 'string') throw new Error(`${def.label} must be text`);
+      if (/[\u0000-\u001f\u007f]/.test(x)) throw new Error(`${def.label} cannot contain control characters or line breaks`);
+      if (x.length > def.maxLen) throw new Error(`${def.label} is ${x.length} characters; the limit is ${def.maxLen}`);
+      if (!def.allowEmpty && !x.trim()) throw new Error(`${def.label} cannot be empty`);
+      return x;
+    };
+    if (def.len) {
+      if (!Array.isArray(v) || v.length !== def.len) throw new Error(`${def.label} must be a list of ${def.len} texts`);
+      return v.map(one);
+    }
+    return one(v);
+  }
   if (def.type === 'list') {
     if (!Array.isArray(v)) throw new Error(`${def.label} must be a list`);
     if (v.length > def.maxLen) throw new Error(`${def.label} holds at most ${def.maxLen} entries`);
@@ -127,7 +142,10 @@ export function parseConfig(raw, names = []) {
     if (!row.path) continue;
     const v = getPath(merged, row.path);
     if (v === undefined) continue;
-    try { values[row.key] = clean(row, v); } catch (err) { warnings.push(`${row.path}: ${err.message}`); }
+    try {
+      const val = clean(row, v);
+      values[row.key] = row.type === 'text' && eq(val, builtinText(row.key)) ? null : val; // the built-in wording is no override
+    } catch (err) { warnings.push(`${row.path}: ${err.message}`); }
   }
   // Kind weights are relative; the game reads the troll share.
   const w = KIND_WEIGHTS.map((k) => ({ ...k, v: getPath(merged, k.path) }));
@@ -165,8 +183,8 @@ export function templateYaml() {
     for (const p of parts.slice(0, -1)) n = (n[p] ??= {});
     n[parts.at(-1)] = entry;
   };
-  const leaf = (value, doc) => ({ __leaf: true, value, doc });
-  for (const k of KNOBS) if (k.path) put(k.path, leaf(k.def, k.doc));
+  const leaf = (value, doc, block = false) => ({ __leaf: true, value, doc, block });
+  for (const k of KNOBS) if (k.path) put(k.path, k.type === 'text' ? leaf(builtinText(k.key), `${k.doc} (the built-in wording; edit to change it, delete to restore)`, true) : leaf(k.def, k.doc));
   for (const k of KIND_WEIGHTS) put(k.path, leaf(k.def, k.doc));
   put('monsters.characters.mix', leaf('mixed', "'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }"));
   const presets = {};
@@ -191,7 +209,7 @@ export function templateYaml() {
       const pad = '  '.repeat(indent);
       if (v.__leaf) {
         const text = `${pad}${k}: ${scalar(v.value)}`;
-        lines.push(v.doc ? `${text.padEnd(COL)}  # ${v.doc}` : text);
+        if (v.block) { lines.push(`${pad}# ${v.doc}`); lines.push(text); } else lines.push(v.doc ? `${text.padEnd(COL)}  # ${v.doc}` : text);
       } else {
         const path = depthPath ? `${depthPath}.${k}` : k;
         if (indent === 0 && CATEGORIES[k]) lines.push(`# ${CATEGORIES[k].doc}`);

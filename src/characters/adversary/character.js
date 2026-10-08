@@ -214,3 +214,17 @@ export function configureTraits(o) {
 }
 // The built-in tables, for the config check: { knob: [l1, l2, l3], homeRadius: [...], lonerHearing }. Fresh until configureTraits runs.
 export const traitDefaults = () => ({ ...Object.fromEntries(Object.entries(TABLE).map(([k, [, v]]) => [`trait_${k}`, [...v]])), trait_homeRadius: [...HOME_RADIUS], lonerHearing: LONER_HEARING, limPriorityLine: PRIORITY_MAX });
+
+// ---- Prompt wording from the central config: the per-level lines and trait words Jev reads (a key set to null = built-in).
+const LINE_TABLES = { line_aggression: AGGRESSION_LINE, line_strike: STRIKE_LINE, line_pack: PACK_LINE, line_horizon: HORIZON_LINE };
+const BUILTIN_LINES = Object.fromEntries([...Object.entries(LINE_TABLES).map(([k, a]) => [k, [...a]]), ...Object.entries(WORDS).map(([t, a]) => [`words_${t}`, [...a]])]);
+const wordTable = (key) => (key.startsWith('words_') ? WORDS[key.slice(6)] : LINE_TABLES[key]);
+export function configureCharacterPrompts(o) {
+  for (const key of Object.keys(BUILTIN_LINES)) {
+    const v = Array.isArray(o[key]) && o[key].length === 3 ? o[key] : BUILTIN_LINES[key];
+    const t = wordTable(key);
+    for (let i = 0; i < 3; i++) t[i] = v[i];
+  }
+}
+export const characterPromptDefaults = () => JSON.parse(JSON.stringify(BUILTIN_LINES));
+export const characterPromptSnapshot = () => Object.fromEntries(Object.keys(BUILTIN_LINES).map((k) => [k, [...wordTable(k)]]));

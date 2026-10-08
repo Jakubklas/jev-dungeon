@@ -142,7 +142,7 @@ const profileNote = (id) => {
 };
 
 // The one place Jev is told what self.confidence means (sentiment question only; rules() rides on every request).
-export const CAPS_SENTENCE = ' `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered.';
+export let CAPS_SENTENCE = ' `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered.';
 
 const TRIGGER_TEXT = {
   start: 'The explorer is about to start exploring the dark dungeon.',
@@ -1444,3 +1444,22 @@ export function configureExplorerBrain(o) {
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
 export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
+
+// ---- Prompt wording from the central config (src/config/runtime.js). A key set to null (or absent) means the built-in text,
+// which is copied here at load, before any configure call. Static text only: nothing in it can pull in game data.
+const PROMPT_SLOTS = {};
+for (const id of Object.keys(SENTIMENTS)) {
+  for (const [field, name] of [['when', 'when'], ['note', 'note'], ['priority', 'priority'], ['move_priority', 'movePriority'], ['skill_priority', 'skillPriority']]) {
+    PROMPT_SLOTS[`mt_${id}_${name}`] = { get: () => SENTIMENTS[id][field], set: (v) => { SENTIMENTS[id][field] = v; } };
+  }
+}
+for (const id of Object.keys(MOOD_GLOSS)) PROMPT_SLOTS[`moodGloss_${id}`] = { get: () => MOOD_GLOSS[id], set: (v) => { MOOD_GLOSS[id] = v; } };
+for (const id of Object.keys(TRIGGER_TEXT)) PROMPT_SLOTS[`trigger_${id}`] = { get: () => TRIGGER_TEXT[id], set: (v) => { TRIGGER_TEXT[id] = v; } };
+for (const id of Object.keys(TACTIC_MOVE_HINT)) PROMPT_SLOTS[`tacticHint_${id}`] = { get: () => TACTIC_MOVE_HINT[id], set: (v) => { TACTIC_MOVE_HINT[id] = v; } };
+PROMPT_SLOTS.capsSentence = { get: () => CAPS_SENTENCE, set: (v) => { CAPS_SENTENCE = v; } };
+const BUILTIN_PROMPTS = Object.fromEntries(Object.entries(PROMPT_SLOTS).map(([k, s]) => [k, s.get()]));
+export function configureExplorerPrompts(o) {
+  for (const [k, slot] of Object.entries(PROMPT_SLOTS)) slot.set(typeof o[k] === 'string' ? o[k] : BUILTIN_PROMPTS[k]);
+}
+export const explorerPromptDefaults = () => ({ ...BUILTIN_PROMPTS });
+export const explorerPromptSnapshot = () => Object.fromEntries(Object.entries(PROMPT_SLOTS).map(([k, s]) => [k, s.get()]));

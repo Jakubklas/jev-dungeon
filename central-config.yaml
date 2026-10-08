@@ -175,31 +175,164 @@ explorer:
     panic:
       minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 8 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: Entered by code when confidence collapses; never offered as a choice.
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Flees at any cost: only the way out matters."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Panic: get away at any cost. Only a clear path matters: ignore coins, claws and fights, and keep running from every enemy. Strike only an enemy that blocks the only way."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Panic: get away at any cost; nothing else matters."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike only an enemy that blocks your only way; otherwise keep running.
     wary:
       minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 5 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: gets you out alive. Risk: gives up coins and progress. Offered when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Gets away first: runs, hides, never moves toward an enemy."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Wary: getting away comes first. Never move toward an enemy; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Wary: never move toward an enemy; grow the distance, keep exits open, avoid dead ends."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: safety (wary)
     guarded:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: keeps exploring while staying clear of trouble. Risk: misses loot and fights. Pick when `self.confidence` is low but you are not running: an enemy is known and fighting it looks bad, or nothing else fits."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Explores away from enemies; no detours, no fights."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Guarded: explore, but away from known enemies. Skip loot that lies near one, avoid fights, keep at least 3 steps from enemies and favour well-connected ground over dead ends."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Guarded: explore away from enemies; skip loot and fights."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: caution while exploring (guarded)
     cautious:
       minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: avoids needless risk while still exploring. Risk: leaves the initiative to the enemy. Pick when an enemy is known and you would rather slip past it than fight, or when you are cornered."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: Keeps its distance and slips past; fights only a hurt monster or when cornered.
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Cautious: keep your distance. Slip past enemies and explore with a cushion of at least 4 steps; fight only a hurt monster or when cornered."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Cautious: keep your distance; slip past enemies rather than meet them."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: distance (cautious)
     steady:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when enemies are in sight and you would rather keep to the plan than fight them."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Sticks to the plan: explores, coins on the way, fights a single or hurt monster."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Steady: follow the plan; favour well-connected ground over dead ends."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the plan (steady)
     greedy:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 2 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no enemy in sight and full lives or hit protection."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: Goes after coins and unexplored rooms; detours are fine.
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from enemies."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Greedy: prefer coins, then the move revealing the most new cells; detours are fine."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: "Strike an adjacent enemy whenever the sword is ready, then carry on looting."
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: loot (greedy)
     bold:
       minGap: 2 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and you want the fight: a single monster, a hurt one, or several."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Takes fights it can win, single or several."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Bold: take the fight. Engage enemies you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Bold: take the fight; moving toward an enemy is fine."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: "Strike an adjacent enemy whenever the sword is ready, and step up to a hurt one."
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the fight (bold)
     fearless:
       minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: the fastest way to the cleared win and to the coins enemies drop. Risk: claws cost lives. Pick when the sword is ready and nothing says to hold back: dispelling them is your aim."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Hunts enemies down, even several at once."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Fearless: hunt enemies down. Close in on the nearest one and strike whenever the sword is ready; being outnumbered does not stop you, dispelling them is your aim."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Fearless: hunt enemies down; close in on the nearest."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready and keep closing in on the next.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the hunt (fearless)
     tiers:
       low: [ wary, guarded ] # Moods the low tier offers, in question order (panic is never offered)
       mid: [ cautious, steady, greedy, bold ] # Moods the mid tier offers, in question order (panic is never offered)
       high: [ bold, fearless ] # Moods the high tier offers, in question order (panic is never offered)
+  prompts:
+    triggers:
+      # Why the sentiment is asked: start (the built-in wording; edit to change it, delete to restore)
+      start: The explorer is about to start exploring the dark dungeon.
+      # Why the sentiment is asked: encounter (the built-in wording; edit to change it, delete to restore)
+      encounter: "An enemy has just come into sight (or started chasing): the explorer must choose how to deal with it."
+      # Why the sentiment is asked: tactic_failed (the built-in wording; edit to change it, delete to restore)
+      tactic_failed: "The current tactic stopped working: its target is gone or the enemy got closer than the minimum gap."
+      # Why the sentiment is asked: chase_over (the built-in wording; edit to change it, delete to restore)
+      chase_over: "No enemy has been in sight for a while: the encounter is over and exploring resumes."
+      # Why the sentiment is asked: exit (the built-in wording; edit to change it, delete to restore)
+      exit: The portal (the way out) has just been seen.
+      # Why the sentiment is asked: coins (the built-in wording; edit to change it, delete to restore)
+      coins: Coins have just come into view nearby.
+      # Why the sentiment is asked: dispelled (the built-in wording; edit to change it, delete to restore)
+      dispelled: The explorer has just dispelled an enemy; others may remain.
+      # Why the sentiment is asked: review (the built-in wording; edit to change it, delete to restore)
+      review: The explorer just dropped an exploration approach that was not working and switched to another.
+      # Why the sentiment is asked: hit (the built-in wording; edit to change it, delete to restore)
+      hit: "The explorer just lost a life to an enemy: rethink whether to keep at it."
+      # Why the sentiment is asked: confidence (the built-in wording; edit to change it, delete to restore)
+      confidence: "Your confidence changed enough that your mood no longer fits: choose again."
+      # Why the sentiment is asked: directive (the built-in wording; edit to change it, delete to restore)
+      directive: "The player has just given the explorer an instruction (`directive`): it outranks every mood's `when`."
+    tacticHints:
+      # How the run_away tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      run_away: Keep the distance growing; avoid known dead ends.
+      # How the slip_past tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      slip_past: "Moving toward or alongside it is fine while the gap holds: follow the route past it."
+      # How the engage tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      engage: "Go to the target: 2 steps off a hunting enemy, so it steps next to you and you strike first; next to one you stunned."
+      # How the hide tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      hide: Reach the target out of its sight fast; do not step back into its line of sight.
+      # How the race_to_exit tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      race_to_exit: Head straight for the portal; getting there first matters most.
+      # How the carry_on tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      carry_on: "It has not seen you: keep exploring, out of its line of sight."
+    # The one sentence that says what self.confidence means (the built-in wording; edit to change it, delete to restore)
+    confidenceSentence: " `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered."
 
 # Sword, shield and the stun they cause.
 skills:
@@ -211,6 +344,17 @@ skills:
     cooldown: 2 # Steps before the shield can be raised again
   stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
   minProbability: 0.5 # Jev must be at least this sure to use a skill
+  questionText:
+    default:
+      # Skill question lead for monsters (the built-in wording; edit to change it, delete to restore)
+      question: "Besides the move, use at most one skill this step. Choose `none` unless a skill clearly helps right now."
+      # Skill question "none" option for monsters (the built-in wording; edit to change it, delete to restore)
+      none: Use no skill this step (the usual choice).
+    neutral:
+      # Skill question lead for the explorer (the built-in wording; edit to change it, delete to restore)
+      question: "Use at most one skill this step, besides the move."
+      # Skill question "none" option for the explorer (the built-in wording; edit to change it, delete to restore)
+      none: No skill this step.
 
 # Ghosts and trolls: speed, packs, spawn, stats, characters.
 monsters:
@@ -243,6 +387,26 @@ monsters:
       keepDistance: [ 0, 0, 2 ] # Cells kept from an explorer whose sword is ready (0 = off) (levels 1/2/3)
       homeRadius: [ 14, 24, null ] # Home zone radius in path steps (levels 1/2/3; null = the whole map)
     lonerHearing: 10 # A loner answers a call only when the explorer is this close, steps
+    lines:
+      # How a monster closes in, by aggression level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      aggression: [ Close in only when it is near; keep other moves in front of you., Close the distance while keeping its escape routes cut off., "Go straight at it: close the path distance first, cut-off second." ]
+      # When a monster strikes, by aggression level 1/2/3 (level 2 is empty) (the built-in wording; edit to change it, delete to restore)
+      strike: [ Strike only when cornered., "", Strike whenever the explorer is adjacent and the claw is ready. ]
+      # How a monster works with the pack, by pack level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      pack: [ This is your prey; do not wait for others., Close in together with your packmates., "Coordinate: take the route no teammate covers." ]
+      # How far ahead a monster plans, by horizon level 1/2/3 (level 2 is empty) (the built-in wording; edit to change it, delete to restore)
+      horizon: [ Think about the next few steps only., "", Predict where it will go and plan ahead. ]
+    words:
+      # Plain words for the aggression trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      aggression: [ hesitant, steady, fierce ]
+      # Plain words for the persistence trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      persistence: [ gives up fast, standard, relentless ]
+      # Plain words for the horizon trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      horizon: [ short-term, standard, long-term planner ]
+      # Plain words for the roaming trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      roaming: [ stays home, ranges, roams everywhere ]
+      # Plain words for the pack trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      pack: [ loner, team player, pack hunter ]
     mix: mixed # 'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }
     presets:
       aggressive:
@@ -336,6 +500,11 @@ monsters:
     coverRadius: 12 # Explorer path steps around a monster that coverage looks at
   memory:
     sightingSpacing: 3 # A new sighting is stored only after the explorer moved this far
+  prompts:
+    # A monster's objective text (the built-in wording; edit to change it, delete to restore)
+    objective: Catch the explorer before it finds the treasure.
+    # What a monster's memory says while its brain is off (the built-in wording; edit to change it, delete to restore)
+    offText: "Brain off: patrolling the dungeon by code."
 
 # Directives the player may whisper to the explorer.
 player:

@@ -120,6 +120,8 @@ const LIT = {
   ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot(),
   // P5
   ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(),
+  // P6: text knobs are null in the registry (= the built-in wording)
+  ...Object.fromEntries(R.KNOBS.filter((k) => k.type === 'text').map((k) => [k.key, null])),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
@@ -324,6 +326,46 @@ await S.applyNextGame();
 const backP5 = { ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(), limPriorityLine: C.PRIORITY_MAX };
 check(sortedEntries(backP5) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in backP5))), 'removing the keys restores every P5 default');
 check(REQUEST_BYTES.explorerChasing === 9500 && REQUEST_BYTES.explorerPatrolling === 10500 && REQUEST_BYTES.adversaryMax === 8000, 'the request-size bounds the checks use are the documented ones');
+
+// 6g. P6: prompt wording. null/absent = built-in; the file replaces it; bad text is refused
+const builtins = { ...BR.explorerPromptDefaults(), ...C.characterPromptDefaults(), ...AM.monsterPromptDefaults(), ...QS.skillPromptDefaults() };
+const textRows = R.KNOBS.filter((k) => k.type === 'text');
+check(textRows.length === Object.keys(builtins).length && textRows.every((k) => k.key in builtins), 'every text knob has a built-in wording, and every built-in has a knob');
+check(textRows.every((k) => k.def === null && (k.len ? Array.isArray(builtins[k.key]) : typeof builtins[k.key] === 'string')), 'text knobs default to null and the built-ins have the right shape');
+check(textRows.every((k) => (k.len ? builtins[k.key].every((x) => x.length <= k.maxLen) : builtins[k.key].length <= k.maxLen)), 'no built-in wording exceeds its own limit');
+check(sortedEntries({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() }) === sortedEntries(builtins), 'with no config every module speaks its built-in wording');
+writeFileSync(cfg, `explorer:
+  moods:
+    wary: { when: "Custom wary when.", gloss: careful }
+  prompts:
+    triggers: { start: "Custom start." }
+    tacticHints: { hide: "Custom hide." }
+    confidenceSentence: " Custom caps."
+skills: { questionText: { neutral: { question: "Pick one skill, maybe." } } }
+monsters:
+  characters:
+    lines: { aggression: [A1, A2, A3] }
+    words: { pack: [x, y, z] }
+  prompts: { objective: "Custom objective." }
+`);
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(BR.SENTIMENTS.wary.when === 'Custom wary when.' && BR.explorerPromptSnapshot().moodGloss_wary === 'careful' && BR.SENTIMENTS.wary.note === builtins.mt_wary_note, 'mood wording follows the file and leaves the other fields alone');
+check(BR.explorerPromptSnapshot().trigger_start === 'Custom start.' && BR.explorerPromptSnapshot().tacticHint_hide === 'Custom hide.' && BR.CAPS_SENTENCE === ' Custom caps.', 'trigger, tactic-hint and confidence wording follow the file (live)');
+check(QS.skillQuestion({ k: { fact: 'f' } }, '', { neutral: true }).instructions.question.startsWith('Pick one skill, maybe.'), 'the skill question uses the file wording');
+check(C.profileOf(C.traitsOf('aggressive')).priority.includes('A3') && C.profileOf(C.traitsOf('timid')).words.pack === 'x', 'character lines and trait words follow the file');
+check(AM.OBJECTIVE === 'Custom objective.', 'the monster objective follows the file');
+p = L.parseConfig(YAML.parse(`explorer:
+  moods: { bold: { when: "" }, steady: { note: "two\\nlines" } }
+  prompts: { triggers: { hit: ${JSON.stringify('x'.repeat(900))} } }
+monsters: { characters: { words: { pack: [a, b] }, lines: { strike: ["", "ok", ""] } } }`));
+check(p.warnings.length === 4 && !('mt_bold_when' in p.values && p.values.mt_bold_when) && p.values.line_strike?.[1] === 'ok', 'empty, multi-line, too long and wrong-length wording is refused by name, empty level lines are allowed: ' + p.warnings.join(' | '));
+const same = L.parseConfig(YAML.parse(`explorer: { prompts: { triggers: { start: ${JSON.stringify(builtins.trigger_start)} } } }`));
+check(same.values.trigger_start === null && same.warnings.length === 0, 'text equal to the built-in is not an override');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(sortedEntries({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() }) === sortedEntries(builtins), 'removing the keys restores every built-in wording');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

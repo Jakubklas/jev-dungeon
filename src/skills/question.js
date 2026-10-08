@@ -36,3 +36,12 @@ export function pickSkill(answer, options) {
   const p = answer.probabilities?.[choice];
   return typeof p === 'number' && p >= SKILL_MIN ? choice : 'none';
 }
+
+// Prompt wording from the central config (null = built-in): the skill question's lead sentences.
+const SLOTS = { skillQ_default_question: [LEAD.default, 'question'], skillQ_default_none: [LEAD.default, 'none'], skillQ_neutral_question: [LEAD.neutral, 'question'], skillQ_neutral_none: [LEAD.neutral, 'none'] };
+const BUILTIN_SKILLQ = Object.fromEntries(Object.entries(SLOTS).map(([k, [o, f]]) => [k, o[f]]));
+export function configureSkillPrompts(o) {
+  for (const [k, [obj, f]] of Object.entries(SLOTS)) obj[f] = typeof o[k] === 'string' ? o[k] : BUILTIN_SKILLQ[k];
+}
+export const skillPromptDefaults = () => ({ ...BUILTIN_SKILLQ });
+export const skillPromptSnapshot = () => Object.fromEntries(Object.entries(SLOTS).map(([k, [o, f]]) => [k, o[f]]));

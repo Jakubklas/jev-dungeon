@@ -18,6 +18,10 @@ import { configureCoins } from '../coins.js';
 import { configureHearts } from '../hearts.js';
 import { configureCharacters, configureDistribution, configureTraits } from '../characters/adversary/character.js';
 import { configureQuestion } from '../skills/question.js';
+import { configureExplorerPrompts } from '../characters/explorer/brain.js';
+import { configureCharacterPrompts } from '../characters/adversary/character.js';
+import { configureMonsterPrompts } from '../characters/adversary/memory.js';
+import { configureSkillPrompts } from '../skills/question.js';
 import { configureExplorerBrain } from '../characters/explorer/brain.js';
 import { configureExplorerPerception } from '../characters/explorer/perception.js';
 import { configureExplorerEncounter } from '../characters/explorer/encounter.js';
@@ -78,6 +82,10 @@ function push() {
   configureExplorerMemory(applied);
   configureAdversaryLimits(applied);
   configureAttack(applied);
+  configureExplorerPrompts(applied);
+  configureCharacterPrompts(applied);
+  configureMonsterPrompts(applied);
+  configureSkillPrompts(applied);
   configureCoins(applied);
   configureHearts(applied);
 }
