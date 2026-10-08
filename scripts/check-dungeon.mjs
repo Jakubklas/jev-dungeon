@@ -122,7 +122,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
 //     sibling skills files and DIRS from dungeon.js.
 {
   const SKILL_ALLOWED_IMPORTS = {
-    './skill.js': null, './attack.js': null, './block.js': null, './skill-set.js': null, './loadouts.js': null,
+    './skill.js': null, './attack.js': null, './area.js': null, './block.js': null, './skill-set.js': null, './loadouts.js': null,
     './question.js': null, './config.js': null, '../dungeon.js': ['DIRS'],
   };
   const sk = (n, src) => fogViolations(n, src, SKILL_ALLOWED_IMPORTS);
@@ -1003,6 +1003,27 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         console.log(`  worst-case decision tick (${mode}${conf.fixedMood ? ', fixed mood' : ', confidence caps'}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
+    }
+    // Outnumbered: three chasers inside the fire strike's 4x4 block, one adjacent, so the skill question carries the
+    // sword, the shield and the fire strike at once on the decision tick, with lit coins in the room.
+    {
+      const room = ['#################', ...Array.from({ length: 9 }, () => '#...............#'), '#################'];
+      const big = handGame(room, [8, 5], 9);
+      big.coinPiles = [[3, 3], [12, 7]];
+      big.adversaries = [chaser([9, 5], 'chase', 'a1'), chaser([7, 4], 'chase', 'a2'), chaser([9, 6], 'chase', 'a3')];
+      sizes.length = 0;
+      const bd = mkdtempSync(join(tmpdir(), 'jev-check-'));
+      let skillKeys = [];
+      const bb = new ExplorerBrain(new KnownWorld(big), {
+        ask: async (req) => { if (req.questions.skill) skillKeys = Object.keys(req.questions.skill.criteria); return answerWith((k, ds) => (k === 'sentiment' ? 'wary' : k === 'skill' ? 'none' : ds.includes('stay') ? 'stay' : ds[0]))(req); },
+        memoryDir: pathToFileURL(bd + '/'), confidence: FIXED_MOOD,
+      });
+      await withSeed(1, async () => { for (let i = 0; i < 2; i++) { await bb.takeTurn(); big.pos = [8, 5]; } });
+      const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
+      if (!skillKeys.includes('fire_strike') || !skillKeys.some((k) => k.startsWith('sword_strike'))) fail(`outnumbered size check: skill options ${skillKeys}`);
+      if (peak > REQUEST_BYTES.explorerChasing) fail(`outnumbered decision request is ${peak} bytes with ${most} tactics (> ${REQUEST_BYTES.explorerChasing})`);
+      console.log(`  outnumbered decision tick (3 chasers in the fire block, skills ${skillKeys.length - 1}): ${peak} bytes with ${most} tactics offered (bound ${REQUEST_BYTES.explorerChasing})`);
+      rmSync(bd, { recursive: true, force: true });
     }
     console.log(`encounter counters ${JSON.stringify(m.encounters)}, events ${m.events.length}; ${sizes.length} requests, largest ${max} bytes (up to ${maxTactics} tactics offered)`);
     rmSync(dir, { recursive: true, force: true });

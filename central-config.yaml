@@ -89,7 +89,7 @@ world:
 explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
   lives: 2 # Lives the explorer starts with
-  skills: [ sword_strike, shield_block ] # Skills the explorer starts with (at most 4; empty = none)
+  skills: [ sword_strike, shield_block, fire_strike ] # Skills the explorer starts with (at most 4; empty = none)
   brain:
     reviewEvery: 8 # Steps between approach reviews
     approachFailing: 0.5 # approach_working below this switches the approach
@@ -343,6 +343,9 @@ skills:
   shield_block:
     effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
     cooldown: 2 # Steps before the shield can be raised again
+  fire_strike:
+    damage: 2 # Hit points the fire strike takes from every enemy in its 4x4 area
+    cooldown: 200 # Steps before the fire strike is ready again
   stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
   minProbability: 0.5 # Jev must be at least this sure to use a skill
   questionText:

@@ -10,6 +10,8 @@ import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { Skill } from '../src/skills/skill.js';
 import { AttackSkill } from '../src/skills/attack.js';
 import { BlockSkill } from '../src/skills/block.js';
+import { AreaSkill, BLOCK_4X4 } from '../src/skills/area.js';
+import { newTestGame } from '../src/turn.js';
 import { MAX_SKILLS, SkillSet } from '../src/skills/skill-set.js';
 import { LOADOUTS, buildSkillSet } from '../src/skills/loadouts.js';
 import { SKILL_MIN, pickSkill, skillQuestion } from '../src/skills/question.js';
@@ -71,7 +73,7 @@ check(sk.cooldownLeft === 0, 'cooldown never goes below 0');
 const sum = sk.summary();
 check(eq(Object.keys(sum), ['id', 'kind', 'name', 'text', 'ready', 'cooldown_left']), 'summary keys');
 check(eq(JSON.parse(JSON.stringify(sum)), sum) && sum.kind === 'attack', 'summary is plain JSON');
-check(eq(buildSkillSet('explorer').summaries().map((s) => s.id), ['sword_strike', 'shield_block']), 'explorer loadout');
+check(eq(buildSkillSet('explorer').summaries().map((s) => s.id), ['sword_strike', 'shield_block', 'fire_strike']), 'explorer loadout');
 check(eq(buildSkillSet('ghost').summaries().map((s) => s.id), ['claw_strike']) && LOADOUTS.claw_strike.cooldown === 2, 'ghost loadout has no block');
 check(buildSkillSet('none').size === 0, 'none loadout is empty');
 check(buildSkillSet('explorer', { shield_block: { effectiveness: 0.9 } }).skills[1].effectiveness === 0.9, 'tuning overrides numbers');
@@ -527,6 +529,89 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     check(rs.every((r) => r.claws <= 1), `${policy} duels: at most one claw per duel`);
     if (policy === 'hold') check(rs.every((r) => r.claws === 0), 'hold duels: no claw at all holding the 2-step gap');
   }
+}
+
+// 13. Fire strike (area skill): a 4x4 blast around the explorer, 2 hp to every enemy in it, offered only when
+// outnumbered, then a 200-step wait. Only cells in real line of sight burn (rule 1).
+{
+  const seenOf = (world) => ({ pos: world.pos, opponentsNear: true, visibleOpponents: world.visibleAdversaries().map((v) => ({ id: v.id, pos: [...v.pos], hp: v.hp, maxHp: v.maxHp })) });
+  check(BLOCK_4X4.length === 16 && new Set(BLOCK_4X4.map((c) => c.join())).size === 16, 'the block is 16 distinct cells');
+  const fire = new AreaSkill({ ...LOADOUTS.fire_strike });
+  check(fire.kind === 'area' && fire.damage === 2 && fire.cooldown === 200, 'fire strike: area kind, damage 2, cooldown 200');
+  const cells = fire.cells([5, 4], 'right');
+  check(cells.some((c) => eq(c, [5, 4])) && Math.max(...cells.map((c) => c[0])) - Math.min(...cells.map((c) => c[0])) === 3 && Math.max(...cells.map((c) => c[1])) - Math.min(...cells.map((c) => c[1])) === 3, 'a 4x4 square that holds the explorer');
+  for (const d of Object.keys(DIRS)) check(fire.cells([5, 4], d).filter((c) => Math.abs(c[0] - 5) <= 1 && Math.abs(c[1] - 4) <= 1).length >= 4, `placement ${d}: the explorer sits in its central 2x2`);
+  // One enemy in sight: the sword's job, nothing offered.
+  const g1 = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######']);
+  const set1 = buildSkillSet('explorer');
+  check(!('fire_strike' in set1.options(new KnownWorld(g1), seenOf(new KnownWorld(g1)))), 'not offered with one enemy in sight');
+  // Three around the explorer and a spare out of the block: one option, all three dispelled, no win.
+  const g = arena(['###########', '#.........#', '#.........#', '#...A.....#', '#....@A...#', '#.....A...#', '#.........#', '#........A#', '###########']);
+  const world = new KnownWorld(g);
+  const set = buildSkillSet('explorer');
+  check(set.skills.map((k) => k.id).join() === 'sword_strike,shield_block,fire_strike', 'the explorer carries the fire strike');
+  const o = set.options(world, seenOf(world));
+  check(Object.keys(o).filter((k) => k.startsWith('fire')).join() === 'fire_strike', 'one fire option, no aim in the key');
+  const fact = o.fire_strike?.fact ?? '';
+  check(fact.length <= 160 && /dispels 3/.test(fact) && !/ghost|troll/i.test(fact) && !/%|chance/.test(fact), `fact counts outcomes, no kind, no chance: ${fact}`);
+  const facing = g.facing;
+  const ev = world.useSkill(set, 'fire_strike');
+  check(ev.filter((e) => e.type === 'dispelled').length === 3 && g.adversaries.map((a) => a.id).join() === 'a4' && !g.won, 'three enemies dispelled at once, the spare left, no win');
+  check(g.strikes.length === 1 && g.strikes[0].skill === 'fire_strike' && g.strikes[0].cells.length === 16 && g.facing === facing, 'one strike recorded with its skill and 16 cells; facing unchanged');
+  check(Math.abs(g.strikes[0].centre[0] - 5) === 0.5 && Math.abs(g.strikes[0].centre[1] - 4) === 0.5, `the block centre is a corner of the explorer's cell: ${g.strikes[0].centre}`);
+  const f = set.skills.find((k) => k.id === 'fire_strike');
+  check(!f.ready && f.cooldownLeft === 200 && world.useSkill(set, 'fire_strike') === null, 'cooling down 200 steps; a second use is refused');
+  for (let i = 0; i < 199; i++) set.turnPassed();
+  check(!f.ready, 'still cooling after 199 turns');
+  set.turnPassed();
+  check(f.ready, 'ready again after 200 turns');
+  // A troll (4 hp) takes 2 and stays; a sword strike would have taken 1.
+  const { dungeon: dt, adversaries: at } = buildArena({ map: ['#######', '#.....#', '#..A..#', '#..@A.#', '#.....#', '#....A#', '#######'], seed: 7, kinds: ['troll', 'ghost', 'ghost'] });
+  const gt = new Game(dt); gt.adversaries = at;
+  const wt = new KnownWorld(gt);
+  const st = buildSkillSet('explorer');
+  const ot = st.options(wt, seenOf(wt));
+  check(/leaves 1 at 2 hp/.test(ot.fire_strike?.fact ?? ''), `troll outcome from its health bar: ${ot.fire_strike?.fact}`);
+  wt.useSkill(st, 'fire_strike');
+  const troll = gt.adversaries.find((a) => a.kind === 'troll');
+  check(troll && troll.hp === troll.maxHp - 2, 'the troll loses 2 hp and stays');
+  // Fog: an enemy round a wall inside the block is neither offered nor struck.
+  const gf = arena(['#########', '#.......#', '#..@#A..#', '#.AA....#', '#.......#', '#.......#', '#########']);
+  const wf = new KnownWorld(gf);
+  const hidden = gf.adversaries.find((a) => eq(a.pos, [5, 2]));
+  check(hidden && !wf.visibleAdversaries().some((v) => v.id === hidden.id), 'the enemy behind the wall is out of sight');
+  const sf = buildSkillSet('explorer');
+  const of = sf.options(wf, seenOf(wf));
+  check(of.fire_strike && of.fire_strike.target.cells.some((c) => eq(c, [5, 2])), 'the chosen block covers the hidden cell');
+  const before = JSON.stringify(of);
+  hidden.takeHit(1, [0, 0]); // its health bar is not visible: the options must not change
+  check(JSON.stringify(sf.options(wf, seenOf(wf))) === before, 'a hidden enemy\'s hp does not change the option');
+  wf.useSkill(sf, 'fire_strike');
+  check(gf.adversaries.includes(hidden) && !gf.strikes[0].cells.some((c) => eq(c, [5, 2])), 'the hidden enemy is not struck, its cell not burnt');
+  check(gf.strikes[0].cells.length < 16 && gf.strikes[0].centre.every((v) => v % 1 === 0.5), 'walls cut cells off, the drawn centre stays the whole block\'s');
+  // The last two at once: a cleared win.
+  const gw = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#...A.#', '#.....#', '#######']);
+  const ww = new KnownWorld(gw);
+  const sw = buildSkillSet('explorer');
+  sw.options(ww, seenOf(ww));
+  const evw = ww.useSkill(sw, 'fire_strike');
+  check(gw.won && gw.winBy === 'cleared' && evw.some((e) => e.type === 'cleared'), 'dispelling the last two at once wins (cleared)');
+  // Through the real brain and Run: a stub Jev that takes the fire strike when offered.
+  const pick = (q) => (q.criteria && 'fire_strike' in q.criteria ? 'fire_strike' : Object.keys(q.criteria ?? {}).find((k) => k !== 'none') ?? Object.keys(q.criteria ?? {})[0]);
+  const answers = (questions) => Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === 'noul' ? { noul: 0.5 } : { choice: pick(q), probabilities: { [pick(q)]: 1 }, confidence: 1 }]));
+  const dirR = mkdtempSync(join(tmpdir(), 'fire-check-'));
+  try {
+    const url = pathToFileURL(dirR + '/');
+    let asked = null;
+    const run = newTestGame({ map: ['###########', '#.........#', '#.........#', '#...A.....#', '#....@A...#', '#.....A...#', '#.........#', '#........A#', '###########'], seed: 7 },
+      { ask: async ({ questions }) => { if (questions.skill) asked = questions.skill; return answers(questions); }, decide: async ({ questions }) => answers(questions), memoryDir: url, dir: url });
+    const turn = await run.playTurn();
+    check(asked && 'fire_strike' in asked.criteria, 'the skill question offers the fire strike');
+    check(/break out/.test(asked?.instructions?.question ?? ''), 'the skill question says to break out with it when outnumbered');
+    check(turn.explorer?.skill_decision?.used === 'fire_strike' || run.explorer.memory.encounters.dispelled >= 3, 'the brain used it: three dispels');
+    check(run.explorer.memory.skills.some((k) => k.id === 'fire_strike' && k.kind === 'area' && !k.ready), 'memory mirrors the fire strike cooling down');
+    check(JSON.stringify(run.explorer.lastRequest()).includes('"fire_strike"'), 'self.skills names it');
+  } finally { rmSync(dirR, { recursive: true, force: true }); }
 }
 
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }

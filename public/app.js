@@ -27,6 +27,7 @@ let advLatency = null;    // slowest adversary Jev call this tick, null when non
 let approachesUsed = new Set();
 let eventLog = [];        // newest first: { step, text, type }
 let strikeFx = null;      // this tick's attacks to flash: { t0, strikes } (S5), null when none
+let fireFx = null;        // the fire strike's blast: { t0, cells, centre }, kept past the next views until its 18 frames are done
 let lastConfidence = null; // turn.confidence ({ value, band, delta, reason }); null with the confidenceModel toggle off
 let lastSkillDecision = null; // turn.skill_decision with its step, null before the first one
 let elapsed = 0, resumedAt = 0;
@@ -86,6 +87,7 @@ const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const SHIELD_SLASH_MS = 260;      // the parry crescent: 6 frames like the sword's slash, a little quicker
 let SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
+let FIRE_MS = 990;              // the fire strike's blast: 18 sprite frames (fall, burst, burn, smoke), 55 ms each
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
@@ -287,7 +289,7 @@ let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'troll', 'chest', 'coin', 'heart']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'troll', 'chest', 'coin', 'heart', 'fire_strike']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -499,6 +501,7 @@ function resetBoard() {
   indexProps();
   syncActors(true);
   strikeFx = null;
+  fireFx = null;
   snapCamera();
 }
 
@@ -511,6 +514,9 @@ function boardUpdate() {
   // Only a view that arrives from a step flashes its strikes (a page load does not replay them). A view
   // without strikes leaves a running flash alone, so fast steps don't cut it short.
   if (Array.isArray(game.strikes) && game.strikes.length) strikeFx = { t0: performance.now(), strikes: game.strikes };
+  // The fire strike plays longer than a step can last, so it has its own clock that later views leave running.
+  const fire = Array.isArray(game.strikes) && game.strikes.find((st) => st?.skill === 'fire_strike' && Array.isArray(st.cells) && st.cells.length);
+  if (fire) fireFx = { t0: performance.now(), cells: fire.cells, centre: Array.isArray(fire.centre) ? fire.centre : null };
 }
 
 // Ease displayed brightness toward the real light, for on-screen cells only.
@@ -783,6 +789,7 @@ function drawScene(now) {
   }
   while (ei < ents.length) drawEntity(ents[ei++], now, cx, cy);
   drawStrikes(cx, cy, now, known, reveal, 'edge');
+  drawFire(cx, cy, now, known, reveal);
   drawGlows(glows, now);
 }
 
@@ -966,6 +973,22 @@ function drawParry(from, t, cx, cy, known, reveal) {
   });
 }
 
+// Fire strike blast: sprites.js ART.fire_strike (18 frames) over FIRE_MS, anchored on the centre of the burnt
+// block (strike.centre: the middle of all 16 cells, a cell corner next to the knight). Drawn after the entities like the slash, so
+// the column falls over whoever stands there. Fog: drawn only when one of its cells is lit (or Reveal).
+function drawFire(cx, cy, now, known, reveal) {
+  if (!fireFx) return;
+  const art = sprites.fire_strike;
+  const frames = art?.frames ?? (art ? [art] : null);
+  const f = Math.floor((now - fireFx.t0) / FIRE_MS * (frames?.length ?? 1));
+  if (!frames || f >= frames.length) { fireFx = null; return; }
+  if (!reveal && !fireFx.cells.some((c) => known(c[0], c[1]))) return;
+  // The whole block's middle (strike.centre), so walls that cut cells off do not shift the blast; else the burnt cells' centroid.
+  const [mx, my] = fireFx.centre ?? [fireFx.cells.reduce((s, c) => s + c[0], 0) / fireFx.cells.length, fireFx.cells.reduce((s, c) => s + c[1], 0) / fireFx.cells.length];
+  const fr = frames[Math.max(0, f)];
+  b.drawImage(fr.canvas, Math.round((mx - my) * HW - cx - fr.anchorX), Math.round((mx + my) * HH + HH - cy - fr.anchorY));
+}
+
 // pass 'fill' runs in the flats pass, 'edge' after the entities; only 'edge' retires strikeFx.
 function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   if (!strikeFx) return;
@@ -994,7 +1017,7 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
     const t = (now - strikeFx.t0) / SLASH_MS, ts = (now - strikeFx.t0) / SHIELD_SLASH_MS;
     for (const st of strikeFx.strikes) {
       const blockedClaw = st.result === 'blocked' && st.by !== 'explorer';
-      if (t < 1 && !blockedClaw) drawSlash(st, t, cx, cy, known, reveal); // a blocked claw shows only the shield's spark
+      if (t < 1 && !blockedClaw && st.skill !== 'fire_strike') drawSlash(st, t, cx, cy, known, reveal); // the fire strike draws its blast instead (drawFire) // a blocked claw shows only the shield's spark
       // A blocked claw: the raised shield parries with a small gold crescent toward the attacker.
       if (blockedClaw && ts < 1 && Array.isArray(st.from) && Array.isArray(game.pos)) drawParry(st.from, ts, cx, cy, known, reveal);
     }
@@ -2082,7 +2105,7 @@ async function loadUi() {
     const c = ui.constants ?? {};
     const num = (v, cur) => (Number.isFinite(v) ? v : cur);
     CAM_MS = num(c.camMs, CAM_MS); LOG_MAX = num(c.logMax, LOG_MAX); FADE_MS = num(c.fadeMs, FADE_MS); TWEEN_MS = num(c.tweenMs, TWEEN_MS);
-    BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS);
+    BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS); FIRE_MS = num(c.fireMs, FIRE_MS);
     REVEAL_ALPHA = num(c.revealAlpha, REVEAL_ALPHA); BUBBLE_IN = num(c.bubbleIn, BUBBLE_IN); BUBBLE_OUT = num(c.bubbleOut, BUBBLE_OUT);
     BLINK_MS = num(c.blinkMs, BLINK_MS); COIN_GLOW_MS = num(c.coinGlowMs, COIN_GLOW_MS);
     // The step delay is the slider's starting value; the player can still move it.

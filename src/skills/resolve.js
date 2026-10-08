@@ -11,8 +11,10 @@ const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 
 // Applies one attack. cells: any cells (off-map and wall cells are dropped). canHit() gates damage on
 // the explorer (grace, one hit per tick); onHit() runs after damage lands so the caller can latch it.
+// skill: the skill id, recorded on the strike only when given (the UI draws the fire strike's blast from it);
+// centre: [x, y] (fractional) the blast is drawn at, the middle of the whole block even where walls cut cells off.
 // Returns the events; the strike is also recorded in game.strikes as { by, cells, result }.
-export function resolveAttack(game, attacker, cells, damage, { canHit = () => true, onHit = () => {}, rand } = {}) {
+export function resolveAttack(game, attacker, cells, damage, { canHit = () => true, onHit = () => {}, rand, skill, centre } = {}) {
   const events = [];
   const live = cells.filter((c) => isFloor(game.dungeon, c));
   let result = 'miss';
@@ -66,7 +68,8 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
 
   // `from` is where the attacker stood when it struck (the explorer often steps on before the view is drawn): the UI aims the slash from it.
   const from = [...(fromExplorer ? game.pos : attacker.pos)];
-  game.strikes.push({ by: attacker.id, from, cells: live.map((c) => [...c]), result });
+  // `skill` is set only for a skill the UI draws its own way (the fire strike); a plain strike keeps the old shape.
+  game.strikes.push({ by: attacker.id, from, cells: live.map((c) => [...c]), result, ...(skill ? { skill } : {}), ...(centre ? { centre } : {}) });
   events.push({ id: attacker.id, type: 'strike', cells: live.map((c) => [...c]), result });
   return events;
 }

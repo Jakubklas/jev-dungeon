@@ -3,6 +3,7 @@
 // once lit. This is the single explorer file allowed to hold a Game (the static guard in
 // check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
+import { hasLineOfSight } from '../../dungeon.js';
 import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
 export class KnownWorld {
@@ -67,6 +68,14 @@ export class KnownWorld {
     if (skill.kind === 'attack') {
       this.#game.facing = target.dir;
       events = resolveAttack(this.#game, EXPLORER, target.cells, skill.damage);
+    } else if (skill.kind === 'area') {
+      // A blast hits only cells in real line of sight (inside 2 cells that is "in sight"), so it never strikes
+      // an enemy the explorer cannot see round a wall corner (rule 1). Facing is unchanged: it is not aimed.
+      const pos = this.#game.pos;
+      const cells = target.cells.filter((c) => hasLineOfSight(this.#game.dungeon, pos, c));
+      const xs = target.cells.map((c) => c[0]), ys = target.cells.map((c) => c[1]);
+      const centre = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; // the whole block's middle, for the UI
+      events = resolveAttack(this.#game, EXPLORER, cells, skill.damage, { skill: skill.id, centre });
     } else if (skill.kind === 'block') {
       this.#game.block = { effectiveness: skill.effectiveness, until_step: this.#game.steps + 1 };
     } else {

@@ -43,7 +43,7 @@ const TX = await import('../src/config/texts.js');
 const TH = await import('../public/thoughts.js');
 const appSrc = readFileSync(fileURLToPath(new URL('../public/app.js', import.meta.url)), 'utf8');
 // The browser's timing constants, read from app.js itself: the registry default must be the literal the page falls back to.
-const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
+const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', fireMs: 'FIRE_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
 const uiLiteral = (name) => { const m = new RegExp(`\\b${name} = (\\.?[0-9][0-9._]*)`).exec(appSrc); return m ? Number(m[1].replace(/_/g, '')) : undefined; };
 const { eq } = L;
 const { generateDungeon } = D;
@@ -123,6 +123,7 @@ const LIT = {
   ...Object.fromEntries(Object.keys(CAT.KINDS).filter((id) => id !== 'torch').map((id) => [`propWeight_${id}`, CAT.KINDS[id].weight])),
   // P2
   explorerSkills: [...LD.DEFAULT_SETS.explorer], ghostSkills: [...LD.DEFAULT_SETS.ghost], trollSkills: [...KD.KINDS.troll.skills],
+  fireDamage: LD.LOADOUTS.fire_strike.damage, fireCooldown: LD.LOADOUTS.fire_strike.cooldown,
   ghostSpeed: KD.KINDS.ghost.speed(), ghostClawCooldown: null, trollClawCooldown: null, skillMin: QS.SKILL_MIN,
   ...C.traitDefaults(),
   // P3
@@ -274,7 +275,7 @@ writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();
-check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
+check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block', 'fire_strike']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
 
 // 6d. P3: the explorer's thresholds, confidence model and moods follow the file; inconsistent ones are refused
 writeFileSync(cfg, `explorer:

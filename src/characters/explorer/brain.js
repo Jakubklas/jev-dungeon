@@ -38,6 +38,7 @@ let REVIEW_EVERY = 8; // steps between approach reviews
 let APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
 let REDECIDE_COOLDOWN = 3; // min ticks between decision steps for a failing tactic
 let REMEMBER_STEPS = 30; // a remembered sighting expires after this many steps
+const FIRE_LINE = 'Outnumbered with the fire strike ready: use it to break out or clear them at once.';
 let SKILL_NEAR = 10; // loose gate (PLAN D7): an opponent visible, or remembered fresh, within this many cells
 let SKILL_REMEMBER_STEPS = 10; // a sighting this young still opens the gate
 let THREAT_STEPS = 2; // a visible chaser within this many path steps offers the block
@@ -831,7 +832,10 @@ export class ExplorerBrain {
     }
     // ONE skill question per request (never per tactic, never in the sentiment request). On a forced tick
     // it is the only question: a skill-only request (PLAN D4-a).
-    const skillQ = hasSkillOptions ? skillQuestion(skillOptions, liveDirective ? directiveLine(liveDirective.text) : profile.skill_priority, { neutral: true }) : null;
+    // The fire strike is offered only when outnumbered, which is when the low moods say "keep running": one clause, sent only
+    // with that option on the question, says the blast is the way to break out (other requests stay byte-identical).
+    const fireLine = !liveDirective && 'fire_strike' in skillOptions ? ` ${FIRE_LINE}` : '';
+    const skillQ = hasSkillOptions ? skillQuestion(skillOptions, (liveDirective ? directiveLine(liveDirective.text) : profile.skill_priority) + fireLine, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
     let dir = held ? STAY : legal[0];

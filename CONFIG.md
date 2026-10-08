@@ -29,8 +29,8 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.kinds.troll.speed` | 0.65 | 0.2..1 | next | no | A troll moves at this share of the ghost speed. |
 | `monsters.kinds.troll.stunTicks` | 0 | 0..6 | next | no | Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step). |
 | `monsters.spawn.minSteps` | 20 | 1..60 | next | no | Path steps a monster spawns away from the explorer start |
-| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
-| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
+| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
+| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
 | `monsters.kinds.ghost.speed` | 1 | 0.2..1 | next | no | Share of the global monster speed (1 = full) |
 | `monsters.kinds.ghost.clawCooldown` | null | 0..6 | next | no | Ghost claw cooldown, steps (null = the global clawCooldown) |
 | `monsters.kinds.troll.clawCooldown` | null | 0..6 | next | no | Troll claw cooldown, steps (null = the global clawCooldown) |
@@ -190,7 +190,7 @@ The knight: lives and protection after a hit.
 | --- | --- | --- | --- | --- | --- |
 | `explorer.graceTicks` | 4 | 0..12 | live | no | Steps of protection after the explorer is hit |
 | `explorer.lives` | 2 | 1..9 | next | yes | Lives the explorer starts with |
-| `explorer.skills` | ["sword_strike","shield_block"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
+| `explorer.skills` | ["sword_strike","shield_block","fire_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
 | `explorer.brain.reviewEvery` | 8 | 1..50 | live | no | Steps between approach reviews |
 | `explorer.brain.approachFailing` | 0.5 | 0..1 | live | no | approach_working below this switches the approach |
 | `explorer.brain.redecideCooldown` | 3 | 1..20 | live | no | Least ticks between decisions for a failing tactic |
@@ -360,6 +360,8 @@ Sword, shield and the stun they cause.
 | `skills.shield_block.effectiveness` | 0.6 | 0..1 | next | no | Chance a raised shield stops a claw (0-1) |
 | `skills.shield_block.cooldown` | 2 | 0..6 | next | no | Steps before the shield can be raised again |
 | `skills.stunTicks` | 2 | 0..6 | next | no | Ticks a struck monster loses (no move, no Jev call) |
+| `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 4x4 area |
+| `skills.fire_strike.cooldown` | 200 | 0..1000 | next | no | Steps before the fire strike is ready again |
 | `skills.minProbability` | 0.5 | 0.1..1 | next | no | Jev must be at least this sure to use a skill |
 | `skills.questionText.default.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for monsters |
 | `skills.questionText.default.none` | (built-in wording) | text, up to 300 chars | live | no | Skill question "none" option for monsters |
@@ -443,6 +445,7 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.walkMs` | 620 | 100..3000 | live | no | A troll's stride after each step, ms |
 | `ui.strikeMs` | 800 | 100..4000 | live | no | Strike overlay duration, ms |
 | `ui.slashMs` | 340 | 50..2000 | live | no | Slash crescent duration, ms |
+| `ui.fireMs` | 990 | 200..5000 | live | no | Fire strike blast duration (18 frames), ms |
 | `ui.revealAlpha` | 0.42 | 0.1..1 | live | no | Opacity of cells and monsters shown by Reveal map |
 | `ui.bubbleIn` | 200 | 0..2000 | live | no | Thought bubble fade-in, ms |
 | `ui.bubbleOut` | 400 | 0..3000 | live | no | Thought bubble fade-out, ms |

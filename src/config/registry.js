@@ -105,7 +105,7 @@ const P1_ROWS = [
   { key: 'testbedProps', path: 'testbed.props', group: 'Testbed', label: 'testbed.props', hint: 'Default prop preset', doc: 'Default prop preset: none, few or many', type: 'choice', options: ['none', 'few', 'many'], def: 'none', when: 'next', page: false },
 ];
 // ---- P2: skills, kinds, characters. File-only. Lists and tuples are compared by value (load.js eq). ----
-const LOADOUT_IDS = ['sword_strike', 'shield_block', 'claw_strike'];
+const LOADOUT_IDS = ['sword_strike', 'shield_block', 'fire_strike', 'claw_strike'];
 const list = (key, path, def, doc) => ({ key, path, group: 'Skills', label: path, hint: doc, doc, type: 'list', options: LOADOUT_IDS, maxLen: 4, def, when: 'next', page: false });
 const TRAIT_TABLE = [ // [knob, def (levels 1/2/3), min, max, step, doc]; max = the default's largest where a memory limit caps it
   ['chaseRange', [5, 7, 7], 1, 20, 1, 'Cells within which a seen explorer starts a hunt'],
@@ -131,9 +131,11 @@ const TRAIT_TABLE = [ // [knob, def (levels 1/2/3), min, max, step, doc]; max = 
   ['moralePack', [0, 0.5, 1], 0, 3, 0.1, 'Worth of each nearby packmate to its morale'],
 ];
 const P2_ROWS = [
-  list('explorerSkills', 'explorer.skills', ['sword_strike', 'shield_block'], 'Skills the explorer starts with (at most 4; empty = none)'),
+  list('explorerSkills', 'explorer.skills', ['sword_strike', 'shield_block', 'fire_strike'], 'Skills the explorer starts with (at most 4; empty = none)'),
   list('ghostSkills', 'monsters.kinds.ghost.skills', ['claw_strike'], 'Skills a ghost has (at most 4; empty = none)'),
   list('trollSkills', 'monsters.kinds.troll.skills', ['claw_strike'], 'Skills a troll has (at most 4; empty = none)'),
+  { ...num('fireDamage', 'skills.fire_strike.damage', 2, 1, 5, 1, 'Hit points the fire strike takes from every enemy in its 4x4 area'), group: 'Skills' },
+  { ...num('fireCooldown', 'skills.fire_strike.cooldown', 200, 0, 1000, 1, 'Steps before the fire strike is ready again'), group: 'Skills' },
   { ...num('ghostSpeed', 'monsters.kinds.ghost.speed', 1, 0.2, 1, 0.05, 'Share of the global monster speed (1 = full)'), group: 'Skills' },
   { ...num('ghostClawCooldown', 'monsters.kinds.ghost.clawCooldown', null, 0, 6, 1, 'Ghost claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
   { ...num('trollClawCooldown', 'monsters.kinds.troll.clawCooldown', null, 0, 6, 1, 'Troll claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
@@ -382,6 +384,7 @@ const P7_ROWS = [
   { key: 'ui_walkMs', path: 'ui.walkMs', group: 'UI', label: 'ui.walkMs', hint: "A troll's stride after each step, ms", doc: "A troll's stride after each step, ms", type: 'range', min: 100, max: 3000, step: 10, def: 620, when: 'live', page: false },
   { key: 'ui_strikeMs', path: 'ui.strikeMs', group: 'UI', label: 'ui.strikeMs', hint: "Strike overlay duration, ms", doc: "Strike overlay duration, ms", type: 'range', min: 100, max: 4000, step: 50, def: 800, when: 'live', page: false },
   { key: 'ui_slashMs', path: 'ui.slashMs', group: 'UI', label: 'ui.slashMs', hint: "Slash crescent duration, ms", doc: "Slash crescent duration, ms", type: 'range', min: 50, max: 2000, step: 10, def: 340, when: 'live', page: false },
+  { key: 'ui_fireMs', path: 'ui.fireMs', group: 'UI', label: 'ui.fireMs', hint: "Fire strike blast duration (18 frames), ms", doc: "Fire strike blast duration (18 frames), ms", type: 'range', min: 200, max: 5000, step: 10, def: 990, when: 'live', page: false },
   { key: 'ui_revealAlpha', path: 'ui.revealAlpha', group: 'UI', label: 'ui.revealAlpha', hint: "Opacity of cells and monsters shown by Reveal map", doc: "Opacity of cells and monsters shown by Reveal map", type: 'range', min: 0.1, max: 1, step: 0.01, def: 0.42, when: 'live', page: false },
   { key: 'ui_bubbleIn', path: 'ui.bubbleIn', group: 'UI', label: 'ui.bubbleIn', hint: "Thought bubble fade-in, ms", doc: "Thought bubble fade-in, ms", type: 'range', min: 0, max: 2000, step: 10, def: 200, when: 'live', page: false },
   { key: 'ui_bubbleOut', path: 'ui.bubbleOut', group: 'UI', label: 'ui.bubbleOut', hint: "Thought bubble fade-out, ms", doc: "Thought bubble fade-out, ms", type: 'range', min: 0, max: 3000, step: 10, def: 400, when: 'live', page: false },
