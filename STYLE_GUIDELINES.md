@@ -92,7 +92,7 @@ The world materials have three stops each: **cold** (dimly lit edge) → **mid**
 - **Void:** `#04050d`.
 - **Shadows:** `rgba(0, 0, 0, .45)`.
 
-The cold band target for props (`navy` in `buildProps`) is the same cold navy, so a crate in a dark corner sinks into the stone instead of glowing.
+The cold band target for props (`navy` in `buildProps`) is the floor's cold stop, `PALETTE.floor[0]` = `#172547`, so a crate in a dark corner sinks into the stone instead of glowing.
 
 ### UI chrome (`public/style.css`)
 
@@ -123,7 +123,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Hp pips | 2×2 fill in a 4×4 dark frame, 4 px apart | `drawEntity` |
 | Shadows | Pixel ellipse 6×2 under the knight and ghosts, 4×1 under coins | `pixelEllipse` |
 
-**Scale reference.** A solid prop fills one cell and stands about one wall block tall (shelf: 17 px box height). A character is about 2 blocks tall. Small props stay below knee height on the knight (about 12-16 px).
+**Scale reference.** A solid prop fills one cell and stands about one wall block tall (shelf: 17 px box height). A character is about 2 blocks tall. Small props are 12-16 px tall, about half to two-thirds of the knight's 24 px.
 
 ## Construction techniques
 
