@@ -962,7 +962,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
       // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
       // neutral zone and close tactics, so this is the worst case inside the zone.
-      for (const conf of [FIXED_MOOD, { caps: true, start: 100 }]) for (const [mode, wantTactics, bound] of [['chase', 5, REQUEST_BYTES.explorerChasing], ['patrol', 6, REQUEST_BYTES.explorerPatrolling]]) {
+      // Caps run: start 30 puts C in the midlow tier (about 43) (bold is offered there, with every retreat still on the menu), the largest
+      // menu a C-capped brain can see with the boldest gap; in mid and high the retreats are left off (mid-ground fix).
+      for (const conf of [FIXED_MOOD, { caps: true, start: 30 }]) for (const [mode, wantTactics, bound] of [['chase', 5, REQUEST_BYTES.explorerChasing], ['patrol', 6, REQUEST_BYTES.explorerPatrolling]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -1793,7 +1795,8 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   {
     const W = SENTIMENTS;
     if (/enem/.test(W.greedy.when.split('Pick when')[1].replace('with no enemy in sight', ''))) fail('greedy when mentions enemies beyond "no enemy in sight"');
-    if (!/nothing else clearly fits/.test(W.steady.when) || !/rather keep to the plan than fight them/.test(W.steady.when)) fail('steady when lost the nothing-else-fits or keep-to-the-plan case');
+    // Mid-ground fix: steady no longer offers itself as the way to avoid a fight in sight (Jev takes any safe option shown).
+    if (!/nothing else clearly fits/.test(W.steady.when) || /rather .* than fight/.test(W.steady.when)) fail('steady when lost the nothing-else-fits case or invites skipping a fight');
     if (/\d+\+? steps|far|close|within|\d\+/.test(W.bold.when.split('Pick when')[1])) fail(`bold when has a distance cap or a count: ${W.bold.when}`);
     if (!/sword is ready/.test(W.bold.when) || !/single monster, a hurt one, or several/.test(W.bold.when) || /coin/.test(W.bold.when) === false) fail('bold when lost a condition or the coin upside');
     if (/\d\+|\d enem|\d monsters/.test(Object.values(W).map((m) => m.when + m.priority).join(' '))) fail('a mood text puts a number on enemies');

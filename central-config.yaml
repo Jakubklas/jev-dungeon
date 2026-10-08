@@ -109,6 +109,7 @@ explorer:
     directiveDone: 0.5 # directive_done above this ends the player directive
     directiveAskEvery: 5 # Steps between directive_done questions
     leaveNow: 0.5 # leave_now above this switches to go_to_exit
+    cornerMode: off # Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both)
   perception:
     sightingNear: 8 # A move within this many steps of a sighting counts as toward it
     zoneSteps: 6 # Avoid-zone radius around an older sighting, steps
@@ -134,14 +135,14 @@ explorer:
     holdGap: 2 # Steps the engage hold waits from an enemy
   confidence:
     history:
-      start: 50 # Neutral history score that regen returns to
+      start: 75 # Neutral history score that regen returns to
       hit: -7 # History change when the explorer is hit
-      struck: 5 # History change when a sword strike lands
-      dispelled: 8 # History change when an enemy is dispelled
+      struck: 7 # History change when a sword strike lands
+      dispelled: 12 # History change when an enemy is dispelled
       blocked: 3 # History change when the shield stops a claw
       evaded: 2 # History change when a chase is escaped
-      pressed: -1 # History change per tick under a chasing enemy
-      pressedMax: 8 # Most pressure loss per encounter
+      coin: 2 # History change per coin picked up
+      heart: 5 # History change when a heart is picked up
       blockCeiling: 65 # A block lifts confidence only up to this
       evadeCeiling: 65 # An escape lifts confidence only up to this
     regen:
@@ -151,17 +152,18 @@ explorer:
       lowMax: 35 # Confidence up to this is the low tier
       highMin: 70 # Confidence from this is the high tier
       hysteresis: 5 # A tier is kept this far past its edge
+      midMin: 50 # Confidence from this is the mid tier; below it is midlow, which offers retreats
     panic:
       enter: 20 # Panic starts below this confidence
       exit: 25 # Panic ends at or above this confidence
     cap:
       lastLife: 45 # Highest confidence on the last life
       floor: 0.3 # Share of the cap kept at one life of many
-      pressedRange: 2 # Steps within which a chaser presses, for replay
     capability:
       perExtraEnemy: 0.35 # Expected lives lost per extra enemy, per claw point
       histSpan: 30 # History shifts capability by at most this; sightings fade over it
       max: 75 # Capability of an unhurt explorer, scaled by the share of lives left
+      unhurtFloor: 50 # Lowest capability of an armed explorer at full lives, whatever it sees
       noSwordMax: 20 # Capability without an attack skill never exceeds this
       hpBase: 0.75 # Enemy weight base
       hpSlope: 0.125 # Enemy weight added per strike needed
@@ -169,7 +171,7 @@ explorer:
     bands:
       dominant: 80 # Confidence from this reads dominant
       sure: 65 # Confidence from this reads sure
-      even: 40 # Confidence from this reads even
+      even: 45 # Confidence from this reads even
       unsure: 30 # Confidence from this reads unsure (below is shaken)
   moods:
     panic:
@@ -219,22 +221,22 @@ explorer:
       minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: avoids needless risk while still exploring. Risk: leaves the initiative to the enemy. Pick when an enemy is known and you would rather slip past it than fight, or when you are cornered."
+      when: "Upside: lives to fight again: pull back, regroup (hit protection, the sword ready), come back for the loot. Risk: the enemy keeps hunting and the coins wait. Pick when a fight went badly or you are hurt."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: Keeps its distance and slips past; fights only a hurt monster or when cornered.
+      note: Pulls back for a while to regroup (to a seen heart if hurt), then returns for the loot.
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Cautious: keep your distance. Slip past enemies and explore with a cushion of at least 4 steps; fight only a hurt monster or when cornered."
+      priority: "Cautious: pull back for a while. Keep at least 4 steps from enemies and regroup, then return to the loot; fight a hurt monster or when cornered."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Cautious: keep your distance; slip past enemies rather than meet them."
+      movePriority: "Cautious: pull back for now; keep your distance, then come back for the loot."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
       skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
-      gloss: distance (cautious)
+      gloss: regrouping (cautious)
     steady:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
-      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      endTicks: 3 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when enemies are in sight and you would rather keep to the plan than fight them."
+      when: "Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits: a plan to follow, no coins in sight, little left to explore nearby; not to dodge a fight."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
       note: "Sticks to the plan: explores, coins on the way, fights a single or hurt monster."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
@@ -292,7 +294,8 @@ explorer:
       gloss: the hunt (fearless)
     tiers:
       low: [ wary, guarded ] # Moods the low tier offers, in question order (panic is never offered)
-      mid: [ cautious, steady, greedy, bold ] # Moods the mid tier offers, in question order (panic is never offered)
+      midlow: [ cautious, steady, bold ] # Moods the midlow tier offers, in question order (panic is never offered)
+      mid: [ steady, greedy, bold ] # Moods the mid tier offers, in question order (panic is never offered)
       high: [ bold, fearless ] # Moods the high tier offers, in question order (panic is never offered)
   prompts:
     triggers:
@@ -327,8 +330,6 @@ explorer:
       engage: "Go to the target: 2 steps off a hunting enemy, so it steps next to you and you strike first; next to one you stunned."
       # How the hide tactic should shape the move (the built-in wording; edit to change it, delete to restore)
       hide: Reach the target out of its sight fast; do not step back into its line of sight.
-      # How the race_to_exit tactic should shape the move (the built-in wording; edit to change it, delete to restore)
-      race_to_exit: Head straight for the portal; getting there first matters most.
       # How the carry_on tactic should shape the move (the built-in wording; edit to change it, delete to restore)
       carry_on: "It has not seen you: keep exploring, out of its line of sight."
     # The one sentence that says what self.confidence means (the built-in wording; edit to change it, delete to restore)
@@ -471,8 +472,8 @@ monsters:
     teamSight: true # Hunters see the explorer through packmates' eyes
     heardSteps: 6 # Path steps around a called cell that a monster copies from the caller's map
   spawn:
-    floorPerMonster: 150 # Floor cells per monster: lower = more monsters
-    max: 12 # Cap on monsters per map (0 = none)
+    floorPerMonster: 100 # Floor cells per monster: lower = more monsters
+    max: 15 # Cap on monsters per map (0 = none)
     minSteps: 20 # Path steps a monster spawns away from the explorer start
   kinds:
     ghost:
@@ -486,9 +487,10 @@ monsters:
       hp: 4 # Hits a troll takes before it is dispelled (a ghost has Ghost hit points).
       clawDamage: 2 # Lives a troll claw strike takes.
       speed: 0.65 # A troll moves at this share of the ghost speed.
+      stunTicks: 0 # Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step).
       skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
       clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
-      weight: 0.25 # Spawn weight, relative to the other kinds
+      weight: 0.5 # Spawn weight, relative to the other kinds
   brain:
     pingpongs: 3 # Back-and-forth steps while searching before a monster re-picks its search approach
     skillNear: 10 # A monster asks about a skill when the explorer is within this many cells
@@ -505,6 +507,8 @@ monsters:
     objective: Catch the explorer before it finds the treasure.
     # What a monster's memory says while its brain is off (the built-in wording; edit to change it, delete to restore)
     offText: "Brain off: patrolling the dungeon by code."
+  morale:
+    enabled: true
 
 # Directives the player may whisper to the explorer.
 player:
@@ -757,7 +761,6 @@ ui:
         - HRAAH! I WILL BITE YOUR HEAD OFF!
       # Troll bubble lines for alerted (the built-in wording; edit to change it, delete to restore)
       alerted:
-        - ARRRGH! I HEAR THE KILLING CALL!
         - RAAAAH! DINNER IS SERVED!
         - GRAAAH! COMING TO SMASH!
       # Troll bubble lines for gave_up (the built-in wording; edit to change it, delete to restore)
@@ -806,7 +809,7 @@ instances:
       global:
         speed: 1
       spawn:
-        floorPerMonster: 70
+        floorPerMonster: 35
     world:
       size:
         min: 37

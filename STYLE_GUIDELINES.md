@@ -25,7 +25,7 @@ The user picked these as the best expression of the style. Match them when you m
 | --- | --- | --- | --- |
 | Knight (explorer) | `public/sprites.js` `KNIGHT_A` / `KNIGHT_B` | 18×24, anchor (9, 23) | A steel ramp of 4 tones plus a red accent; a readable silhouette (plume, visor slit, shield arm, cape) at tiny size; a breathing frame built by shifting rows |
 | Ghost (adversary) | `public/sprites.js` `GHOST_A` / `GHOST_B` | 18×20, anchor (9, 19) | A hooded cloth ramp, a bone skull face and one glowing red eye pixel per socket; a ragged hem that alternates between the two frames |
-| Troll | `public/sprites.js` `TROLL_A` / `TROLL_B` | 40×48 (two character blocks: twice the knight's 24 px), anchor (20, 47) | A hunched brute lit from the upper left, built from its own olive skin and moss ramp plus the shared bone, wood and steel ramps. Read it by value: a dark moss mane (a spiky crest over the crown, a drape over the far shoulder, 2-3 px tufts) behind a lighter olive face and chest, cut from the legs by the dark belt. A V-shaped body with background gaps between the arms and the flanks; a small forward head with a pointed ear, gold slit eyes and a fanged mouth; pecs and abs drawn in shade tones, not outlines. Story details: a steel ring buckle, two bone skulls on the belt, rag strips on the loincloth, bone claws on the fists and toes. The far arm and leg sit one tone darker; the breathing frame drops everything above row 21 by one row. In the game as the `troll` monster kind (drawn grounded: no hover bob, wider shadow). Preview next to the knight and ghost: [docs/troll-preview.png](docs/troll-preview.png) |
+| Troll (drawn as the orc) | `public/sprites.js` `ORC_IDLE` / `ORC_WALK` / `ORC_ATTACK` | 42×48 (two character blocks), anchor (17, 47) | A horned, masked orc with glowing cyan runes, converted from `art-src/new-character/orc/sheet.png` by `scripts/img2sprite.mjs` (the command is in the sprites.js header): 3 idle frames, 3 walk frames (played after each step), 2 attack frames (wind-up, punch; played while it strikes, under the game's claw slash). Its own 32-colour palette from the source, olive-tinted outline `#11170b`. Re-run the converter on the source instead of editing the rows. In the game as the `troll` monster kind (grounded: no hover bob, wider shadow). [docs/troll-preview.png](docs/troll-preview.png) still shows the old troll |
 | Sword slash | `public/app.js` `drawSlash`, `SLASH_COLORS` | Arc radius 13 to 26 | A per-pixel crescent: thin tail, fat leading head, a 4-tone ramp from a dark rim to a white core |
 | Floor tiles | `public/app.js` `stonePattern`, `PALETTE.floor*`, `mortar` | 32×16 diamond | Flagstones, cobbles or a cracked slab; 1 px mortar; a lit top-left bevel and a dark bottom-right bevel per stone; sparse pixel noise |
 | Storage chest | `public/props/floor-art.js` `makeChest` | 24×23 | An iso box with a separate lid, two steel bands that wrap over the lid, a lock plate, a keyhole pixel and rivets |
@@ -52,7 +52,7 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | **Glazed blue** | wood outline | `#1f2c61` (b) · `#344994` (B) · `#657fce` (n) | Jars, pots (`#131a3c` deep shade on pots) |
 | **Sack** | wood outline | `#634c25` (Z) · `#957437` (A) · `#c49e56` (a) | Shelf sack |
 | **Glass** | wood outline | `#51987a` (g) · `#85c9a8` (G) | Shelf bottle |
-| **Troll skin** (olive) | `#11170b` | `#3f4422` (s) · `#5a6330` (g) · `#7b8443` (l) · `#a3a85d` (h, brow, pecs, shoulder) | Troll body. Eyes use the coin gold `#ffc633`; fangs, tusks, claws and the belt skulls the bone ramp (sockets and mouth `#13131f`); belt and loincloth the wood ramp; buckle the steel ramp |
+| **Troll skin** (olive; the old troll art, replaced by the orc) | `#11170b` | `#3f4422` (s) · `#5a6330` (g) · `#7b8443` (l) · `#a3a85d` (h, brow, pecs, shoulder) | Troll body. Eyes use the coin gold `#ffc633`; fangs, tusks, claws and the belt skulls the bone ramp (sockets and mouth `#13131f`); belt and loincloth the wood ramp; buckle the steel ramp |
 | **Troll moss** | `#11170b` | `#1c2913` (m, deep) · `#2e4220` (d) · `#4a6a2c` (v, tuft) | Troll mane and crest: kept darker than the skin so the face and chest read in front of it |
 
 ### Accents (saturated, meaningful, used sparingly)
@@ -117,7 +117,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Iso slope | 2:1 (2 px across, 1 px down). In prop art, 16 art px per cell side | `isoX = (x-y)·16`, `isoY = (x+y)·8` |
 | Wall block | 11 px tall; walls are 1 or 2 blocks (25% are 2) | `WALL_H`, `MAX_BLOCKS`, `TALL_WALL_SHARE` |
 | Wall courses | 4 px courses (mortar every 4th row), vertical joints staggered by 3 px | wall builder in app.js |
-| Characters | Knight 18×24, ghost 18×20, troll 40×48 (twice the knight: "a block" for a character is the knight's 24 px); the anchor is the feet or hover point, on the cell centre | `ART` in sprites.js |
+| Characters | Knight 18×24, ghost 18×20, troll (orc) 42×48 (twice the knight: "a block" for a character is the knight's 24 px); the anchor is the feet or hover point, on the cell centre | `ART` in sprites.js |
 | Small floor props | About 18-20 × 12-16 (skull 20×12, tools/sword 20×14, anvil 18×12, goblet 12×16) | floor-art.js |
 | Solid floor props | About 24-25 × 23-30, roughly one cell's diamond wide (chest 24×23, shelf 24×30, crates 25×30) | floor-art.js |
 | Coin | 7×7 | `COIN_A` |
@@ -212,7 +212,8 @@ Build solid props from the `Layer` painter rather than typing big grids:
 
 | Motion | Timing | Code |
 | --- | --- | --- |
-| Idle frame swap (knight breathing, ghost hem) | 2 frames, `ANIM_MS = 260` | `frameOf` |
+| Idle frame swap (knight breathing, ghost hem; the orc's 3 idle frames) | `ANIM_MS = 260` per frame | `frameOf` |
+| Troll (orc) walk / attack | walk frames over `WALK_MS = 620` after a step; attack: wind-up for `ATTACK_WINDUP_MS = 120`, then the punch until `ATTACK_MS = 560`, turned toward the struck cells | `drawEntity` |
 | Ghost hover | ±2 px sine over 1600 ms; the shadow shrinks by 1 px when the ghost rises | `BOB_PX`, `BOB_MS` |
 | Move between cells | 150 ms smoothstep tween; a jump of more than one cell snaps | `TWEEN_MS` |
 | Facing | Sign of the change in screen x: right/up faces right, left/down faces left; mirrored around `anchorX` | AGENTS.md, facing rule |
@@ -246,6 +247,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
 
 ## Adding new art: checklist
 
+0. Starting from an image or a sprite sheet (PNG/JPEG)? Convert it with `node scripts/img2sprite.mjs` (AGENTS.md, Run & verify: Image → sprite), look at the preview, then carry on from step 2 with the result. `--snap` moves its colours onto the ramps below.
 1. Pick the nearest reference asset and copy its palette keys and ramp.
 2. Author it facing right, at full brightness, with a hue-tinted 1 px outline. Fit it to the size class in [Geometry](#geometry-and-sizes).
 3. For an iso prop, build it from `box` / `barrel` / `stamp` in floor-art.js, `merge` each part with its outline, then call `finish(L, 8, 8)`.

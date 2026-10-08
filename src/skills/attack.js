@@ -56,7 +56,7 @@ export class AttackSkill extends Skill {
   // What this strike does to an opponent with `o.hp` hit points.
   #outcome(o, self) {
     if (o.hp <= this.damage) return `is dispelled for good${self.coinChance > 0 ? ' (may drop a coin)' : ''}`;
-    const stun = self.stunTicks ?? 0;
+    const stun = o.stun ?? self.stunTicks ?? 0;
     return `is knocked back${stun ? ` and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}`;
   }
 }

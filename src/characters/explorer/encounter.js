@@ -7,7 +7,8 @@
 // FOG OF WAR as in known-map.js: known floor and adversaries the explorer sees now, nothing else.
 
 import { ADVERSARY_SPEED } from '../adversary/adversary.js';
-import { compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, sameCell, step } from './known-map.js';
+import { DIRS } from '../../dungeon.js';
+import { compass, compass8, dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, sameCell, step } from './known-map.js';
 
 let MAX_GAP = 6; // the route survey looks for closest approaches up to this many steps
 let HIDE_MAX_STEPS = 10; // a hiding cell farther than this is not "ducking"
@@ -358,6 +359,114 @@ export function encounterFacts(world, threats) {
       : 'The portal is seen, but no known path reaches it without running into the enemy.';
   }
   return { facts, survey, area, threats };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// PLAN-corner: "am I cornered, and what is the way out?" Pure over known floor and the visible adversaries (fog-safe:
+// no real-map read; the diagram draws '?' for every cell that is not lit).
+// Cornered = an enemy in sight that chases (or is within CORNER_NEAR steps), AND the explorer has >= CORNER_WALLS
+// orthogonal walls or sits in a pocket of <= CORNER_POCKET safe cells, AND no way out keeps ESCAPE_KEEP_GAP from every
+// enemy (a frontier cell, the seen portal or a corridor junction reachable in the time-aware safe BFS). `bounced` (the
+// brain saw a back-and-forth with an enemy in sight) makes it cornered whatever the shape.
+const CORNER_NEAR = 3; // an enemy this close counts as chasing
+const CORNER_WALLS = 2; // orthogonal wall neighbours that make a corner
+const CORNER_POCKET = 6; // a pocket of this many safe cells or fewer is a trap whatever the walls
+const CORNER_RADIUS = 4; // half-width of the diagram window
+const CORNER_BERTH = 3; // the breakout tries to stay this many steps (known path) off every enemy, then 2, then 1
+const CORNER_MOVES = 8; // moves listed in `breakout.moves`
+
+const dirOf = (a, b) => Object.keys(DIRS).find((d) => a[0] + DIRS[d][0] === b[0] && a[1] + DIRS[d][1] === b[1]);
+
+// Local window around the explorer: E explorer, G a visible enemy, # known wall, . known floor, ? not lit.
+function cornerDiagram(world, threats) {
+  const [px, py] = world.pos;
+  const rows = [];
+  for (let y = py - CORNER_RADIUS; y <= py + CORNER_RADIUS; y++) {
+    let row = '';
+    for (let x = px - CORNER_RADIUS; x <= px + CORNER_RADIUS; x++) {
+      const c = [x, y];
+      if (x === px && y === py) row += 'E';
+      else if (threats.some((th) => sameCell(th.pos, c))) row += 'G';
+      else {
+        const t = world.knownTile(c);
+        row += t === '.' ? '.' : t === '#' ? '#' : '?';
+      }
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+// The cheapest route out of the trap that never steps onto an enemy cell: first with a wide berth (CORNER_BERTH steps
+// from every enemy on every route cell), then narrower, down to 1 (adjacent allowed: a slip). The ghost is slower, so a
+// cell is enterable when the enemy cannot yet be standing on it (predicted gap >= 1, `gapAt`). The target lies outside
+// `trap` (the cells the explorer could already reach keeping ESCAPE_KEEP_GAP) and is a frontier cell, the portal or an
+// open cell (>= 3 floor neighbours) where the predicted gap is >= 2 on arrival.
+function cornerBreakout(world, threats, trap) {
+  const portal = world.seenTreasure();
+  const near = (c) => Math.min(...threats.map((th) => threatDistance(th, c)));
+  for (let berth = CORNER_BERTH; berth >= 1; berth--) {
+    const reach = knownDistances(world, world.pos, null, (c, d) => near(c) >= berth && gapAt(threats, c, d) >= 1, portal);
+    const cands = reach.cells().filter((c) => !sameCell(c, world.pos) && !trap.has(c) &&
+      ((portal && sameCell(c, portal)) ||
+       (gapAt(threats, c, reach.get(c)) >= 2 && (isFrontier(world, c) || neighbours(c).filter((n) => knownFloor(world, n)).length >= 3))));
+    const goal = pick(cands, (f) => 0 - reach.get(f));
+    if (!goal) continue;
+    // Walk back from the goal along strictly decreasing step counts (fixed neighbour order: deterministic).
+    const cells = [goal];
+    for (let c = goal; reach.get(c) > 1;) {
+      c = neighbours(c).find((n) => reach.get(n) === reach.get(c) - 1 && !(portal && sameCell(n, portal)));
+      cells.unshift(c);
+    }
+    const moves = [];
+    let prev = world.pos;
+    for (const c of cells) { moves.push(dirOf(prev, c)); prev = c; }
+    const closest = Math.min(...cells.map(near));
+    const through = closest <= 1;
+    const steps = cells.length;
+    const shown = moves.slice(0, CORNER_MOVES);
+    return {
+      moves: shown,
+      cells,
+      steps,
+      closest,
+      through,
+      why: `Break out: ${plural(steps, 'step')} ${shown.map(dirWord).join(',')}${steps > shown.length ? ',...' : ''}; ` +
+        `closest approach to the enemy ${plural(closest, 'step')}${through ? ', a slip that may cost a claw' : ', going around it'}.`,
+    };
+  }
+  return null;
+}
+
+// -> null | CornerFacts (see PLAN-corner.md). `hasWayOut` here means: the time-aware safe reach (ESCAPE_KEEP_GAP from every
+// enemy) holds a frontier cell, the portal or a corridor junction. `pocket` counts cells reachable without entering a cell
+// within 1 step of an enemy. `breakout.closest` is the known-path distance of the closest route cell to any enemy NOW.
+export function cornerFacts(world, threats, { bounced = false } = {}) {
+  if (!threats?.length) return null;
+  const here = world.pos;
+  const gap = Math.min(...threats.map((th) => threatDistance(th, here)));
+  const walls = neighbours(here).filter((c) => !knownFloor(world, c)).length;
+
+  const ring = new Set();
+  for (const th of threats) for (const c of [th.pos, ...neighbours(th.pos)]) ring.add(key(c));
+  const pocket = knownDistances(world, here, null, (c) => !ring.has(key(c))).order.length;
+
+  const portal = world.seenTreasure();
+  const safe = safeDistances(world, threats, ESCAPE_KEEP_GAP, true);
+  const hasWayOut = safe.order.some((c) => !sameCell(c, here) &&
+    ((portal && sameCell(c, portal)) || isFrontier(world, c) || (!isRoomCell(world, c) && neighbours(c).filter((n) => knownFloor(world, n)).length >= 3)));
+
+  const chasing = threats.some((th) => th.chasing) || gap <= CORNER_NEAR;
+  const shapeTrap = walls >= CORNER_WALLS || pocket <= CORNER_POCKET;
+  if (!bounced && !(chasing && shapeTrap && !hasWayOut)) return null;
+
+  const trapSet = { has: (c) => safe.has(c) };
+  const breakout = cornerBreakout(world, threats, trapSet);
+  const enemy = threats.length === 1 ? 'the enemy' : 'the enemies';
+  const why = walls >= CORNER_WALLS
+    ? `Cornered: ${plural(walls, 'wall')} around you, ${enemy} ${plural(gap, 'step')} away blocks the way out.`
+    : `Cornered: only ${plural(pocket, 'safe cell')} to move in, ${enemy} ${plural(gap, 'step')} away blocks the way out.`;
+  return { walls, pocket, hasWayOut, gap, breakout, diagram: cornerDiagram(world, threats), why };
 }
 
 // Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.

@@ -14,6 +14,7 @@
 //   ghosts      [[x, y] | { cell: [x, y], offset?: [dx, dy], mode?: 'chase' | 'patrol' }]; 1, 2 or 3 (4 works too; the testbed cap is 8).
 //               `offset` is added to `cell`, so a pair can be "N steps apart" from one base cell. Default: the room's cell.
 //   ghostMode   'chase' (default: the ghost hunts from tick 0) or 'patrol'; a per-ghost `mode` wins.
+//   kinds       the monsters' kind for the testbed ('ghost' default | 'troll' | 'mixed' | a list), see src/testbed.js.
 //   ghostHp     hp per ghost (the ghostHp setting otherwise).
 //   settings    overrides of the skill and ghost tunables for this duel: stunTicks, swordCooldown, swordDamage,
 //               clawCooldown, clawDamage, shieldChance, coinDropChance, ghostHp, graceTicks (alias grace), speed, chaseRange.
@@ -22,6 +23,10 @@
 //               2-3 ghosts (PLAN-confidence-mood phase 2). Passed to ExplorerBrain `hold` through newTestGame.
 //   policy      the scripted Jev: 'follow' (sentiment `mood`, tactic engage when offered, the move whose fact says it is
 //               the target, else stay when nothing is closer, else the first non-stay move; skill = first non-none key)
+//               or 'bounce-prone' (additive, PLAN-corner: emulates the live corner-hugging; sentiment `wary` and tactic run_away when
+//               offered, then each move: not stay, never undo the previous move while another move exists, keep a gap >= 2 after the
+//               move when any move can, take the move that maximises the gap from the nearest ghost, else (all moves < gap 2) the
+//               max-gap one, and only undo when nothing else is legal; strikes when the sword is offered. Ignores the printed route facts)
 //               or 'walk-in' (same, but the move that closes the gap to the nearest ghost, whatever the facts say).
 //               With no ghost in sight both wait (stay). Default 'follow'.
 //   mood        the sentiment pick, default 'bold'.
@@ -33,6 +38,8 @@
 //               the real thing (r.lost), used by the spot check. maxHealth = health, so lives 2, 3, 4 are real settings.
 //   seed        seeds the arena AND the duel's own PRNG (default 1).
 //   maxTicks    default 60.
+//   ask         (additive, measure-corners --live) replaces the scripted Jev: an async ({ kind, state, questions, body }) => answers, e.g. the real
+//               askJev. The caller must restore a real fetch (the tripwire above is installed at import); the ghosts stay scripted.
 //   onAsk(req)  called with every request the scripted Jev gets ({ kind, state, questions, body }), for text assertions.
 //   onTurn(turn, game)  called with every turn the brain returns (the turn shape), after the adversaries moved.
 // Returns { strikes, claws, dispelled, ticks, hitsTaken, held, trace, ... }:
@@ -95,20 +102,34 @@ const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
 
 // The scripted Jev. It may look at the game (to find the nearest ghost for 'walk-in'); the brain never does.
 function makeAsk(game, { policy, mood }) {
+  const hist = []; // cells the explorer was at when asked (bounce-prone: "previous cell" = the one before the current)
+  const bp = policy === 'bounce-prone';
   return async ({ questions, state }) => {
+    if (!hist.length || hist.at(-1)[0] !== game.pos[0] || hist.at(-1)[1] !== game.pos[1]) hist.push([...game.pos]);
     const out = {};
     for (const [k, q] of Object.entries(questions)) {
       if (q.type === 'noul') { out[k] = { noul: k === 'leave_now' ? 0.1 : 0.9 }; continue; }
       const keys = Object.keys(q.criteria);
       if (k === 'sentiment') out[k] = answer(keys.includes(mood) ? mood : keys[0]);
-      else if (k === 'tactic') out[k] = answer(keys.includes('engage') ? 'engage' : keys[0]);
+      else if (k === 'tactic') out[k] = answer(bp && keys.includes('run_away') ? 'run_away' : keys.includes('engage') ? 'engage' : keys[0]);
       else if (k === 'skill') out[k] = answer(keys.find((x) => x !== 'none') ?? 'none');
       else if (k === 'next_move' || k.startsWith('move_if_')) {
         const visible = state.threats?.visible?.length > 0;
         let pick = null;
         if (visible) {
           const moves = keys.filter((d) => d !== 'stay');
-          if (policy === 'walk-in') {
+          if (bp) {
+            const nx = (d) => [game.pos[0] + DIRS[d][0], game.pos[1] + DIRS[d][1]];
+            const gap = (c) => Math.min(...game.adversaries.map((a) => man(a.pos, c)));
+            const prev = hist.length > 1 ? hist.at(-2) : null;
+            const isUndo = (d) => prev && nx(d)[0] === prev[0] && nx(d)[1] === prev[1];
+            let c = moves.filter((d) => gap(nx(d)) >= 1);
+            if (c.some((d) => !isUndo(d))) c = c.filter((d) => !isUndo(d));
+            const safe = c.filter((d) => gap(nx(d)) >= 2);
+            if (safe.length) c = safe;
+            pick = c.sort((a, b) => gap(nx(b)) - gap(nx(a)))[0] ?? null;
+            if (!pick) pick = keys.includes('stay') ? 'stay' : moves[0];
+          } else if (policy === 'walk-in') {
             const near = game.adversaries.reduce((b, a) => (!b || man(a.pos, game.pos) < man(b.pos, game.pos) ? a : b), null);
             const nx = (d) => [game.pos[0] + DIRS[d][0], game.pos[1] + DIRS[d][1]];
             pick = near ? moves.filter((d) => man(nx(d), near.pos) >= 1).sort((a, b) => man(nx(a), near.pos) - man(nx(b), near.pos))[0] : null;
@@ -161,11 +182,11 @@ export async function playDuel(opts = {}) {
     const skills = opts.skills ?? 'sword';
     const holder = {};
     const run = newTestGame(
-      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills },
+      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills, ...(opts.kinds ? { kinds: opts.kinds } : {}) },
       { ask: (req) => { opts.onAsk?.(req); return holder.ask(req); }, decide, dir: url, memoryDir: url, hold: opts.hold ?? true, confidence: opts.confidence ?? { fixedMood: true } },
     );
     const game = run.game;
-    holder.ask = makeAsk(game, { policy: opts.policy ?? 'follow', mood: opts.mood ?? 'bold' });
+    holder.ask = opts.ask ?? makeAsk(game, { policy: opts.policy ?? 'follow', mood: opts.mood ?? (opts.policy === 'bounce-prone' ? 'wary' : 'bold') });
     game.adversaries.forEach((a, i) => { a.mode = ghosts[i]?.mode ?? 'chase'; });
     game.health = game.maxHealth = opts.health ?? 9;
 

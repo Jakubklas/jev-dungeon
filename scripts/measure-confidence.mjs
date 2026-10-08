@@ -67,7 +67,7 @@ async function playGame(kind, seed, p) {
       r.max = Math.max(r.max, C.value);
       if (C.value < ZONE[0] || C.value >= ZONE[1]) r.left = true;
     }
-    r.evaded = C.counts.evaded; r.pressed = C.counts.pressed;
+    r.evaded = C.counts.evaded; r.pressed = 0;
     r.won = game.won; r.lost = game.lost; r.ms = performance.now() - t0;
     return r;
   } finally {

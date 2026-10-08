@@ -80,6 +80,7 @@ let TWEEN_MS = 150;             // entity move tween
 let BOB_PX = 2, BOB_MS = 1600;  // ghost hover
 let ANIM_MS = 260;              // idle animation frame time
 let WALK_MS = 620;              // a troll's stride after each step: feet cycle through the walk frames (it steps slowly)
+const ATTACK_MS = 560, ATTACK_WINDUP_MS = 120; // a troll's attack pose while it strikes: wind-up, then the punch lands with the slash
 let STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
@@ -1156,10 +1157,24 @@ function drawEntity(en, now, cx, cy) {
   // Clamped at 0: a rAF timestamp can be a little older than the performance.now() a step was stamped with,
   // and a negative age would index walk[-1] (undefined) and throw, killing the frame loop.
   const sinceStep = en.stepAt === undefined ? Infinity : Math.max(0, now - en.stepAt);
-  const spr = art.walk && sinceStep < WALK_MS
-    ? art.walk[Math.min(art.walk.length - 1, Math.floor(sinceStep / (WALK_MS / art.walk.length)))]
-    : frameOf(art, now, en.phase * 4);
-  blitSprite(spr, px, py - 2 + bob, en.face, en.alpha);
+  // Striking this tick: the attack pose (first frame the wind-up, the rest share what is left of
+  // ATTACK_MS), turned toward the struck cells. Strike beats walk beats idle.
+  const strike = art.attack && strikeFx?.strikes.find((st) => st.by === en.id);
+  const sinceStrike = strike ? Math.max(0, now - strikeFx.t0) : Infinity;
+  let face = en.face, spr;
+  if (sinceStrike < ATTACK_MS) {
+    const n = art.attack.length;
+    spr = art.attack[sinceStrike < ATTACK_WINDUP_MS || n === 1 ? 0
+      : Math.min(n - 1, 1 + Math.floor((sinceStrike - ATTACK_WINDUP_MS) / ((ATTACK_MS - ATTACK_WINDUP_MS) / (n - 1))))];
+    const cells = Array.isArray(strike.cells) ? strike.cells : [];
+    if (cells.length && Array.isArray(strike.from)) {
+      const sx = cells.reduce((t, c) => t + c[0] - c[1], 0) / cells.length - (strike.from[0] - strike.from[1]);
+      if (sx) face = sx > 0 ? 1 : -1;
+    }
+  } else if (art.walk && sinceStep < WALK_MS) {
+    spr = art.walk[Math.min(art.walk.length - 1, Math.floor(sinceStep / (WALK_MS / art.walk.length)))];
+  } else spr = frameOf(art, now, en.phase * 4);
+  blitSprite(spr, px, py - 2 + bob, face, en.alpha);
   const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
   heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
   // Health bar: one pip per hit point, over every ghost in sight (the explorer sees it too: threats.visible hp);
@@ -2070,6 +2085,8 @@ async function loadUi() {
     BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS);
     REVEAL_ALPHA = num(c.revealAlpha, REVEAL_ALPHA); BUBBLE_IN = num(c.bubbleIn, BUBBLE_IN); BUBBLE_OUT = num(c.bubbleOut, BUBBLE_OUT);
     BLINK_MS = num(c.blinkMs, BLINK_MS); COIN_GLOW_MS = num(c.coinGlowMs, COIN_GLOW_MS);
+    // The step delay is the slider's starting value; the player can still move it.
+    if (Number.isFinite(c.stepDelayMs)) { $('delay').value = c.stepDelayMs; $('delay-value').textContent = `${delayMs()} ms`; }
     for (const [pool, target] of [['approach', THOUGHTS], ['mood', MOOD_THOUGHTS], ['troll', TROLL_THOUGHTS]]) Object.assign(target, ui.thoughts?.[pool] ?? {});
   } catch { /* keep the defaults */ }
 }

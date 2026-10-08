@@ -224,7 +224,7 @@ export function validateMemory(m) {
     const c = p.confidence;
     if (!c || typeof c !== 'object' || !isNum(c.value) || c.value < 0 || c.value > 100) fail('progress.confidence.value');
     if ('now' in c && (!isNum(c.now) || c.now < 0 || c.now > 100)) fail('progress.confidence.now'); // C (capability + history) as of the last save
-    for (const k of ['strikes', 'blocked', 'evaded', 'pressed']) {
+    for (const k of ['strikes', 'blocked', 'evaded', 'coins', 'hearts']) {
       if (!Number.isInteger(c.counts?.[k]) || c.counts[k] < 0 || c.counts[k] > LIMITS.confidenceCount) fail(`progress.confidence.counts.${k}`);
     }
   }
@@ -297,7 +297,7 @@ export function renderMarkdown(m) {
     '## Progress',
     `- Steps: ${p.steps}`,
     `- Coins: ${p.coins}`,
-    ...(p.confidence ? [`- Confidence: ${p.confidence.value} (${band(p.confidence.value)}; strikes ${p.confidence.counts.strikes}, blocked ${p.confidence.counts.blocked}, evaded ${p.confidence.counts.evaded}, pressed ${p.confidence.counts.pressed})`] : []),
+    ...(p.confidence ? [`- Confidence: ${p.confidence.value} (${band(p.confidence.value)}; strikes ${p.confidence.counts.strikes}, blocked ${p.confidence.counts.blocked}, evaded ${p.confidence.counts.evaded}, coins ${p.confidence.counts.coins}, hearts ${p.confidence.counts.hearts})`] : []),
     `- Known floor cells: ${p.known_floor_cells}`,
     `- Since this approach: ${p.steps_since_approach} steps, ${p.revealed_since_approach} cells revealed`,
     `- Revisits in the last 10 steps: ${p.revisits_last_10}`,

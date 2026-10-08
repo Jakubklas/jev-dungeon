@@ -22,7 +22,7 @@ import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
-import { holdGhost, knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
+import { cornerFacts, holdGhost, knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
@@ -30,7 +30,7 @@ import {
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
-  PRESSED_RANGE, allowedMoods, defaultMood, panicNext, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
+  allowedMoods, defaultMood, panicNext, retreatTier, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { askJev, shuffle, jevModel } from '../../jev.js';
 
@@ -46,6 +46,7 @@ let THREAT_STEPS = 2; // a visible chaser within this many path steps offers the
 let GHOSTS_CAN_ATTACK = true;
 let HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps off a hunting ghost before the normal question returns
 let HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
+let CORNER_MODE = 'off'; // cornered by an enemy: off | urgent | ascii | route | full (see PLAN-corner.md)
 let PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
@@ -87,19 +88,20 @@ export const SENTIMENTS = {
     note: 'Explores away from enemies; no detours, no fights.',
     skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.',
   },
-  // Mid tier (36..69).
+  // Midlow tier (36..49): the one middle tier that pulls back. A retreat for a while, not for good.
   cautious: {
     min_gap: 4, end_ticks: 4,
-    move_priority: 'Cautious: keep your distance; slip past enemies rather than meet them.',
-    when: 'Upside: avoids needless risk while still exploring. Risk: leaves the initiative to the enemy. Pick when an enemy is known and you would rather slip past it than fight, or when you are cornered.',
-    priority: 'Cautious: keep your distance. Slip past enemies and explore with a cushion of at least 4 steps; fight only a hurt monster or when cornered.',
-    note: 'Keeps its distance and slips past; fights only a hurt monster or when cornered.',
+    move_priority: 'Cautious: pull back for now; keep your distance, then come back for the loot.',
+    when: 'Upside: lives to fight again: pull back, regroup (hit protection, the sword ready), come back for the loot. Risk: the enemy keeps hunting and the coins wait. Pick when a fight went badly or you are hurt.',
+    priority: 'Cautious: pull back for a while. Keep at least 4 steps from enemies and regroup, then return to the loot; fight a hurt monster or when cornered.',
+    note: 'Pulls back for a while to regroup (to a seen heart if hurt), then returns for the loot.',
     skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
   },
+  // Midlow and mid tiers (36..69).
   steady: {
     min_gap: 3, end_ticks: 4,
     move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when enemies are in sight and you would rather keep to the plan than fight them.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits: a plan to follow, no coins in sight, little left to explore nearby; not to dodge a fight.',
     priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready.',
     note: 'Sticks to the plan: explores, coins on the way, fights a single or hurt monster.',
     skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
@@ -131,8 +133,8 @@ export const SENTIMENTS = {
   },
 };
 // Moods the sentiment question lists, with the short gloss for its first sentence (panic is never listed).
-const TIER_RANK = { low: 0, mid: 1, high: 2 };
-const MOOD_GLOSS = { wary: 'safety (wary)', guarded: 'caution while exploring (guarded)', cautious: 'distance (cautious)', steady: 'the plan (steady)', greedy: 'loot (greedy)', bold: 'the fight (bold)', fearless: 'the hunt (fearless)' };
+const TIER_RANK = { low: 0, midlow: 1, mid: 2, high: 3 };
+const MOOD_GLOSS = { wary: 'safety (wary)', guarded: 'caution while exploring (guarded)', cautious: 'regrouping (cautious)', steady: 'the plan (steady)', greedy: 'loot (greedy)', bold: 'the fight (bold)', fearless: 'the hunt (fearless)' };
 const DEFAULT_SENTIMENT = 'steady';
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
 
@@ -256,6 +258,10 @@ export class ExplorerBrain {
   #leaveDue = false; // the portal was just seen: ask leave_now on the next real choice
   // { id, cell }: the goal cell of the current tactic, kept so its target stays put.
   #tacticGoal = null;
+  // cornerMode: this tick's cornerFacts (null = not cornered / off), and the breakout route kept for its length
+  // ({ cell, until } with the route cell and the last step it is kept to; route and full only).
+  #corner = null;
+  #route = null;
   // Cells a tactic must not target any more: set when a ping-pong made the tactic fail (the cells it
   // bounced between and the target that led there), so the re-decision is a different one. Cleared
   // when the encounter starts or ends.
@@ -318,8 +324,8 @@ export class ExplorerBrain {
   }
 
   // Applies one confidence event with the lives left now (own state: fog-safe) and mirrors the result into memory.
-  #confide(type) {
-    this.#cs = applyConfidence(this.#cs, type, this.#world.health, this.#world.maxHealth);
+  #confide(type, n = 1) {
+    this.#cs = applyConfidence(this.#cs, type === 'coin' ? { type, n } : type, this.#world.health, this.#world.maxHealth);
     this.#csWhy.push(type);
     this.#syncConfidence();
   }
@@ -333,7 +339,7 @@ export class ExplorerBrain {
     const ghosts = [...this.#seen.values()].map((r) => ({ hp: r.hp ?? r.maxHp ?? 2, weight: this.#visibleIds.has(r.id) ? 1 : sightWeight(world.steps - r.step) }));
     const R = capability({
       lives: world.health, maxLives: world.maxHealth, clawDamage: cfg.clawDamage, swordDamage: k?.damage ?? 1,
-      steady: k ? stunHolds(cfg.stunTicks, k.cooldown) : false, armed: !!k, ghosts,
+      armed: !!k, ghosts,
     }, this.#wExtra);
     const H = this.#cs.value;
     const C = combine(R, H, world.health, world.maxHealth);
@@ -463,7 +469,9 @@ export class ExplorerBrain {
       game: rules(this.#skills.size > 0, this.#combat(), Boolean(live)),
       ...(live ? { directive: { text: live.text, steps_left: live.steps_left, from_step: live.from_step } } : {}),
       self: { ...sit.self, confidence: this.#confidenceWord(), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
-      surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
+      surroundings: this.#corner && (CORNER_MODE === 'ascii' || CORNER_MODE === 'full') && this.#corner.diagram?.length
+        ? { ...sit.surroundings, local_map: this.#corner.diagram, ...(moves ? { moves } : {}) }
+        : moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
         approach: parked
@@ -533,7 +541,7 @@ export class ExplorerBrain {
     }
     const self = {
       pos: [...world.pos],
-      visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance, hp: v.hp, maxHp: v.maxHp })),
+      visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance, hp: v.hp, maxHp: v.maxHp, stun: v.stun })),
       opponentsNear,
       threatNear,
       stunTicks: skillConfig().stunTicks,
@@ -650,6 +658,7 @@ export class ExplorerBrain {
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
     const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
+    this.#watchCorner(sit);
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
 
@@ -657,9 +666,6 @@ export class ExplorerBrain {
     if (!legal.length) throw new Error('No legal moves');
     const forced = legal.length === 1;
     const inSight = sit.threats.visible.length > 0;
-    // Confidence context at the start of the tick (what the request shows): sword ready, ghosts the own strike stunned.
-    const csArmed = this.#armed();
-    const csStunned = this.#stunnedIds();
     const skillOptions = this.#skillOptions(); // computed before the move, like the facts Jev reads
 
     // A decision without an adversary in sight waits for the next tick with a real choice. When an
@@ -712,7 +718,7 @@ export class ExplorerBrain {
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#lowTier(memory) });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -729,6 +735,7 @@ export class ExplorerBrain {
 
     const profile = this.#profile();
     this.#keepEscapeGoal(profile);
+    this.#keepRouteGoal();
     const hasSkillOptions = Object.keys(skillOptions).length > 0;
     // engage hold: stay, no move question (P7a). A decision tick (tactic question) is not a hold tick, so it restarts
     // the count: HOLD_MAX counts consecutive hold ticks, not ones split by a re-decision on the same cell.
@@ -747,11 +754,12 @@ export class ExplorerBrain {
         instructions: {
           question:
             `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps enemies ` +
-            `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
+            `${profile.min_gap}+ steps away: only tactics allowing that are listed${this.#cornerOpt() ? ' (cornered: slip past is listed whatever the gap)' : ''}. Judge from \`threats\`.`,
           priorities: liveDirective
             ? [directiveLine(liveDirective.text), 'Pick the tactic that best serves the directive without breaking the safety rule; racing to the portal ends the game.']
             : loneEngage
             ? [
+              ...this.#cornerTacticLine(),
               sit.threats.visible.length > 1
                 ? 'Default: engage while the sword is ready (you act first; hold off the nearest). Run away when cramped or without the sword.'
                 : 'Default: engage a lone enemy while the sword is ready (you act first). Run away when cramped or without the sword.',
@@ -759,7 +767,8 @@ export class ExplorerBrain {
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
             ]
             : [
-              profile.priority,
+              ...this.#cornerTacticLine(),
+              ...(this.#cornerOpt() ? [] : [profile.priority]),
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
               'Engage while the sword is ready: hold 2 steps off the nearest enemy so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
             ],
@@ -888,7 +897,6 @@ export class ExplorerBrain {
     if (decision) decision.apiMs = apiMs;
     // (apiMs is the whole decision tick: sentiment + tick request)
 
-    const csEngaging = memory.approach.id === 'engage'; // after this tick's decision, like the request's plan.approach
     // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
     if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
 
@@ -927,9 +935,11 @@ export class ExplorerBrain {
     if (doneNow && this.directive) this.clearDirective('Jev judged it done');
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // its last step was just taken
     {
-      // Regen pulls C toward the start (after REGEN_WAIT quiet ticks), every tick; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
+      // Own pickups raise C (coins +D_COIN each; a heart +D_HEART, applied after the heal so the lives cap sees the restored life).
+      // Regen pulls C toward the start (after REGEN_WAIT quiet ticks), every tick. Being chased costs nothing: it justifies no drop.
+      if (result.coins) this.#confide('coin', result.coins);
+      if (result.healed) this.#confide('heart');
       this.#confide('regen');
-      if (sit.threats.visible.length && !csEngaging && !(sit.threats.visible.length === 1 && this.#armed()) && sit.threats.visible.some((v) => v.chasing && !csStunned.has(v.id))) this.#confide('pressed');
     }
     this.#syncConfidence(); // memory.progress.confidence.now follows sightings too, not only events
     await this.#save();
@@ -954,7 +964,7 @@ export class ExplorerBrain {
     this.#skillEvents.push(...events); // handed to Run.playTurn through the turn shape
     for (const e of events) {
       if (e.type === 'struck') {
-        this.#struck.set(e.id, step);
+        if (e.staggered !== false) this.#struck.set(e.id, step); // a monster the blow did not stagger is not stunned: do not wait on it
         this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {
@@ -1021,10 +1031,22 @@ export class ExplorerBrain {
   // PLAN-moods: is a fight worth talking up? The sword is ready, the explorer is not panicking or in the low tier, and it is a single
   // monster, a hurt one, or confidence in the high tier / a mood that wants the fight (bold, fearless). No counts of enemies, hp or claws: Jev gets the specs
   // (hp bars, the sword's numbers) and decides. Reads only the explorer's own state and the hp bars in sight.
-  // Low tier or panic: the moods that run. With a heart in reach, run_away heads for it (perception.js tacticFeasibility).
-  #lowTier(memory) {
+  // The moods that pull back: low tier, panic and midlow's cautious. Hurt with a heart in reach, run_away heads for it
+  // (perception.js tacticFeasibility), so a retreat also regroups lives.
+  #heartRun(memory) {
     const id = memory.sentiment?.id;
-    return id === 'panic' || tierOfMood(id) === 'low';
+    return id === 'panic' || id === 'cautious' || tierOfMood(id) === 'low';
+  }
+
+  // May the tactic menu offer pulling back (run_away, hide, race_to_exit) beside a forward tactic? Only when confidence is really
+  // lower: panic, a low-tier or midlow mood (wary, guarded, cautious), or C in the low / midlow tier (a last life or a chaser close
+  // by with the sword down count as low). In mid and high Jev leans on any safe option shown, so it is kept for the cornered case.
+  #retreatOK(id = this.#memory.sentiment?.id, cap = this.#capState()) {
+    if (this.#fixedMood || id === 'panic' || retreatTier(tierOfMood(id))) return true; // fixedMood: C moves no menu, the classic one stays
+    if (this.directive) return true; // the player's instruction outranks the mood: every way of dealing with the enemy stays open
+    if (cap.ctx.lastLife || cap.ctx.swordDown) return true;
+    if (this.#world.visibleAdversaries().length > 3) return true; // more than the engage hold covers (holdGhost: 3 at most)
+    return retreatTier(tierOf(cap.C, tierOfMood(this.#memory.sentiment?.id)));
   }
 
   #fightOn(sit) {
@@ -1057,15 +1079,17 @@ export class ExplorerBrain {
     }
     const inSight = sit.threats.visible.length > 0;
     // With an adversary in sight, each mood also says which tactics its minimum gap leaves open here.
-    const allowed = new Map();
-    if (inSight) {
-      for (const g of new Set(ids.map((id) => SENTIMENTS[id].min_gap))) {
-        allowed.set(g, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds() })).map((id) => id.replace(/_/g, ' ')));
-      }
-    }
+    const allowed = new Map(); // `${min_gap}|${retreat}` -> the tactic names that mood would see
+    const leaves = (id) => {
+      const g = SENTIMENTS[id].min_gap;
+      const retreat = this.#retreatOK(id, caps);
+      const k = `${g}|${retreat}`;
+      if (!allowed.has(k)) allowed.set(k, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), retreat })).map((t) => t.replace(/_/g, ' ')));
+      return allowed.get(k);
+    };
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
       const s = SENTIMENTS[id];
-      const here = inSight ? ` Tactics it leaves here: ${allowed.get(s.min_gap).join(', ') || 'none, only luck'}.` : '';
+      const here = inSight ? ` Tactics it leaves here: ${leaves(id).join(', ') || 'none, only luck'}.` : '';
       return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
     }));
     const questions = {
@@ -1095,16 +1119,18 @@ export class ExplorerBrain {
     const cells = memory.recent.cells;
     // engage closes in on purpose: its moves are judged without the mood's minimum gap.
     const gap = approachId === 'engage' ? 1 : profile.min_gap;
+    const cornered = Boolean(this.#cornerOpt()); // cornerMode: gating relaxed, urgent text (also while a kept route is walked)
     const parts = describeMoveParts(world, approachId, {
       minGap: gap,
       goal: speculative ? null : this.#goal(),
       avoid: this.#zone,
       exclude: this.#exclude,
       remembered: this.#remembered,
-      prev: cells.length > 1 ? cells.at(-2) : null,
-      backAndForth: memory.recent.back_and_forth,
+      prev: cells.length > 1 && !cornered ? cells.at(-2) : null, // cornered: undoing the last move is no sin
+      backAndForth: cornered ? 0 : memory.recent.back_and_forth,
       stunned: this.#stunnedIds(),
       multiHold: this.#holdOn === 'multi',
+      ...(cornered ? { noGapWarn: true, breakout: this.#cornerOpt().breakout ?? null } : {}),
     });
     // Option order is shuffled every tick because Jev leans toward the first option.
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`
@@ -1134,10 +1160,14 @@ export class ExplorerBrain {
         ? 'Onto the portal only to leave or dodge a strike.'
         : 'A move onto the portal ends the game: take it only if leaving now is the plan or an enemy would otherwise strike you.';
     const engaging = approachId === 'engage';
-    const hint = TACTIC_MOVE_HINT[approachId] ?? 'Avoid known dead ends where you can be cornered; keep the distance growing.';
+    const hint = cornered && approachId === 'slip_past'
+      ? 'Follow the route past it; a claw may land, but getting out matters more.'
+      : cornered && !TACTIC_MOVE_HINT[approachId] ? 'Get out of the pocket.' : TACTIC_MOVE_HINT[approachId] ?? 'Avoid known dead ends where you can be cornered; keep the distance growing.';
     const safety = sit.threats.visible.length
       ? [
           approachId === 'engage'
+            ? `Never step onto an enemy. ${hint}`
+            : cornered
             ? `Never step onto an enemy. ${hint}`
             : speculative
             ? `Never step into an enemy; keep ${gap}+ steps from it. ${hint}`
@@ -1146,6 +1176,7 @@ export class ExplorerBrain {
       : [];
     // The one-per-tactic questions decide the move on a decision tick, so they keep the mood's rule (shortened).
     const dirLine = live ? [directiveLine(live.text)] : [];
+    const cornerLines = cornered ? this.#cornerMoveLines(approachId, speculative) : [];
     const priorities = live
       ? speculative
         ? [...dirLine, ...(portalSeen ? [portalLine] : []), ...safety]
@@ -1156,27 +1187,31 @@ export class ExplorerBrain {
           ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the directive needs it.'] : []),
         ]
       : speculative
-      ? [...(portalSeen ? [portalLine] : []), ...safety, ...(engaging ? [] : [profile.move_priority])]
+      ? [...cornerLines, ...(portalSeen ? [portalLine] : []), ...safety, ...(engaging || cornered ? [] : [profile.move_priority])]
       : engaging ? [
           // engage: the hint in `safety` is the whole plan. The mood's lines ("moving toward one is fine"), "stay makes no
           // progress" and "reveal new cells" would talk the explorer off the holding cell (P7a).
+          ...cornerLines,
           ...(portalSeen ? [portalLine] : []),
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the approach needs it.'] : []),
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
         ]
       : [
+          ...cornerLines,
           ...(portalSeen ? [portalLine] : []),
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the approach needs it.'] : []),
           ...(this.#world.health < this.#world.maxHealth && this.#world.seenHearts().length ? ['You are hurt: a seen heart restores a life, so a detour for it is worth it unless an enemy is near.'] : []),
           ...(nearbyPiles(this.#world, COIN_NEAR).length ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an enemy is near.'] : []),
-          profile.priority,
+          ...(cornered ? [] : [profile.priority]),
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
           'Stay makes no progress and lets enemies close in: only when every step is worse.',
           'Follow the approach (`plan.approach.current`): prefer moves closer to its target.',
           'Prefer moves revealing many new cells or onto never-visited cells.',
-          'Avoid backtracking: no known dead end with nothing left to explore, and do not undo the previous move unless every other way is explored (`recent`).',
+          cornered
+            ? 'Do not wait or shuffle inside the pocket: any step that gets you out beats staying.'
+            : 'Avoid backtracking: no known dead end with nothing left to explore, and do not undo the previous move unless every other way is explored (`recent`).',
         ];
     return { options, shared, question: { type: 'choice', instructions: { question, priorities }, criteria: options } };
   }
@@ -1328,10 +1363,73 @@ export class ExplorerBrain {
   // target would not fix (Jev often picks run_away again, it is the only safe tactic): rule out the
   // cells it bounced between and the target that led there, so the re-decision gets a different one.
   #bounce() {
+    if (this.#corner) return; // cornered: the pocket cells ARE the way out; do not rule the breakout route out
     const cells = this.#memory.recent.cells.slice(-2).map(key);
     const goal = this.#goal();
     this.#exclude = new Set([...(this.#exclude ?? []), ...cells, ...(goal ? [key(goal)] : [])]);
     this.#tacticGoal = null;
+  }
+
+  // ---- cornerMode (PLAN-corner.md). All of it is inert with CORNER_MODE 'off'.
+  // Once per tick, from the cornerFacts of encounter.js; also keeps/drops the committed breakout route.
+  #watchCorner(sit) {
+    this.#corner = null;
+    if (CORNER_MODE === 'off' || !sit.threats.visible.length) { this.#route = null; return; }
+    const world = this.#world;
+    const bounced = this.#memory.recent.back_and_forth >= 2;
+    this.#corner = cornerFacts(world, threatsOf(world), { bounced }) ?? null;
+    const r = this.#route;
+    if (r && (world.steps > r.until || sameCell(r.cell, world.pos) || !knownDistances(world, world.pos).has(r.cell))) this.#route = null;
+  }
+
+  // The `cornered` option for tacticFeasibility / approachTarget: the facts with the breakout replaced by the committed
+  // route (route, full) so the goal cannot flip tick to tick. null when not cornered and no route is being kept.
+  #cornerOpt() {
+    const c = this.#corner, r = this.#route;
+    const mode = CORNER_MODE;
+    if (mode === 'off' || this.directive) return null;
+    const keep = r && (mode === 'route' || mode === 'full');
+    if (!c && !keep) return null;
+    if (keep) {
+      const d = knownDistances(this.#world, this.#world.pos).get(r.cell);
+      if (d !== undefined) return { ...(c ?? {}), breakout: { cell: r.cell, steps: d, why: r.why } };
+    }
+    const b = c.breakout;
+    return { ...c, breakout: b?.cells?.length ? { cell: b.cells.at(-1), steps: b.steps, why: b.why } : null };
+  }
+
+  // route, full: commit to the breakout route's end while it is being walked (not for ascii / urgent: those let Jev pick).
+  #keepRouteGoal() {
+    if (CORNER_MODE !== 'route' && CORNER_MODE !== 'full') return;
+    const b = this.#corner?.breakout;
+    if (b && !this.#route && b.cells?.length) {
+      const cell = [...b.cells.at(-1)];
+      this.#route = { cell, until: this.#world.steps + b.steps + 1, why: b.why };
+    }
+    if (this.#memory.approach.id === 'slip_past' && this.#route) this.#tacticGoal = { id: 'slip_past', cell: [...this.#route.cell] };
+  }
+
+  #cornerTacticLine() {
+    const c = this.#corner;
+    if (!c || this.directive) return [];
+    return [`${c.why ?? 'You are cornered.'} Backing deeper into the pocket will not help: slip past it or fight through (engage while the sword is ready).`];
+  }
+
+  #cornerMoveLines(approachId, speculative) {
+    const c = this.#cornerOpt();
+    if (!c) return [];
+    const out = [];
+    if (this.#corner) {
+      const walls = c.walls ?? 0;
+      out.push(speculative
+        ? 'Cornered: do not shuffle; get out now (slip past or fight through).'
+        : `You are cornered (${walls} wall${walls === 1 ? '' : 's'}). Do not shuffle in the pocket: get out now, turning round and slipping past is fine, so is fighting through.`);
+    }
+    if ((CORNER_MODE === 'route' || CORNER_MODE === 'full') && c.breakout && (!speculative || approachId === 'slip_past')) {
+      out.push(c.breakout.why); // "Break out: 4 steps east,east,north,north; closest approach ..."
+    }
+    if ((CORNER_MODE === 'ascii' || CORNER_MODE === 'full') && !speculative && this.#corner?.diagram?.length) out.push('Map of the area: `surroundings.local_map` (E you, G enemy, # wall, . floor, ? unknown).');
+    return out;
   }
 
   // run_away keeps its escape spot every tick (not only at decisions) so it cannot flip between two
@@ -1419,6 +1517,7 @@ export class ExplorerBrain {
 
 // Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.
 export function configureExplorerBrain(o) {
+  if (o.cornerMode !== undefined) CORNER_MODE = o.cornerMode;
   if (o.brainReviewEvery !== undefined) REVIEW_EVERY = o.brainReviewEvery;
   if (o.brainApproachFailing !== undefined) APPROACH_FAILING = o.brainApproachFailing;
   if (o.brainRedecideCooldown !== undefined) REDECIDE_COOLDOWN = o.brainRedecideCooldown;
@@ -1443,7 +1542,7 @@ export function configureExplorerBrain(o) {
   }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
+export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
 
 // ---- Prompt wording from the central config (src/config/runtime.js). A key set to null (or absent) means the built-in text,
 // which is copied here at load, before any configure call. Static text only: nothing in it can pull in game data.

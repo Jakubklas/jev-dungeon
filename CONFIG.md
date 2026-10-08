@@ -209,6 +209,7 @@ The knight: lives and protection after a hit.
 | `explorer.brain.directiveDone` | 0.5 | 0..1 | live | no | directive_done above this ends the player directive |
 | `explorer.brain.directiveAskEvery` | 5 | 1..50 | live | no | Steps between directive_done questions |
 | `explorer.brain.leaveNow` | 0.5 | 0..1 | live | no | leave_now above this switches to go_to_exit |
+| `explorer.brain.cornerMode` | "off" | off / urgent / ascii / route / full | live | no | Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both) |
 | `explorer.perception.sightingNear` | 8 | 1..30 | live | no | A move within this many steps of a sighting counts as toward it |
 | `explorer.perception.zoneSteps` | 6 | 1..30 | live | no | Avoid-zone radius around an older sighting, steps |
 | `explorer.perception.zoneNearSteps` | 10 | 1..30 | live | no | Avoid-zone radius around a fresh sighting, steps |
@@ -244,6 +245,7 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.regen.wait` | 10 | 0..100 | live | no | Quiet ticks before regen starts |
 | `explorer.confidence.tiers.lowMax` | 35 | 0..100 | live | no | Confidence up to this is the low tier |
 | `explorer.confidence.tiers.highMin` | 70 | 0..100 | live | no | Confidence from this is the high tier |
+| `explorer.confidence.tiers.midMin` | 50 | 0..100 | live | no | Confidence from this is the mid tier; below it is midlow, which offers retreats |
 | `explorer.confidence.tiers.hysteresis` | 5 | 0..20 | live | no | A tier is kept this far past its edge |
 | `explorer.confidence.panic.enter` | 20 | 0..100 | live | no | Panic starts below this confidence |
 | `explorer.confidence.panic.exit` | 25 | 0..100 | live | no | Panic ends at or above this confidence |
@@ -278,7 +280,8 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.bands.even` | 40 | 0..100 | live | no | Confidence from this reads even |
 | `explorer.confidence.bands.unsure` | 30 | 0..100 | live | no | Confidence from this reads unsure (below is shaken) |
 | `explorer.moods.tiers.low` | ["wary","guarded"] | list of wary, guarded, cautious, steady, greedy, bold, fearless (max 7) | live | no | Moods the low tier offers, in question order (panic is never offered) |
-| `explorer.moods.tiers.mid` | ["cautious","steady","greedy","bold"] | list of wary, guarded, cautious, steady, greedy, bold, fearless (max 7) | live | no | Moods the mid tier offers, in question order (panic is never offered) |
+| `explorer.moods.tiers.midlow` | ["cautious","steady","bold"] | list of wary, guarded, cautious, steady, greedy, bold, fearless (max 7) | live | no | Moods the midlow tier offers, in question order (panic is never offered) |
+| `explorer.moods.tiers.mid` | ["steady","greedy","bold"] | list of wary, guarded, cautious, steady, greedy, bold, fearless (max 7) | live | no | Moods the mid tier offers, in question order (panic is never offered) |
 | `explorer.moods.tiers.high` | ["bold","fearless"] | list of wary, guarded, cautious, steady, greedy, bold, fearless (max 7) | live | no | Moods the high tier offers, in question order (panic is never offered) |
 | `explorer.moods.panic.when` | (built-in wording) | text, up to 800 chars | live | no | What Jev reads when picking this mood |
 | `explorer.moods.panic.note` | (built-in wording) | text, up to 800 chars | live | no | One-line summary shown with the mood |

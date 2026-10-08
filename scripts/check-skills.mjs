@@ -363,7 +363,9 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const withBrain = async (g, fn) => {
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const calls = [];
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: stubAsk(calls), memoryDir: pathToFileURL(dir + '/') });
+    // fixedMood: these read the engage option's wording off the tactic question; in the high tier the retreats are left off the
+    // menu (mid-ground fix), so engage would often be the only tactic and code would take it without asking.
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: stubAsk(calls), memoryDir: pathToFileURL(dir + '/'), confidence: { fixedMood: true } });
     const rnd = Math.random; Math.random = () => 0.5;
     try { return await fn(brain, calls); } finally { Math.random = rnd; rmSync(dir, { recursive: true, force: true }); }
   };
@@ -426,7 +428,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
       if (strike) out.skill = { choice: strike, probabilities: { [strike]: 1 }, confidence: 1 };
       return out;
     };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/'), confidence: { fixedMood: true } }); // fixedMood: see withBrain
     const rnd = Math.random; Math.random = () => 0.5;
     try {
       await brain.takeTurn(); // both seen

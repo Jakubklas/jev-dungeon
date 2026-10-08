@@ -1,7 +1,8 @@
 // Checks for confidence caps (PLAN-confidence-mood phase 3): the REAL ExplorerBrain with confidence: 'caps' (or an arm object
 // { start } that forces the history score H) through the duel harness / newTestGame, stub Jev, throwing fetch tripwire.
 //  1. the behaviour matrix: 1/2/3 ghosts x hp 1-3 x lives 2/3/4 x H 20/50/80 x patrolling/chasing: the sentiment options are
-//     exactly the moods C allows (id list and count), run_away is always on the tactic menu, engage is on it when armed;
+//     exactly the moods C allows (id list and count), run_away is on the tactic menu only in the low / midlow tier (or mood),
+//     engage is on it when armed;
 //     spot values from the plan's tables (W 0.35)
 //  2. a scripted Jev at DOMINANT history (H 80) with 2 ghosts in sight is never offered wary, picks bold, engages and dispels
 //     both with no death at 2 lives (real health 2), follow and walk-in
@@ -17,7 +18,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clawDecide, mulberry32, openGroups, playDuel } from './lib/duel-harness.mjs'; // installs the fetch tripwire
 import { newTestGame } from '../src/turn.js';
-import { allowedMoods, capability, combine } from '../src/characters/explorer/confidence.js';
+import { allowedMoods, capability, combine, retreatTier, tierOf, tierOfMood } from '../src/characters/explorer/confidence.js';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { tacticFeasibility } from '../src/characters/explorer/perception.js';
@@ -29,9 +30,10 @@ const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
 const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
-const SPOTS = [[1, 2, 2, 50, 75], [2, 2, 2, 50, 58], [3, 2, 2, 50, 40], [1, 2, 4, 50, 75], [3, 2, 4, 50, 58]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
+const SPOTS = [[1, 2, 2, 50, 75], [2, 2, 2, 50, 58], [3, 2, 2, 50, 50], [1, 2, 4, 50, 75], [3, 2, 4, 50, 58]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
 const cells = { 1: [[9, 3]], 2: [[9, 3], [9, 2]], 3: [[9, 3], [9, 2], [9, 4]] };
 let combos = 0, checkedMenu = 0;
+const retreats = { on: 0, off: 0 };
 for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]) for (const H of [20, 50, 80]) for (const mode of ['chase', 'patrol']) {
   const reqs = [];
   let first = null;
@@ -56,8 +58,14 @@ for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]
   const menu = first?.decision?.tactic?.options;
   if (menu) {
     checkedMenu++;
-    ok('run_away' in menu, `${tag}: run_away missing from the tactic menu ${Object.keys(menu)}`);
+    // mid-ground fix: pulling back is on the menu only in the low and midlow tiers (or a low / midlow mood); in mid and high it is
+    // left off while a forward tactic is open
+    const mood = first.decision.sentiment.choice;
+    const retreat = retreatTier(tierOfMood(mood)) || retreatTier(tierOf(C, tierOfMood(mood)));
+    ok(('run_away' in menu) === retreat, `${tag}: run_away ${'run_away' in menu ? 'on' : 'off'} the tactic menu at C ${C} (${mood}) ${Object.keys(menu)}`);
+    ok(retreat || !('hide' in menu) && !('race_to_exit' in menu), `${tag}: no hide or race_to_exit in mid / high ${Object.keys(menu)}`);
     ok('engage' in menu, `${tag}: engage missing from the tactic menu ${Object.keys(menu)}`);
+    retreats[retreat ? 'on' : 'off']++;
   }
 }
 for (const [n, hp, L, H, want] of SPOTS) {
@@ -65,6 +73,13 @@ for (const [n, hp, L, H, want] of SPOTS) {
   ok(C === want, `spot ${n} ghosts hp ${hp} lives ${L}: C ${C} want ${want}`);
 }
 ok(combos === 3 * 3 * 3 * 3 * 2 && checkedMenu > 60, `matrix ran ${combos} combos, ${checkedMenu} tactic menus`);
+ok(retreats.on > 5 && retreats.off > 5, `the matrix sees menus with and without the retreats: ${JSON.stringify(retreats)}`);
+// More enemies in sight than the engage hold covers (4): the retreats come back even at a high C.
+{
+  let menu = null;
+  await playDuel({ ghosts: [[9, 3], [9, 2], [9, 4], [10, 3]], ghostMode: 'chase', ghostHp: 2, health: 4, maxTicks: 1, confidence: { caps: true, start: 80 }, onTurn: (t) => { menu = t.decision?.tactic?.options; } });
+  ok(menu && 'run_away' in menu, `4 enemies in sight at a high C: run_away on the menu (${Object.keys(menu ?? {})})`);
+}
 
 // ---- 2. DOMINANT history with 2 ghosts in sight ----
 {
@@ -148,7 +163,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
 // ---- 5. out of sight: a silent swap to steady ----
 {
   const log = [];
-  const r = make({ H: 40, lives: 2, maxLives: 2, ghosts: [[9, 3], [9, 2], [9, 4]], log, pick: (k) => (k.includes('wary') ? 'wary' : k[0]) });
+  const r = make({ H: 40, lives: 3, maxLives: 4, ghosts: [[9, 3], [9, 2], [9, 4]], log, pick: (k) => (k.includes('wary') ? 'wary' : k[0]) });
   await tick(r);
   ok(r.memory.sentiment.id === 'wary', `swap setup: wary picked at low C (got ${r.memory.sentiment.id})`);
   r.game.maxHealth = r.game.health = 4; // C jumps past the wary band
@@ -207,8 +222,13 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   }
   // one ghost: today's lone-fight wording
   {
-    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 30 }, mood: 'steady' })); // start 30: C 55, mid tier, where steady is offered
-    ok(/Default: engage a lone enemy/.test(t) && /A single enemy you strike first costs little/.test(t), 'one enemy: the single-monster wording');
+    // start 30: C 55, mid tier, where steady is offered. Mid leaves the retreats off the menu, so with engage the only forward
+    // tactic here code takes it (no tactic question); when a question is asked, it carries the lone-fight default line.
+    const sent = []; let turn = null;
+    await playDuel({ ghosts: cells[1], ghostHp: 2, health: 2, maxTicks: 1, confidence: { caps: true, start: 30 }, mood: 'steady', onAsk: (r) => { bodies.push(r.body); sent.push(r); }, onTurn: (x) => { turn = x; } });
+    const t = text(sent);
+    const byCode = !sent.some((r) => r.questions.tactic) && turn?.decision?.tactic?.choice === 'engage';
+    ok((/Default: engage a lone enemy/.test(t) || byCode) && /A single enemy you strike first costs little/.test(t), 'one enemy: the single-monster wording (or engage taken by code)');
   }
   for (const g of [cells[3], [[9, 3], [9, 2], [9, 4], [10, 3]]]) {
     await playDuel({ ghosts: g, ghostHp: 2, health: 4, maxTicks: 25, confidence: { caps: true, start: 50 }, onAsk: (r) => bodies.push(r.body) });
@@ -220,7 +240,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
 // ---- 8. panic (PLAN-moods): entered by code below C 20, no sentiment call, run_away only, a whisper cannot override it, ends at C 25 ----
 {
   const log = [];
-  const run = make({ H: 0, maxLives: 2, lives: 2, ghosts: [[9, 3], [9, 2], [9, 4]], log });
+  const run = make({ H: 0, maxLives: 4, lives: 2, ghosts: [[9, 3], [9, 2], [9, 4]], log });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
   await tick(run);
   ok(run.memory.sentiment.id === 'panic', `three chasing enemies at 2 lives and a beaten history: panic (got ${run.memory.sentiment.id})`);
@@ -237,6 +257,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   ok(run.memory.sentiment.id === 'panic', 'still panic');
   // the threat gone: C climbs back (the remembered sightings fade), panic ends only at 25 or more, by code
   run.game.adversaries = [];
+  run.game.health = run.game.maxHealth; // and the hurt explorer healed (a heart): R recovers, H stays beaten
   let left = null;
   for (let i = 0; i < 80 && !left; i++) { await tick(run); if (run.memory.sentiment.id !== 'panic') left = i; }
   ok(left !== null, 'panic ends once C is back at 25');

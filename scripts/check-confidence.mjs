@@ -3,7 +3,7 @@
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
-import { createConfidence, apply, cap, band, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, panicNext, capability, combine, allowedMoods, defaultMood, tierOfMood, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
+import { createConfidence, apply, cap, band, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, retreatTier, TIER_MOODS, panicNext, capability, combine, allowedMoods, defaultMood, tierOfMood, sightWeight, configureConfidence, UNHURT_FLOOR, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -43,7 +43,7 @@ s = at(35);
 const B = [[0, 'shaken'], [29.9, 'shaken'], [30, 'unsure'], [39.9, 'unsure'], [40, 'even'], [64.9, 'even'], [65, 'sure'], [79.9, 'sure'], [80, 'dominant'], [100, 'dominant']];
 for (const [v, b] of B) ok(band(v) === b, `band(${v}) = ${band(v)}, want ${b}`);
 
-// 7. a quiet game (no hit, no kill) stays within 40..65 (evaded is +2 now, so pressed encounters recover more slowly)
+// 7. a quiet game (no hit, no kill) stays within 40..65
 let seed = 7;
 const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 let quietBad = 0;
@@ -51,18 +51,24 @@ for (let g = 0; g < 200; g++) {
   let q = createConfidence();
   for (let t = 0; t < 300; t++) {
     const r = rnd();
-    q = apply(q, r < 0.4 ? 'regen' : r < 0.6 ? 'pressed' : r < 0.8 ? 'evaded' : 'blocked', 2, 2);
+    q = apply(q, r < 0.6 ? 'regen' : r < 0.8 ? 'evaded' : 'blocked', 2, 2);
     if (q.value < 40 || q.value > 65) quietBad++;
-    if (rnd() < 0.05) q = { ...q, enc: { chased: false, hurt: false, killed: false, pressed: 0 } }; // a new encounter
+    if (rnd() < 0.05) q = { ...q, enc: { chased: false, hurt: false, killed: false } }; // a new encounter
   }
 }
 ok(quietBad === 0, `quiet games left 40..65 ${quietBad} times`);
-s = createConfidence();
-for (let i = 0; i < 10; i++) s = apply(s, 'pressed', 2, 2);
-ok(s.value === 42, `pressed capped at -8 per encounter: ${s.value}`);
+ok(threwOn('pressed'), 'pressed is gone: an unknown event now (being chased justifies no drop)');
+// coin +2 per coin (n coins in one event), heart +5 (after the heal, so the lives cap sees the restored life)
+ok(apply(at(50), 'coin', 2, 2).value === 52 && apply(at(50), { type: 'coin', n: 3 }, 2, 2).value === 56, 'coin +2 per coin');
+ok(apply(at(50), { type: 'coin', n: 3 }, 2, 2).counts.coins === 3, 'coins counted');
+ok(apply(at(50), 'heart', 2, 2).value === 55 && apply(at(50), 'heart', 2, 2).counts.hearts === 1, 'heart +5');
+ok(apply(at(44), 'heart', 1, 2).value === 45, 'heart on the last life is held by the lives cap (45)');
+ok(apply(at(44), 'heart', 2, 2).value === 49, 'heart after the heal (full lives): 44 + 5');
+ok(apply({ ...at(50), idle: REGEN_WAIT }, 'coin', 2, 2).idle === 0 && apply({ ...at(50), idle: 4 }, 'heart', 2, 2).idle === 0, 'coin and heart restart the regen wait');
 
+function threwOn(e) { try { apply(at(50), e, 2, 2); return false; } catch { return true; } }
 // 8. determinism, no mutation, JSON round-trip, unknown event
-const run = () => { let x = createConfidence(); for (const e of ['struck', 'hit', 'regen', 'dispelled', 'evaded', 'pressed', 'blocked']) x = apply(x, e, 2, 3); return x; };
+const run = () => { let x = createConfidence(); for (const e of ['struck', 'hit', 'regen', 'dispelled', 'evaded', 'coin', 'heart', 'blocked']) x = apply(x, e, 2, 3); return x; };
 ok(JSON.stringify(run()) === JSON.stringify(run()), 'deterministic');
 const frozen = JSON.stringify(at(50));
 apply(at(50), 'hit', 2, 2);
@@ -79,29 +85,38 @@ const ch = [{ id: 'a1', distance: 5, mode: 'chase' }];
 const ctx = { lives: 2, maxLives: 2 };
 const struck = { id: 'a1', type: 'struck', hp: 1 };
 let t = applyTurn(createConfidence(), { skill_events: [struck], events: [struck] }, { ...ctx, visible: ch });
-ok(t.value === 54, `struck turn counted once: ${t.value}`);
+ok(t.value === 55, `struck turn counted once: ${t.value}`);
 t = applyTurn(createConfidence(), { skill_events: [{ id: 'a1', type: 'dispelled' }], events: [{ id: 'a1', type: 'dispelled' }] }, { ...ctx, visible: [] });
 ok(t.value === 58 && t.enc.killed, `dispelled turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'hit', at: [1, 1], health: 1 }] }, { lives: 1, maxLives: 2, visible: ch });
-ok(t.value === 42 && t.enc.hurt, `hit turn: ${t.value}`);
+ok(t.value === 43 && t.enc.hurt, `hit turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'blocked' }] }, { ...ctx, visible: ch });
-ok(t.value === 52, `blocked turn: ${t.value}`);
+ok(t.value === 53, `blocked turn: ${t.value}`);
 t = applyTurn(createConfidence(), {}, { ...ctx, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
-ok(t.counts.evaded === 1 && t.value === 51, `evaded: ${t.value}`);
+ok(t.counts.evaded === 1 && t.value === 52, `evaded: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ type: 'hit' }] }, { lives: 1, maxLives: 2, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { lives: 1, maxLives: 2, visible: [] });
 ok(t.counts.evaded === 0 && !t.enc.hurt, 'hurt encounter is not evaded; encounter closed');
 t = applyTurn(createConfidence(), { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
 ok(t.counts.evaded === 0, 'chase_over with no chasing sighting is not evaded');
 const close = [{ id: 'a1', distance: 2, mode: 'chase' }];
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false }).value === 49, 'pressed -1');
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: true }).value === 49, 'armed or not, a chaser in sight presses');
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: [{ id: 'a1', distance: 6, mode: 'chase' }] }).value === 49, 'a chaser far off presses too');
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, engaging: true }).value === 50, 'engaging: not pressed');
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, stunned: ['a1'] }).value === 50, 'stunned: not pressed');
+for (const [lbl, o] of [['unarmed', { armed: false }], ['armed', { armed: true }], ['engaging', { armed: false, engaging: true }], ['stunned', { armed: false, stunned: ['a1'] }]]) {
+  ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, ...o }).value === 50, `${lbl}: a chaser in sight costs nothing`);
+}
+{ // chased by 1 and by 2 monsters for 10 ticks, unhurt: H never drops
+  for (const vis of [close, [...close, { id: 'a2', distance: 3, mode: 'chase' }]]) {
+    let x = createConfidence(); let low = 50;
+    for (let i = 0; i < 10; i++) { x = applyTurn(x, {}, { ...ctx, visible: vis }); low = Math.min(low, x.value); }
+    ok(low === 50, `chased by ${vis.length} for 10 ticks: H stays ${low}`);
+  }
+}
+t = applyTurn(createConfidence(), { events: [{ type: 'coin', gained: 2 }] }, { ...ctx, visible: [] });
+ok(t.value === 54 && t.counts.coins === 2, `coin turn: +2 per coin: ${t.value}`);
+t = applyTurn(createConfidence(), { events: [{ type: 'heart' }] }, { ...ctx, visible: [] });
+ok(t.value === 55, `heart turn: ${t.value}`);
 ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40 && applyTurn(at(40), {}, { ...ctx, visible: [] }).idle === 1, 'a quiet turn counts toward the regen wait');
-ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).value === 39.25, 'regen runs with an enemy in sight too (then pressed -1)');
+ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).value === 40.25, 'regen runs with an enemy in sight too');
 
 // 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
 ok(JSON.stringify(Object.keys(createConfidence())) === '["value","idle","counts","enc"]', 'default state has no w / model keys');
@@ -116,8 +131,8 @@ bt = apply(bt, 'hit', 2, 3);
 ok(Math.abs(bt.value - 40) < 0.01, `beta after one hit is 2/5: ${bt.value}`);
 bt = apply(apply(bt, 'struck', 2, 3), 'dispelled', 2, 3);
 ok(Math.abs(bt.value - 100 * 4 / 7) < 0.01, `beta after hit, 2 landed is 4/7: ${bt.value}`);
-const bt2 = apply(apply(bt, 'regen', 2, 3), 'pressed', 2, 3);
-ok(bt2.value === bt.value, 'beta ignores regen and pressed');
+const bt2 = apply(apply(bt, 'regen', 2, 3), 'coin', 2, 3);
+ok(bt2.value === bt.value, 'beta ignores regen and coins');
 ok(apply(createConfidence({ model: 'beta' }), 'hit', 1, 2).value === 40 && apply(apply(createConfidence({ model: 'beta' }), 'struck', 1, 2), 'struck', 1, 2).value === 45, 'beta obeys the lives cap');
 ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta state round-trips through JSON');
 
@@ -126,7 +141,9 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   const g2 = (n, hp = 2) => Array.from({ length: n }, () => ({ hp, weight: 1 }));
   const cap0 = (L, M, n, w, extra = {}) => capability({ lives: L, maxLives: M, ghosts: g2(n), ...extra }, w);
   const C0 = (L, M, n, w) => combine(cap0(L, M, n, w), 50, L, M);
-  // (a) the section 2.2 table (rows: lives left of max; columns: 0..4 ghosts of 2 hp), history neutral
+  // (a) the section 2.2 table (rows: lives left of max; columns: 0..4 ghosts of 2 hp), history neutral. It is the raw model, so the
+  // unhurt floor is switched off for it (restored below, where its own cases follow).
+  configureConfidence({ confUnhurtFloor: 0 });
   const T05 = { '2/2': [75, 75, 50, 25, 0], '3/3': [75, 75, 58, 42, 25], '4/4': [75, 75, 63, 50, 38], '1/2': [38, 38, 13, 0, 0] };
   const T035 = { '2/2': [75, 75, 58, 40, 23], '3/3': [75, 75, 63, 52, 40], '4/4': [75, 75, 66, 58, 49], '1/2': [38, 38, 20, 3, 0] };
   const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'even'], '4/4': ['sure', 'sure', 'sure', 'even', 'even'], '1/2': ['unsure', 'unsure', 'shaken', 'shaken', 'shaken'] };
@@ -144,10 +161,21 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
     }
   }
   ok(C0(2, 2, 3, 0.35) >= 40 && C0(2, 2, 3, 0.5) < 40, 'three 2-hp ghosts at 2 lives: even at 0.35, unsure at 0.5');
-  ok(combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 1) }, 0.5), 50, 2, 2) === 56 && combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 3) }, 0.5), 50, 2, 2) === 44, 'two 1-hp ghosts 56, two 3-hp ghosts 44 (w 0.5)');
+  ok(combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 1) }, 0.5), 50, 2, 2) === 53 && combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 3) }, 0.5), 50, 2, 2) === 47, 'two 1-hp ghosts 53, two 3-hp ghosts 47 (w 0.5; the heaviest is the free one)');
   ok(combine(cap0(2, 2, 2, 0.5), 68, 2, 2) === 68 && combine(cap0(2, 2, 2, 0.5), 80, 2, 2) === 80, 'history shifts C: H 68 / 80 with two ghosts at 2 lives read 68 / 80 (w 0.5)');
-  ok(cap0(2, 2, 1, 0.5, { steady: false }) === 50 && cap0(2, 2, 1, 0.5) === 75, 'non-steady: the first ghost costs too (assumption)');
+  ok(cap0(2, 2, 1, 0.5, { steady: false }) === 75 && cap0(2, 2, 1, 0.5) === 75, 'a lone monster is free whatever the stun settings (steady is unused)');
+  ok(cap0(2, 2, 2, 0.5, { steady: false }) === cap0(2, 2, 2, 0.5, { steady: true }), 'steady changes nothing with two monsters either');
   ok(cap0(2, 2, 0, 0.5, { steady: false }) === 75, 'no ghost known: R is the explorer\'s own strength');
+  ok(capability({ lives: 4, maxLives: 4, ghosts: [{ hp: 4, weight: 1 }] }) === 75, 'a lone 4-hp monster (troll) is free too');
+  configureConfidence({ confUnhurtFloor: 50 });
+  ok(UNHURT_FLOOR === 50, 'UNHURT_FLOOR 50');
+  for (const n of [0, 1, 2, 3, 4, 8]) for (const [L, M] of [[2, 2], [4, 4], [3, 3]]) for (const w of [0.35, 0.5]) {
+    ok(cap0(L, M, n, w) >= 50 && C0(L, M, n, w) >= 50, `unhurt floor: ${n} monsters at ${L}/${M} lives, w ${w}: C ${C0(L, M, n, w)} >= 50`);
+  }
+  ok(C0(2, 2, 3, 0.35) === 50, '3 two-hp monsters at full lives (2 lives): the raw 40 is lifted to the floor, C 50');
+  ok(cap0(1, 2, 3, 0.5) < 50 && cap0(3, 4, 4, 0.5) < 50, 'hurt (lives < max): no floor, extra monsters still cost');
+  ok(cap0(2, 2, 3, 0.5, { armed: false }) <= NO_SWORD_MAX, 'unarmed: the floor does not apply');
+  ok(combine(cap0(2, 2, 3, 0.5), 35, 2, 2) === 35, 'a beaten history (-15) still lowers C below the floor: the drop is justified');
   // (b) monotonicity over a grid
   for (const w of [0.35, 0.5]) for (const steady of [true, false]) for (const hp of [1, 2, 3, 5]) {
     for (let M = 1; M <= 6; M++) for (let L = 1; L <= M; L++) {
@@ -176,24 +204,29 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(combine(0, 0, 2, 2) === 0 && combine(100, 100, 2, 2) === 100 && combine(50, 200, 2, 2) === 80, 'combine: floor 0, ceiling 100, h limited to +30');
   for (let L = 1; L <= 4; L++) for (let n = 0; n <= 4; n++) ok(cap0(L, 4, n, 0.35, { armed: false }) <= NO_SWORD_MAX, `no attack skill: R <= 20 (L ${L} n ${n})`);
   ok(NO_SWORD_MAX === 20 && cap0(2, 2, 3, 0.35, { armed: false }) === Math.min(20, cap0(2, 2, 3, 0.35)) && cap0(2, 2, 0, 0.35, { armed: false }) === 20, 'no sword: min(R, 20)');
-  // (d) allowedMoods: the three tiers of PLAN-moods (low wary/guarded, mid cautious/steady/greedy, high bold/fearless)
-  const LOW = 'wary,guarded', MID = 'cautious,steady,greedy,bold', HIGH = 'bold,fearless';
+  // (d) allowedMoods: the four tiers (low wary/guarded, midlow cautious/steady/bold, mid steady/greedy/bold, high bold/fearless)
+  const LOW = 'wary,guarded', MIDLOW = 'cautious,steady,bold', MID = 'steady,greedy,bold', HIGH = 'bold,fearless';
+  const tiers = (C, lowTo, midFrom) => (C <= lowTo ? LOW : C < midFrom ? MIDLOW : C <= 69 ? MID : HIGH);
   const ORDER = Object.keys(SENTIMENTS);
   ok(JSON.stringify(ORDER) === '["panic","wary","guarded","cautious","steady","greedy","bold","fearless"]', `SENTIMENTS order ${ORDER}`);
   for (let C = 0; C <= 100; C++) {
     const l = allowedMoods(C, {});
-    ok(l.join() === (C <= 35 ? LOW : C <= 69 ? MID : HIGH), `allowedMoods(${C}) = ${l}`);
+    ok(l.join() === tiers(C, 35, 50), `allowedMoods(${C}) = ${l}`);
     ok(!l.includes('panic'), `panic is never offered (${C})`);
     ok(allowedMoods(C).join() === l.join(), `ctx is optional (${C})`);
     // hysteresis: the tier of the current mood is kept 5 points past its edge
-    ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 69 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
+    ok(allowedMoods(C, { current: 'wary' }).join() === tiers(C, 40, 50), `low tier kept to 40 (C ${C})`);
     ok(allowedMoods(C, { current: 'panic' }).join() === allowedMoods(C, { current: 'wary' }).join(), `panic holds the low tier like wary (${C})`);
-    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C <= 69 ? MID : HIGH), `bold belongs to the mid tier too, no hysteresis (C ${C})`);
-    ok(allowedMoods(C, { current: 'steady' }).join() === l.join(), `a mid mood adds no hysteresis (${C})`);
+    ok(allowedMoods(C, { current: 'bold' }).join() === tiers(C, 35, 45), `bold belongs to the mid tier, held down to 45, not the high tier (C ${C})`);
+    ok(allowedMoods(C, { current: 'steady' }).join() === tiers(C, 35, 45), `steady belongs to the mid tier, held down to 45 (C ${C})`);
+    ok(allowedMoods(C, { current: 'cautious' }).join() === tiers(C, 35, 55), `cautious belongs to midlow, held up to 54 (C ${C})`);
     for (const ex of ['lastLife', 'swordDown']) ok(allowedMoods(C, { [ex]: true }).join() === LOW, `${ex} forces the low tier at ${C}`);
   }
   ok(defaultMood(['wary', 'guarded']) === 'guarded' && defaultMood(['cautious', 'steady', 'greedy']) === 'steady' && defaultMood(['bold', 'fearless']) === 'bold', 'defaultMood: guarded / steady / bold');
   ok(tierOfMood('panic') === 'low' && tierOfMood('fearless') === 'high' && tierOfMood('nope') === null, 'tierOfMood');
+  ok(tierOfMood('cautious') === 'midlow' && tierOfMood('steady') === 'mid' && tierOfMood('bold') === 'mid' && tierOfMood('greedy') === 'mid', 'tierOfMood: a mood in two tiers belongs to mid');
+  ok(retreatTier('low') && retreatTier('midlow') && !retreatTier('mid') && !retreatTier('high'), 'retreats only in the low and midlow tiers');
+  ok(Object.entries(TIER_MOODS).every(([t, l]) => t === 'low' || l.filter((id) => ['wary', 'guarded', 'cautious'].includes(id)).length <= 1) && !TIER_MOODS.mid.includes('cautious'), 'outside the low tier at most one holding-back mood, none in mid');
   // (e) sightWeight
   ok(sightWeight(0) === 1 && sightWeight(15) === 0.5 && sightWeight(30) === 0 && sightWeight(31) === 0 && sightWeight(500) === 0, 'sightWeight: 1, 0.5, 0, 0');
   ok(HIST_SPAN === 30, 'HIST_SPAN 30');
@@ -235,11 +268,13 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(n === 40, `15 to 25 takes 40 regen ticks after the wait: ${n}`);
   ok(JSON.stringify(JSON.parse(JSON.stringify(r))) === JSON.stringify(r), 'regen state round-trips through JSON');
   ok(apply(createConfidence({ model: 'beta' }), 'regen', 2, 2).value === 50, 'beta ignores regen');
-  // tiers: low <= 35, mid 36..69, high >= 70, with 5 points of hysteresis
-  ok(tierOf(35) === 'low' && tierOf(36) === 'mid' && tierOf(69) === 'mid' && tierOf(70) === 'high', 'tier edges 35/36 and 69/70');
-  ok(tierOf(40, 'low') === 'low' && tierOf(41, 'low') === 'mid', 'low tier kept up to 40');
+  // tiers: low <= 35, midlow 36..49, mid 50..69, high >= 70, with 5 points of hysteresis
+  ok(tierOf(35) === 'low' && tierOf(36) === 'midlow' && tierOf(49) === 'midlow' && tierOf(50) === 'mid' && tierOf(69) === 'mid' && tierOf(70) === 'high', 'tier edges 35/36, 49/50 and 69/70');
+  ok(tierOf(40, 'low') === 'low' && tierOf(41, 'low') === 'midlow', 'low tier kept up to 40');
+  ok(tierOf(54, 'midlow') === 'midlow' && tierOf(55, 'midlow') === 'mid' && tierOf(35, 'midlow') === 'low' && tierOf(70, 'midlow') === 'high', 'midlow kept up to 54');
+  ok(tierOf(45, 'mid') === 'mid' && tierOf(44, 'mid') === 'midlow', 'mid tier kept down to 45');
   ok(tierOf(65, 'high') === 'high' && tierOf(64, 'high') === 'mid', 'high tier kept down to 65');
-  ok(tierOf(40, 'mid') === 'mid' && tierOf(65, 'mid') === 'mid', 'hysteresis only holds the tier already in');
+  ok(tierOf(40, 'midlow') === 'midlow' && tierOf(65, 'mid') === 'mid' && tierOf(36, 'mid') === 'midlow', 'hysteresis only holds the tier already in');
   // panic: enter below 20, leave at 25
   ok(!panicNext(20, false) && panicNext(19.75, false), 'panic enters below 20');
   ok(panicNext(24.75, true) && !panicNext(25, true), 'panic ends only at 25 or more');

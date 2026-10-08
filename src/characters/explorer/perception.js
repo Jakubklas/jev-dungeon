@@ -41,7 +41,7 @@ export const APPROACHES = {
     text: 'Slip past the enemy: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
   },
-  run_away: { text: 'Run away from the enemy: get away from it, keep escape routes open, and avoid dead ends.', thought: 'Run away!', tactic: true, brief: 'Run away: get clear and keep escape routes open.' },
+  run_away: { text: 'Pull back for now: get clear of the enemy, keep escape routes open, avoid dead ends, and come back for the loot once you have regrouped.', thought: 'Run away!', tactic: true, brief: 'Pull back for now: get clear, regroup, come back later.' },
   engage: {
     text: 'Engage: fight the enemy with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
     thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
@@ -199,7 +199,7 @@ function frozenThreats(world, remembered) {
 // `avoid` (optional Set from avoidZone): the exploration approaches skip frontier cells in it
 // while any other frontier cell exists.
 // `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage; `fight`: see tacticFeasibility.
-export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null } = {}) {
+export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null, breakout = null } = {}) {
   // Only the leaving approaches may route through the portal; for all others it is a wall.
   const dist = knownDistances(world, world.pos, null, null, null, approachId === 'go_to_exit');
 
@@ -227,6 +227,8 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
     if (approachId === 'engage') return engageTarget(world, threats, { stunned, fight });
+    // Cornered (cornerMode): the breakout route's end is the slip_past target whatever the gap or `exclude`.
+    if (breakout && approachId === 'slip_past') return { cell: [...breakout.cell], steps: breakout.steps, why: breakout.why };
     const safe = safeDistances(world, threats, minGap);
     const goals = goalsAt(world, threats, safe);
     if (goal && !sameCell(goal, world.pos) && safe.has(goal)) {
@@ -310,7 +312,12 @@ function hereKind(world) {
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
 let HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false } = {}) {
+// `retreat` false (the mid and high confidence tiers): Jev leans on any safe option it is shown, so pulling back (run_away, hide,
+// race_to_exit) is left off the menu while a forward tactic (engage, slip_past, carry_on) is open. With no forward tactic, or
+// `cornered` (cornerMode), nothing is trimmed.
+const FORWARD_TACTICS = ['engage', 'slip_past', 'carry_on'];
+const RETREAT_TACTICS = ['run_away', 'hide', 'race_to_exit'];
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false, retreat = true, cornered = null } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -342,7 +349,17 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);
   add('carry_on', threats.every((th) => !th.chasing) && s.frontier && s.frontier.gap >= minGap);
-  if (panic) for (const id of Object.keys(out)) if (!['run_away', 'race_to_exit', 'engage'].includes(id)) delete out[id]; // panic: run, or take the portal, nothing subtler
+  // Cornered (cornerMode, brain): slip_past stays on the menu whatever its gap, aimed at the breakout route
+  // (`cornered` = { breakout: { cell, steps, why } | null }), and engage stays when armed, panic or not.
+  if (cornered) {
+    if (cornered.breakout) { const b = cornered.breakout; out.slip_past = { target: { cell: [...b.cell], steps: b.steps, why: b.why }, fact: b.why }; }
+    if (armed && !out.engage) add('engage', true);
+  }
+  if (panic) {
+    for (const id of Object.keys(out)) if (!['run_away', 'race_to_exit', 'engage'].includes(id) && !(cornered && id === 'slip_past')) delete out[id]; // panic: run, or take the portal, nothing subtler
+  } else if (!retreat && !cornered && FORWARD_TACTICS.some((id) => out[id])) {
+    for (const id of RETREAT_TACTICS) delete out[id];
+  }
   return out;
 }
 
@@ -565,8 +582,9 @@ export function describeMoves(world, approachId, opts = {}) {
 // The same facts split in two: `shared` (threats, sightings, portal, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
-export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false } = {}) {
-  const target = approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned });
+export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false, breakout = null, noGapWarn = false } = {}) {
+  const target = approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned, breakout });
+  const warnGap = noGapWarn ? 0 : minGap; // cornered: no "below your minimum gap" warnings
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();
   // Distance to the portal is only a fact while leaving: otherwise it would frame every move around leaving.
@@ -603,7 +621,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
       out[dir] = { whole: 'Steps onto the portal: leaves the dungeon with your current coins and ends the game.' };
       continue;
     }
-    facts.push(...threatSentences(world, threats, dest, minGap));
+    facts.push(...threatSentences(world, threats, dest, warnGap));
     const spot = sightingSentence(world, sightings, here, dest);
     if (spot) facts.push(spot);
 
@@ -674,7 +692,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
   if (world.legalMoves().length) {
     const hg = approachId === 'engage' && target?.steps === 0 ? holdGhost(threats, stunned, here, multiHold) : null;
     const holding = !!hg && threatDistance(hg, here) === 2;
-    out[STAY] = { whole: stayFacts(world, approachId, threats, minGap, holding), ...(holding ? { holding } : {}) };
+    out[STAY] = { whole: stayFacts(world, approachId, threats, warnGap, holding), ...(holding ? { holding } : {}) };
   }
   return out;
 }

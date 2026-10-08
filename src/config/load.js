@@ -94,6 +94,7 @@ export function crossProblems(values) {
   if (!(values.morBandSavage > values.morBandEager && values.morBandEager > values.morBandSteady && values.morBandSteady > values.morBandWavering && values.morBandWavering >= 0)) out.push('Morale bands must fall: savage > eager > steady > wavering');
   if (values.confPanicExit < values.confPanicEnter) out.push('Panic must end at or above the confidence where it starts');
   if (values.confTierLowMax >= values.confTierHighMin) out.push('The low tier must end below the confidence where the high tier starts');
+  if (!(values.confTierLowMax < values.confTierMidMin && values.confTierMidMin <= values.confTierHighMin)) out.push('The mid tier must start above the low tier and at or below the high tier');
   if (!(values.confBandDominant > values.confBandSure && values.confBandSure > values.confBandEven && values.confBandEven > values.confBandUnsure && values.confBandUnsure >= 0)) out.push('Confidence bands must fall: dominant > sure > even > unsure');
   for (const [name, ids] of Object.entries({ 'solid prop': ['shelf', 'crates', 'storage_chest'], 'small prop': ['pots', 'skull', 'tools', 'sword', 'anvil', 'goblet'], 'big wall piece': ['fireplace', 'arch', 'gate', 'banner'] })) {
     if (ids.every((id) => values[`propWeight_${id}`] === 0)) out.push(`At least one ${name} kind needs a weight above 0 (${ids.join(', ')})`);

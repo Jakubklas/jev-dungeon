@@ -2,7 +2,7 @@
 // newTestGame with the `confidence` option, stub Jev, throwing fetch tripwire (the duel harness installs it).
 // Event table: each event moves C by the documented delta (strike +5, dispel +8, hit -7 then the lives cap,
 // blocked +3 up to 65, evaded +2 up to 65 only for an encounter with a chasing sighting and no hit and no
-// dispel, pressed -2 at most -8 per encounter (never for a ghost the own strike stunned), blocked events forwarded by Run, calm +0.3 only below 50), memory shape with the toggle on and
+// dispel, coin +2 each and heart +5 from the explorer's own steps, no pressed penalty, blocked events forwarded by Run), memory shape with the toggle on and
 // off, the turn's `confidence` object, and a fog twin (a hidden ghost in another room changes nothing).
 // Requests stay byte-identical with the toggle on (C2 changes no request text): scripts/check-request-hashes.mjs.
 // Free, no Jev.
@@ -122,20 +122,57 @@ for (const [maxLives, lives, want] of [[2, 1, 43], [3, 2, 43], [3, 1, 43], [9, 8
   ok(C(quiet).value === 50, 'at 50 regen adds nothing');
 }
 
-// 4b. coins never move confidence: picking piles up (even a dropped one) changes neither H nor its counts
+// 4b. coins +2 each and a heart +5, from the explorer's own steps (applyMove's coins / healed): the report names them. The heart is
+// applied after the heal, so the lives cap sees the restored life.
 {
+  const walk = async (rows, extra = {}) => build({ map: rows, seed: 4, numAdversaries: 0, ...extra }, { ask: async (req) => { const out = await stub()(req); if (out.next_move) out.next_move = answer(Object.keys(req.questions.next_move.criteria).includes('right') ? 'right' : out.next_move.choice); return out; } });
   const rows = ROOM.map((r, y) => (y === 3 ? r.slice(0, 4) + 'cc' + r.slice(6) : r));
-  const run = build({ map: rows, seed: 4, numAdversaries: 0 }, { ask: stub() });
-  const before = JSON.stringify(C(run));
-  run.game.applyMove('right'); // 4,3 -> coin
-  run.game.applyMove('right'); // 5,3 -> coin
-  ok(run.game.coins === 2, `the explorer picked up its coins (${run.game.coins})`);
-  const turns = await play(run, 12);
-  ok(turns.some((t) => t.confidence) && C(run).value === 50 && JSON.stringify(C(run).counts) === JSON.stringify(JSON.parse(before).counts), `coins leave confidence alone: ${JSON.stringify(C(run))}`);
-  ok(turns.every((t) => !/coin/.test(String(t.confidence.reason ?? ''))), 'no confidence report names a coin');
+  const run = await walk(rows);
+  const t1 = await run.playTurn(); // onto the first coin
+  ok(C(run).counts.coins === 1 && Math.abs(C(run).value - 52) < 1e-9 && /coin/.test(t1.confidence.reason ?? ''), `first coin: +2, named: ${JSON.stringify(C(run))} ${t1.confidence.reason}`);
+  await run.playTurn();
+  ok(C(run).counts.coins === 2 && Math.abs(C(run).value - 54) < 1e-9, `second coin: +2 more: ${JSON.stringify(C(run))}`);
+  const hearts = ROOM.map((r) => r);
+  const h = await walk(hearts, { hearts: [[4, 3]] });
+  h.game.health = h.game.maxHealth - 1;
+  const th = await h.playTurn();
+  ok(h.game.health === h.game.maxHealth && C(h).counts.hearts === 1 && Math.abs(C(h).value - 55) < 1e-9 && /heart/.test(th.confidence.reason ?? ''), `heart: healed, +5, named: health ${h.game.health}/${h.game.maxHealth} ${JSON.stringify(C(h))} ${th.confidence.reason}`);
+  const full = await walk(hearts, { hearts: [[4, 3]] });
+  await full.playTurn();
+  ok(C(full).counts.hearts === 0 && C(full).value === 50, 'a heart left on the floor at full lives gives nothing');
 }
 
-// 5. evaded: a chasing sighting that ends with no hit and no dispel gives +4; a hit or a dispel in it cancels it.
+// 4c. seeing a lone monster costs nothing, even with stunTicks 0 (the main arena's setting) and 4 lives; 2 and 3 monsters at full lives keep C >= 50;
+// being chased for 10 ticks unhurt never lowers H; a hit still lowers C.
+{
+  const before = skillConfig();
+  configureSkills({ ...before, stunTicks: 0 });
+  try {
+    const LONG = ['#####################', '#...................#', '#...................#', '#..@................#', '#...................#', '#...................#', '#####################'];
+    const cells = [[12, 3], [12, 1], [12, 5]];
+    for (const n of [1, 2, 3]) {
+      let rows = LONG; for (let i = 0; i < n; i++) rows = withGhost(rows, cells[i][0], cells[i][1]);
+      const run = build({ map: rows, seed: 11, ghostSkills: 'none' }, { ask: stub({ mood: 'bold', tactic: 'carry_on' }) });
+      run.game.health = run.game.maxHealth = 4;
+      const c0 = run.explorer.constructor && (await run.playTurn()).confidence;
+      let lowestC = c0.value, lowestH = c0.history, sawEnemy = false;
+      await play(run, 10, (turn, r) => { lowestC = Math.min(lowestC, turn.confidence.value); lowestH = Math.min(lowestH, turn.confidence.history); if (r.game.adversaries.some((a) => a.mode === 'chase')) sawEnemy = true; });
+      ok(lowestH === 50, `${n} monster(s), stunTicks 0, 4 lives, unhurt: H never drops (lowest ${lowestH})`);
+      ok(lowestC >= 50, `${n} monster(s), stunTicks 0, 4 lives, unhurt: C stays >= 50 (lowest ${lowestC})`);
+      if (n === 1) ok(lowestC >= 74, `one monster costs nothing: C stays at its unhurt value (lowest ${lowestC})`);
+    }
+    const hit = build({ map: withGhost(ROOM, 6, 3), seed: 12 }, { ask: stub({ mood: 'bold', tactic: 'carry_on' }) });
+    hit.game.health = hit.game.maxHealth = 4;
+    const t0 = (await hit.playTurn()).confidence.value;
+    hit.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+    let hitSeen = false, after = null;
+    let owed = false;
+    await play(hit, 30, (turn) => { if (owed && after === null) after = turn.confidence.value; if (!hitSeen && turn.events.some((e) => e.type === 'hit')) { hitSeen = true; owed = true; } }); // the hit shows in the next report
+    ok(hitSeen && after !== null && after < t0, `a hit still lowers C (${t0} -> ${after})`);
+  } finally { configureSkills(before); }
+}
+
+// 5. evaded: a chasing sighting that ends with no hit and no dispel gives +2; a hit or a dispel in it cancels it.
 async function encounter({ hit = false } = {}) {
   const run = build({ map: withGhost(ROOM, 10, 3), seed: 5, ghostSkills: 'none' }, { ask: stub({ mood: 'bold', tactic: 'run_away' }) });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
@@ -175,16 +212,13 @@ async function encounter({ hit = false } = {}) {
   ok(dispels >= 1 && over2 === 0 && C(k).counts.evaded === 0, `a dispel in the encounter cancels evaded (dispels ${dispels}, evaded ${C(k).counts.evaded})`);
 }
 
-// 6. pressed: a chaser within 2 steps, sword not ready: -2 per tick, at most -8 per encounter (a dead end, no sword, harmless claws).
+// 6. being chased is no justification: a cornered, swordless explorer chased for 30 ticks (harmless claws) never loses H.
 {
   const run = build({ map: ['##########', '##########', '#@..A....#', '##########', '##########'], seed: 7, explorerSkills: 'none', ghostSkills: 'none' }, { ask: stub({ mood: 'wary', tactic: 'run_away' }) });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
   const turns = await play(run, 30);
-  const c = C(run);
-  ok(c.counts.pressed >= 5, `a cornered, swordless explorer is pressed on several ticks, got ${c.counts.pressed}`);
-  const hs = turns.map((t) => t.confidence.history);
-  ok(Math.min(...hs) === 42, `pressed stops at -8 per encounter: 42, got ${Math.min(...hs)}`);
-  ok(hs.every((h, i) => { const d = h - (i ? hs[i - 1] : 50); return d >= -2 && d <= 0.25; }), 'each pressed tick is -2 at most (regen waits 10 ticks after it)');
+  ok(Math.min(...turns.map((t) => t.confidence.history)) === 50, 'chased and cornered for 30 ticks: H stays 50');
+  ok(turns.every((t) => !/pressed/.test(t.confidence.reason ?? '')) && !('pressed' in C(run).counts), 'no pressed event or count any more');
 }
 
 // 7. fog twin: a ghost walled into another room (two different cells) changes neither C nor any request.
@@ -220,27 +254,6 @@ async function encounter({ hit = false } = {}) {
       if (C(r).counts.blocked !== blocked) bad++;
     });
     ok(blocked >= 1 && bad === 0, `every blocked event is forwarded once and reported next turn: ${blocked} blocked, ${hits} hits, ${bad} mismatches, counts ${JSON.stringify(C(run).counts)}`);
-  } finally { configureSkills(before); }
-}
-
-// 9. pressed is not counted for a ghost the explorer's own strike stunned: sword cooldown 6, stun 4, a dead end,
-// run_away (not engage). Ticks right after the strike (the ghost stunned within 2 steps, sword down) are not pressed.
-{
-  const before = skillConfig();
-  configureSkills({ ...before, swordCooldown: 6, stunTicks: 4 });
-  try {
-    const run = build({ map: ['##########', '##########', '#@..A....#', '##########', '##########'], seed: 10, explorerSkills: ['sword_strike'], ghostSkills: 'none', ghostHp: 5 }, { ask: stub({ mood: 'wary', tactic: 'run_away', skill: true }) });
-    run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
-    let strikeAt = null, pressedInStun = 0, pressedAfter = 0, closeInStun = 0;
-    await play(run, 20, (turn, r, t) => {
-      if (strikeAt === null && turn.events.some((e) => e.type === 'struck')) { strikeAt = t; return; }
-      if (strikeAt === null) return;
-      const why = turn.confidence.reason ?? '';
-      const near = r.game.adversaries.some((a) => Math.abs(a.pos[0] - r.game.pos[0]) + Math.abs(a.pos[1] - r.game.pos[1]) <= 2);
-      if (t - strikeAt < 4) { if (near) closeInStun++; if (/pressed/.test(why)) pressedInStun++; } else if (t - strikeAt < 6 && /pressed/.test(why)) pressedAfter++;
-    });
-    ok(strikeAt !== null && closeInStun >= 1 && pressedInStun === 0, `no pressed while the own strike's stun lasts (strike tick ${strikeAt}, close ${closeInStun}, pressed ${pressedInStun})`);
-    ok(pressedAfter >= 1, `pressed returns once the stun is over and the sword is still down (${pressedAfter})`);
   } finally { configureSkills(before); }
 }
 

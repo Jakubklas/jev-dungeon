@@ -311,6 +311,19 @@ const sortedEntries = (o) => JSON.stringify(Object.entries(o).sort(([a], [b]) =>
 const nowP3 = { ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot() };
 check(sortedEntries(nowP3) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in nowP3))), 'removing the keys restores every P3 default');
 
+// 6d'. cornerMode (PLAN-corner): a live choice knob, default off; a file value reaches the brain, a bad one is refused, removing it restores off
+check(BR.explorerBrainSnapshot().cornerMode === 'off' && R.KNOBS.find((k) => k.key === 'cornerMode')?.options.join() === 'off,urgent,ascii,route,full', 'cornerMode defaults to off and offers off, urgent, ascii, route, full');
+writeFileSync(cfg, 'explorer: { brain: { cornerMode: full } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(BR.explorerBrainSnapshot().cornerMode === 'full', 'cornerMode follows the file (live)');
+p = L.parseConfig(YAML.parse('explorer: { brain: { cornerMode: sideways } }'));
+check(p.warnings.length === 1 && p.warnings[0].includes('explorer.brain.cornerMode') && !('cornerMode' in p.values), 'a bad cornerMode is refused by name: ' + p.warnings.join(' | '));
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(BR.explorerBrainSnapshot().cornerMode === 'off', 'removing cornerMode restores off');
+
 // 6e. P4: the monsters' own numbers follow the file (live); a cut-off range that is backwards is refused
 writeFileSync(cfg, 'monsters: { brain: { pingpongs: 5, skillNear: 6 }, perception: { sweepRadius: 15, cutMin: 4, cutMax: 30 }, memory: { sightingSpacing: 5 }, pack: { heardSteps: 9 } }\n');
 await new Promise((r) => setTimeout(r, 20));

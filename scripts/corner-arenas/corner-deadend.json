@@ -1,0 +1,67 @@
+{
+ "description": "(d) control: 1-wide corridor dead end, explorer at the closed end; only fighting through works.",
+ "map": [
+  "#################",
+  "#################",
+  "#...............#",
+  "#################",
+  "#################"
+ ],
+ "placements": [
+  {
+   "explorer": [
+    1,
+    2
+   ],
+   "ghost": [
+    3,
+    2
+   ]
+  },
+  {
+   "explorer": [
+    1,
+    2
+   ],
+   "ghost": [
+    4,
+    2
+   ]
+  },
+  {
+   "explorer": [
+    1,
+    2
+   ],
+   "ghost": [
+    5,
+    2
+   ]
+  },
+  {
+   "explorer": [
+    1,
+    2
+   ],
+   "ghost": [
+    7,
+    2
+   ]
+  },
+  {
+   "explorer": [
+    1,
+    2
+   ],
+   "ghost": [
+    9,
+    2
+   ]
+  }
+ ],
+ "seeds": [
+  1,
+  2,
+  3
+ ]
+}
