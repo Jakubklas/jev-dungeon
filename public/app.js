@@ -969,10 +969,10 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
 
 // Shield over the knight while game.block is active: a 15x20 art px heater shield (steel-blue rim, dark
 // outline, a lit left half and a shaded right half of amber) that covers the whole sprite. Built once.
-const SHIELD_W = 15, SHIELD_H = 17;
+const SHIELD_W = 15, SHIELD_H = 14;
 const SHIELD_COLORS = { E: '#0b1430', B: '#4f7fd6', L: '#f0a640', D: '#b8652a', H: '#ffe0a0' };
 const SHIELD_ROWS = (() => {
-  const half = (r) => (r < 10 ? 7 : Math.round(7 * (1 - (r - 10) / 7)));
+  const half = (r) => (r < 8 ? 7 : Math.round(7 * (1 - (r - 8) / 6)));
   const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half(r);
   const rows = [];
   for (let r = 0; r < SHIELD_H; r++) {
@@ -980,7 +980,7 @@ const SHIELD_ROWS = (() => {
     for (let x = 0; x < SHIELD_W; x++) {
       if (!inside(x, r)) { row += '.'; continue; }
       const nb = (d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([ox, oy]) => !inside(x + ox, r + oy));
-      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 2 && r < 7 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
+      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 2 && r < 6 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
     }
     rows.push(row);
   }
@@ -1092,7 +1092,7 @@ function drawEntity(en, now, cx, cy) {
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
     drawCoinGlow(px, py, now);
-    if (game?.block) drawShield(px, py - 16, now); // top edge at the helmet's visor line: covers the lower half of the helmet and below
+    if (game?.block) drawShield(px, py - 13, now); // top edge two rows into the helmet's bottom: covers about a quarter of the helmet
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
