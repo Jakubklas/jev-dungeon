@@ -120,6 +120,19 @@ for (const [maxLives, lives, want] of [[2, 1, 35], [3, 2, 35], [3, 1, 35], [9, 8
   ok(C(quiet).value === 50, 'at 50 regen adds nothing');
 }
 
+// 4b. coins never move confidence: picking piles up (even a dropped one) changes neither H nor its counts
+{
+  const rows = ROOM.map((r, y) => (y === 3 ? r.slice(0, 4) + 'cc' + r.slice(6) : r));
+  const run = build({ map: rows, seed: 4, numAdversaries: 0 }, { ask: stub() });
+  const before = JSON.stringify(C(run));
+  run.game.applyMove('right'); // 4,3 -> coin
+  run.game.applyMove('right'); // 5,3 -> coin
+  ok(run.game.coins === 2, `the explorer picked up its coins (${run.game.coins})`);
+  const turns = await play(run, 12);
+  ok(turns.some((t) => t.confidence) && C(run).value === 50 && JSON.stringify(C(run).counts) === JSON.stringify(JSON.parse(before).counts), `coins leave confidence alone: ${JSON.stringify(C(run))}`);
+  ok(turns.every((t) => !/coin/.test(String(t.confidence.reason ?? ''))), 'no confidence report names a coin');
+}
+
 // 5. evaded: a chasing sighting that ends with no hit and no dispel gives +4; a hit or a dispel in it cancels it.
 async function encounter({ hit = false } = {}) {
   const run = build({ map: withGhost(ROOM, 10, 3), seed: 5, ghostSkills: 'none' }, { ask: stub({ mood: 'steady', tactic: 'run_away' }) });
