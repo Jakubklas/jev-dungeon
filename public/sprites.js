@@ -127,6 +127,53 @@ const CHEST_A = [
   'oooooooooooo',
 ];
 
+const TROLL_PAL = {
+  o: '#101a0e', // outline (green-tinted dark)
+  m: '#172b14', // back moss (deep shade)
+  d: '#25401f', // skin shade
+  g: '#3f6a2b', // skin
+  l: '#5f8f3c', // skin light
+  h: '#8fb85a', // skin highlight (belly, brow)
+  e: '#ffc633', // glowing yellow eye (coin gold)
+  k: '#13131f', // mouth
+  b: '#e3daa7', // tooth, tusk, belt trinket (bone ramp)
+  B: '#b6a96e', // bone shade
+  w: '#603312', // belt and loincloth (wood ramp)
+  W: '#93531f',
+  M: '#6f8fa5', // belt buckle (steel ramp)
+  L: '#abbfce',
+};
+
+// ---------------------------------------------------------------- troll 22x22 (two wall blocks tall)
+// A hunched brute: moss-spiked back, a jutting fanged jaw with two tusks, long arms, a wood belt with a steel
+// buckle and a bone trinket, a ragged loincloth. TROLL_B settles the head and shoulders one row (breathing).
+const TROLL_A = [
+  '.....o..o...o.........',
+  '....omo.omo.omo.......',
+  '...omdmomdmomdmooooo..',
+  '..omdgdmdgdmdgglllllo.',
+  '.omdggdgggdgggllllllo.',
+  '.omdgggggggdddddddddoo',
+  '.omdggggggglleglegllho',
+  '.omdgggggggllllllllhho',
+  '..omdgggggokbkbkbkbko.',
+  '..oddgggggokkkkkkkkko.',
+  '...oddgglllllhhlbhhbo.',
+  '..oddgggdgglllllhhhoo.',
+  '.oggodddglhhhhlloglgo.',
+  'oglgoddgllhhhhhlogggo.',
+  'oggdoddglhhhhhhlogggdo',
+  'oggdowWwwMLwWwbwogggdo',
+  'oglgowwWwLMwwWBboglgdo',
+  '.ooo..wWwwWwwWw..oooo.',
+  '....oddggo..odgggo....',
+  '....odgggo..odgggo....',
+  '...odgggggo.odgggggo..',
+  '...oooooooo.oooooooo..',
+];
+
+const TROLL_B = ['.'.repeat(22), ...TROLL_A.slice(0, 11), ...TROLL_A.slice(12)];
+
 // ----------------------------------------------------------------- coin 7x7
 const COIN_PAL = { o: '#3a2406', y: '#ffc633', L: '#fff0a8', d: '#c98a14' };
 const COIN_A = [
@@ -143,6 +190,7 @@ const COIN_A = [
 export const ART = {
   knight: { palette: KNIGHT_PAL, frames: [KNIGHT_A, KNIGHT_B], anchorX: 9, anchorY: 23 },
   ghost: { palette: GHOST_PAL, frames: [GHOST_A, GHOST_B], anchorX: 9, anchorY: 19 },
+  troll: { palette: TROLL_PAL, frames: [TROLL_A, TROLL_B], anchorX: 11, anchorY: 21 },
   chest: { palette: CHEST_PAL, frames: [CHEST_A], anchorX: 6, anchorY: 9 },
   coin: { palette: COIN_PAL, frames: [COIN_A], anchorX: 3, anchorY: 5 },
 };
@@ -183,6 +231,7 @@ export function buildSprites() {
   return {
     knight: build(ART.knight),
     ghost: build(ART.ghost),
+    troll: build(ART.troll),
     chest: build(ART.chest),
     coin: build(ART.coin),
   };

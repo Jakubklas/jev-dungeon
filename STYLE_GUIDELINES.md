@@ -25,6 +25,7 @@ The user picked these as the best expression of the style. Match them when you m
 | --- | --- | --- | --- |
 | Knight (explorer) | `public/sprites.js` `KNIGHT_A` / `KNIGHT_B` | 18×24, anchor (9, 23) | A steel ramp of 4 tones plus a red accent; a readable silhouette (plume, visor slit, shield arm, cape) at tiny size; a breathing frame built by shifting rows |
 | Ghost (adversary) | `public/sprites.js` `GHOST_A` / `GHOST_B` | 18×20, anchor (9, 19) | A hooded cloth ramp, a bone skull face and one glowing red eye pixel per socket; a ragged hem that alternates between the two frames |
+| Troll | `public/sprites.js` `TROLL_A` / `TROLL_B` | 22×22 (two wall blocks), anchor (11, 21) | A hunched brute built from its own green ramp plus the shared bone, wood and steel ramps: moss-spiked back, fanged jaw with two tusks, hanging fists, belt with buckle; the breathing frame drops one row under the head. Art only, not placed in the game yet |
 | Sword slash | `public/app.js` `drawSlash`, `SLASH_COLORS` | Arc radius 13 to 26 | A per-pixel crescent: thin tail, fat leading head, a 4-tone ramp from a dark rim to a white core |
 | Floor tiles | `public/app.js` `stonePattern`, `PALETTE.floor*`, `mortar` | 32×16 diamond | Flagstones, cobbles or a cracked slab; 1 px mortar; a lit top-left bevel and a dark bottom-right bevel per stone; sparse pixel noise |
 | Storage chest | `public/props/floor-art.js` `makeChest` | 24×23 | An iso box with a separate lid, two steel bands that wrap over the lid, a lock plate, a keyhole pixel and rivets |
@@ -51,6 +52,7 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | **Glazed blue** | wood outline | `#1f2c61` (b) · `#344994` (B) · `#657fce` (n) | Jars, pots (`#131a3c` deep shade on pots) |
 | **Sack** | wood outline | `#634c25` (Z) · `#957437` (A) · `#c49e56` (a) | Shelf sack |
 | **Glass** | wood outline | `#51987a` (g) · `#85c9a8` (G) | Shelf bottle |
+| **Troll skin** | `#101a0e` | `#172b14` (m, moss) · `#25401f` (d) · `#3f6a2b` (g) · `#5f8f3c` (l) · `#8fb85a` (h, belly and brow) | Troll. Eyes use the coin gold `#ffc633`; teeth, tusks and the belt trinket the bone ramp; belt and loincloth the wood ramp; buckle the steel ramp |
 
 ### Accents (saturated, meaningful, used sparingly)
 
@@ -114,7 +116,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Iso slope | 2:1 (2 px across, 1 px down). In prop art, 16 art px per cell side | `isoX = (x-y)·16`, `isoY = (x+y)·8` |
 | Wall block | 11 px tall; walls are 1 or 2 blocks (25% are 2) | `WALL_H`, `MAX_BLOCKS`, `TALL_WALL_SHARE` |
 | Wall courses | 4 px courses (mortar every 4th row), vertical joints staggered by 3 px | wall builder in app.js |
-| Characters | Knight 18×24, ghost 18×20; the anchor is the feet or hover point, on the cell centre | `ART` in sprites.js |
+| Characters | Knight 18×24, ghost 18×20, troll 22×22 (two wall blocks); the anchor is the feet or hover point, on the cell centre | `ART` in sprites.js |
 | Small floor props | About 18-20 × 12-16 (skull 20×12, tools/sword 20×14, anvil 18×12, goblet 12×16) | floor-art.js |
 | Solid floor props | About 24-25 × 23-30, roughly one cell's diamond wide (chest 24×23, shelf 24×30, crates 25×30) | floor-art.js |
 | Coin | 7×7 | `COIN_A` |
