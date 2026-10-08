@@ -128,82 +128,87 @@ const CHEST_A = [
 ];
 
 const TROLL_PAL = {
-  o: '#101a0e', // outline (green-tinted dark)
-  m: '#172b14', // moss (deep shade)
-  d: '#25401f', // skin shade
-  g: '#3f6a2b', // skin
-  l: '#5f8f3c', // skin light
-  h: '#8fb85a', // skin highlight
-  e: '#ffc633', // glowing yellow eye (coin gold)
-  k: '#13131f', // mouth, pupils
-  b: '#e3daa7', // teeth, tusks, claws, belt trinkets (bone ramp)
+  o: '#11170b', // outline (olive-tinted dark)
+  m: '#1c2913', // moss deep
+  d: '#2e4220', // moss
+  v: '#4a6a2c', // moss tuft light
+  s: '#3f4422', // skin shade (olive)
+  g: '#5a6330', // skin
+  l: '#7b8443', // skin light
+  h: '#a3a85d', // skin highlight
+  e: '#ffc633', // glowing slit eyes (coin gold)
+  k: '#13131f', // mouth, skull sockets (bone ramp socket)
+  b: '#e3daa7', // fangs, tusks, claws, skulls (bone ramp)
   B: '#b6a96e', // bone shade
   x: '#2d1608', // belt and loincloth (wood ramp)
   w: '#603312',
   W: '#93531f',
   c: '#c4782e',
-  n: '#3f5b6f', // belt buckle (steel ramp)
+  n: '#3f5b6f', // ring buckle (steel ramp)
   M: '#6f8fa5',
   L: '#abbfce',
   q: '#edf3f7',
 };
 
 // ---------------------------------------------------------------- troll 40x48 (two blocks tall: twice the knight)
-// A hunched brute lit from the upper left: a moss-spiked hump, a fanged jaw with two tusks and glowing eyes, long
-// arms ending in clawed fists, a wood belt with a steel buckle and bone trinkets, a ragged loincloth. Far limbs
-// and the back sit one tone darker for depth. TROLL_B settles the head and shoulders one row (breathing).
+// A hunched brute lit from the upper left. Value hierarchy: a dark moss mane (crest over the crown, drape over the
+// far shoulder) behind a lighter olive face and chest, split from the legs by the dark belt. A V-shaped body with
+// clear gaps between the arms and the flanks; a small forward head with a pointed ear, gold slit eyes and a fanged
+// mouth; pecs and abs drawn with shade tones, not outlines. Story details: the steel ring buckle, two bone skulls on
+// the belt, rag strips on the loincloth, bone claws on fists and toes. The far arm and leg sit one tone darker.
+// TROLL_B settles everything above row 21 (a plain chest row under the pecs) by one row (breathing).
 const TROLL_A = [
   '........................................',
-  '........................................',
-  '............o.........ooooooo...........',
-  '.........o..o..o....oohhlgllhoo.........',
-  '.........o.omo.o...ohhhglllllggo........',
-  '......o.omoomoomo.ohhllllllgggggo.......',
-  '......o.omommmomo.ohllgllldglgggo.......',
-  '.....omommommommmomolmmmmmmmmmmmmm......',
-  '.....omooolllgggoomolllddddddddddo......',
-  '....ommmoglgggggollllggggkeeggkeeo......',
-  '...o.ollllgdgggollllgggggoooooooooo.....',
-  '...oolllggggggmmolgggggoohhhhlllllom....',
-  '..omolgggdmmggddogggggdddhllllllgggmo...',
-  '..omogggggdggdddolgggohhllllllgooogggo..',
-  '...oggggmmgdddddmmgglollBllggoohhloogo..',
-  '...oggggdgdddddddoggolllkbBbkbkbkBkbodo.',
-  '...oggmmddddmmdoohoggoggkkbkkkkkkbbkgo..',
-  '..ogggdddddddoohhhhomoggkkbkbkbkkbkkdo..',
-  '...ogdddddddohhhhmllooogBgollllgdggggo..',
-  '...ogddmmddohhhhllllllooodollgglggggdo..',
-  '...oddddddommhhllldddddddoolggggggggdo..',
-  '..odddgddohdhhlllllldggggggogggggdgggo..',
-  '..oodddddohlllgllllldggggggolggggggggo..',
-  '..ooddddommlllllldddddddgggolggggggggo..',
-  '..ogodddodllllllgglgdggggggolggggggggdo.',
-  '..ogdoddollllllgggggdggdgggolggggdgggdo.',
-  '..olgdooolllhggggdddddddoooogggggggggdo.',
-  '..ogddddollhggggggggdgoohhlolggggggmggo.',
-  '.oggdmddoooooooooooodoooooooogggggggggo.',
-  '.ogddddoWmWcWwwwWwnnnnnwwWwxolggglggggo.',
-  '.ogddoddoWWWWBBwwwnqLMnxbbwxolggooooogo.',
-  '.ooooloooWWcWBwcwwnMLMnwkbkcocoohhhllooo',
-  '.olllggggoWWWwBwwwnMMnnwbwwxoohhhllllggo',
-  '.olggggddooWWwWwwwnnnnnwwwwxolhlllllgggo',
-  'oggggddddoloooooooooooooooooohllllgggggo',
-  'ogggddddogggdocxWWxWWxwwxwwwolllgggggggo',
-  'ogddddddogggdoWWWWwwwwwwwwwolllgggglggdo',
-  'odddddddogggddoxwWxwwxwwxxxoogggggggdddo',
-  'odddddddolggddowwwwwwwwxxxxoogggggdddddo',
-  '.oBdddddoggddddxwwxWwxxxxxxooggggddddddo',
-  '..ooBdBooggddddowwxxxxxxxxoggogdBdddBoo.',
-  '.....o..oggddddowxxoooxxxxoglgoodoBoo...',
-  '........ooooooooooo...ooooooooooo.......',
-  '........ollgggggddo...oohhllllllo.......',
-  '.......oglggddddddo...olllllgggggoo.....',
-  '......oggdgddddddddo.ollgggglggddddo....',
-  '.......odddddddgddo...oggggggddddoo.....',
-  '........BooBooBooo.....oBooBooBoo.......',
+  '...........o..o..o..o...o...............',
+  '........o.odoodoodoodo.ovo.o............',
+  '.......odoododddddddovooooodo.o.........',
+  '........o.vddvvddvvoovvvvvvddodo........',
+  '.........vvdddddddovvvvvvvvddddo........',
+  '.....o..oddddddododdddddddddddddo.......',
+  '....odoommmmvmohomoddddddddddddo........',
+  '.....o.vmmmvmmohhoooddhhhhhhhhgo........',
+  '......vvmmmmmmdolllogossssosssoso.......',
+  '...o...ommmmmmmmossgogkeeggkeegso.......',
+  '..odooooovmmmmmmdoogggssglgssggso.......',
+  '..ommvmmvmmmmmmmmmmogoglhsgggggso.......',
+  '..omvmmmmmmmmmmmmmmookkkkkkkkkkoo.......',
+  '..ommmmmmmmmdmmmmmogobkbkkbkkbkooooo....',
+  '.ommmmmmmmmmmmmoooobokbkkbkbkkbdddolo...',
+  '.ommmmvmmmdmmmmolloggokkkkkkkkdvsvddoo..',
+  '.ommmvmmmmmmmmmolllogggggggggsgsohhlgso.',
+  '.ommmmmmmvmmmmohhhhlooossssssooohhhlgso.',
+  '.omvmmmmvmmmmohhhlllshhoooooolllllllgso.',
+  '..omvmmmmmmmolllllllslllllllolllllllgso.',
+  '..oommmdmmmollllllllslllllllolllllllgso.',
+  '..oommmommmollllllllsllllllllollhlgggo..',
+  '..ogomosomossssssssssssssssgggolhlgggo..',
+  '..oggossdossggggllgsgllgggggggollggggo..',
+  '...ogsssdossggggggggggggggggggollggggo..',
+  '...ogsssdossggggssgsgssgggggggsosssssso.',
+  '...ogsssdossggggllgsgllgggggsssolgggsso.',
+  '...ogsssdoosggggggggggggggggsssolggggso.',
+  '...ogsssdoosggggssgsgssgggggsssolggggso.',
+  '...ooooodooooooooooooooooooooooolooooso.',
+  '...oggsso.oWobbboWWoLqLMMoobbbooolllgo..',
+  '..ogggsssoowbkbkbwwoLnknMobkbkbollslsgo.',
+  '.osssssssdoxobBboxxoMMnnnoobBboollllggso',
+  '.osssssssdooooboooooooooooooboogggggggso',
+  '.osssssssdooggoWWxWwcwxwwxxxosogggggggso',
+  '..osssssso.oggoWWxWwcwxwwxxxosoosssssso.',
+  '...bobdoob.oggoWWxWwcwxwwxxxoso.bsosboob',
+  '....oooo...oggoWWxWwcwxwwxxxoso..oooo...',
+  '...........oggoWWxWwcwxwwxxxoso.........',
+  '...........oggoWooWwowxwooxogso.........',
+  '...........oggsossoo.oxolgoggso.........',
+  '...........ooooooooo..oooooooooo........',
+  '..........oggggsssso..olllllggggo.......',
+  '.........ogggggsssssoollllllgggggo......',
+  '.........ossssssssssoogggggggggggo......',
+  '..........oBdBdBdddo..osbsbsbsbso.......',
+  '...........oooooooo....ooooooooo........',
 ];
 
-const TROLL_B = ['.'.repeat(40), ...TROLL_A.slice(0, 20), ...TROLL_A.slice(21)];
+const TROLL_B = ['.'.repeat(40), ...TROLL_A.slice(0, 21), ...TROLL_A.slice(22)];
 
 // ----------------------------------------------------------------- coin 7x7
 const COIN_PAL = { o: '#3a2406', y: '#ffc633', L: '#fff0a8', d: '#c98a14' };

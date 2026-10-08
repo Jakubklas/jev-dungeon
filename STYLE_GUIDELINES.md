@@ -25,7 +25,7 @@ The user picked these as the best expression of the style. Match them when you m
 | --- | --- | --- | --- |
 | Knight (explorer) | `public/sprites.js` `KNIGHT_A` / `KNIGHT_B` | 18×24, anchor (9, 23) | A steel ramp of 4 tones plus a red accent; a readable silhouette (plume, visor slit, shield arm, cape) at tiny size; a breathing frame built by shifting rows |
 | Ghost (adversary) | `public/sprites.js` `GHOST_A` / `GHOST_B` | 18×20, anchor (9, 19) | A hooded cloth ramp, a bone skull face and one glowing red eye pixel per socket; a ragged hem that alternates between the two frames |
-| Troll | `public/sprites.js` `TROLL_A` / `TROLL_B` | 40×48 (two character blocks: twice the knight's 24 px), anchor (20, 47) | A hunched brute lit from the upper left, built from its own green ramp plus the shared bone, wood and steel ramps: moss-spiked hump, fanged jaw with tusks and glowing eyes, clawed fists, belt with a steel buckle; far limbs and the back sit one tone darker for depth; the breathing frame drops one row under the head. Art only, not placed in the game yet. Preview next to the knight and ghost: [docs/troll-preview.png](docs/troll-preview.png) |
+| Troll | `public/sprites.js` `TROLL_A` / `TROLL_B` | 40×48 (two character blocks: twice the knight's 24 px), anchor (20, 47) | A hunched brute lit from the upper left, built from its own olive skin and moss ramp plus the shared bone, wood and steel ramps. Read it by value: a dark moss mane (a spiky crest over the crown, a drape over the far shoulder, 2-3 px tufts) behind a lighter olive face and chest, cut from the legs by the dark belt. A V-shaped body with background gaps between the arms and the flanks; a small forward head with a pointed ear, gold slit eyes and a fanged mouth; pecs and abs drawn in shade tones, not outlines. Story details: a steel ring buckle, two bone skulls on the belt, rag strips on the loincloth, bone claws on the fists and toes. The far arm and leg sit one tone darker; the breathing frame drops everything above row 21 by one row. Art only, not placed in the game yet. Preview next to the knight and ghost: [docs/troll-preview.png](docs/troll-preview.png) |
 | Sword slash | `public/app.js` `drawSlash`, `SLASH_COLORS` | Arc radius 13 to 26 | A per-pixel crescent: thin tail, fat leading head, a 4-tone ramp from a dark rim to a white core |
 | Floor tiles | `public/app.js` `stonePattern`, `PALETTE.floor*`, `mortar` | 32×16 diamond | Flagstones, cobbles or a cracked slab; 1 px mortar; a lit top-left bevel and a dark bottom-right bevel per stone; sparse pixel noise |
 | Storage chest | `public/props/floor-art.js` `makeChest` | 24×23 | An iso box with a separate lid, two steel bands that wrap over the lid, a lock plate, a keyhole pixel and rivets |
@@ -52,7 +52,8 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | **Glazed blue** | wood outline | `#1f2c61` (b) · `#344994` (B) · `#657fce` (n) | Jars, pots (`#131a3c` deep shade on pots) |
 | **Sack** | wood outline | `#634c25` (Z) · `#957437` (A) · `#c49e56` (a) | Shelf sack |
 | **Glass** | wood outline | `#51987a` (g) · `#85c9a8` (G) | Shelf bottle |
-| **Troll skin** | `#101a0e` | `#172b14` (m, moss) · `#25401f` (d) · `#3f6a2b` (g) · `#5f8f3c` (l) · `#8fb85a` (h, belly and brow) | Troll. Eyes use the coin gold `#ffc633`; teeth, tusks and the belt trinket the bone ramp; belt and loincloth the wood ramp; buckle the steel ramp |
+| **Troll skin** (olive) | `#11170b` | `#3f4422` (s) · `#5a6330` (g) · `#7b8443` (l) · `#a3a85d` (h, brow, pecs, shoulder) | Troll body. Eyes use the coin gold `#ffc633`; fangs, tusks, claws and the belt skulls the bone ramp (sockets and mouth `#13131f`); belt and loincloth the wood ramp; buckle the steel ramp |
+| **Troll moss** | `#11170b` | `#1c2913` (m, deep) · `#2e4220` (d) · `#4a6a2c` (v, tuft) | Troll mane and crest: kept darker than the skin so the face and chest read in front of it |
 
 ### Accents (saturated, meaningful, used sparingly)
 
@@ -72,7 +73,7 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | --- | --- |
 | Sword (explorer) | `#2a2392` · `#5b4fe0` · `#a9a4ff` · `#ffffff` |
 | Claw (ghost) | `#6b0f12` · `#c22a2a` · `#ff8f80` · `#fff1ea` |
-| Shield spark (blocked claw) | `#c98a14` · `#ffc633` · `#fff0a8` · `#ffffff` (the coin ramp) |
+| Shield parry (blocked claw) | `#c98a14` · `#ffc633` · `#fff0a8` · `#ffffff` (the coin ramp) |
 
 ### World ramps: stone, light and fog
 
@@ -121,7 +122,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Solid floor props | About 24-25 × 23-30, roughly one cell's diamond wide (chest 24×23, shelf 24×30, crates 25×30) | floor-art.js |
 | Coin | 7×7 | `COIN_A` |
 | Wall decor | At most 14×19, front view, bottom row on the floor line | wall-art.js header |
-| Shield overlay | 15×14 hand-placed heater shield (steel rim with rivets, gold face, steel boss on a centre seam), top 13 px above the feet | `SHIELD_ROWS`, `drawShield` |
+| Shield overlay | 11×14 hand-placed heater shield (steel rim lit top-left with rivet corners, coin-gold face split lit / shaded down a seam, domed steel boss), held out on the facing side: centre 5 px from the anchor toward the face, top 13 px above the feet, over the sprite's own small shield so the visor stays clear. Symmetric, never mirrored | `SHIELD_ROWS`, `SHIELD_HOLD_X`, `SHIELD_TOP`, `drawShield` |
 | Hp pips | 2×2 fill in a 4×4 dark frame, 4 px apart | `drawEntity` |
 | Shadows | Pixel ellipse 6×2 under the knight and ghosts, 4×1 under coins | `pixelEllipse` |
 
@@ -217,7 +218,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
 | Chase glow | 3 red rings, pulse `.75 + .25·sin(now/180)` | `drawEntity` |
 | Sword / claw slash | 340 ms, 6 frames | `SLASH_MS` |
 | Strike diamonds | 800 ms (hold 50%, 2 pulses, fade) | `STRIKE_MS`, `STRIKE_HOLD` |
-| Shield block spark | 200 ms, 4 frames: white-hot cross, tight ring, broken wide ring, scattered sparks (rings are 2:1 iso diamonds on the shield edge toward the attacker). The shield flashes to `SHIELD_FLASH` tones on frames 0 and 2 | `SHIELD_SLASH_MS`, `drawBlockSpark` |
+| Shield parry | 260 ms, 6 frames: the sword slash's crescent (same `drawCrescent`, thin tail, fat head, tail catching up late, last 2 frames at .55) at about half its size (radius 11, sweep 1.9 rad, head about 4.5 px half-width) in the coin ramp, swept from the raised shield toward the attacker. The shield flashes to `SHIELD_FLASH` tones on frames 0, 2 and 4 | `SHIELD_SLASH_MS`, `drawParry`, `drawCrescent`. Preview (old shield, new shield both facings, sword slash frames above the parry frames): [docs/shield-preview.png](docs/shield-preview.png) |
 | Hit protection | The knight blinks every 120 ms at alpha .3 | `BLINK_MS` |
 | Torch / fireplace / gate | 130 / 150 / 200 ms per frame | `frameMs` in wall-art.js |
 | Coins | 1 px bob, `sin(now/380 + cell phase)` | `drawEntity` |
