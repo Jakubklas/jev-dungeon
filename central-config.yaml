@@ -547,6 +547,228 @@ limits:
   skillFactMax: 160 # Longest skill option text sent to Jev
   priorityLine: 300 # Longest character priority line sent to Jev
 
+# The Jev API client: hedging, retries, timeout, model.
+jev:
+  hedgeCopies: 2 # Copies of a request that may be in flight (1 = no hedging)
+  hedgeDelayMs: 800 # Wait for an answer before a further copy goes out, ms
+  retries: 3 # Retries per copy on a retryable status or a network error
+  timeoutMs: 20000 # Timeout per attempt, ms
+  retryStatus: [ 429, 502, 503, 504, 529 ] # HTTP statuses that are retried
+  model: jev-latest # Model name sent with every request (endpoint and API key stay in code and ../.env)
+
+# Browser timings and thought-bubble lines (served at api/ui).
+ui:
+  camMs: 120 # Camera easing time constant, ms
+  logMax: 12 # Event log length, lines
+  fadeMs: 300 # Time for a newly lit cell to reach its brightness, ms
+  tweenMs: 150 # Entity move tween, ms
+  bobMs: 1600 # Ghost hover period, ms
+  animMs: 260 # Idle animation frame time, ms
+  walkMs: 620 # A troll's stride after each step, ms
+  strikeMs: 800 # Strike overlay duration, ms
+  slashMs: 340 # Slash crescent duration, ms
+  revealAlpha: 0.42 # Opacity of cells and monsters shown by Reveal map
+  bubbleIn: 200 # Thought bubble fade-in, ms
+  bubbleOut: 400 # Thought bubble fade-out, ms
+  blinkMs: 120 # Knight blink half-period while hit-protected, ms
+  coinGlowMs: 700 # Coin pickup glow, ms
+  thoughts:
+    approach:
+      # Bubble lines for the nearest_frontier approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      nearest_frontier:
+        - Let's check the closest dark edge.
+        - Something lurks in that dark corner.
+        - What is just past the light?
+        - Closest shadow first.
+      # Bubble lines for the largest_unexplored approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      largest_unexplored:
+        - That big dark patch looks promising.
+        - So much unexplored dark over there!
+        - Adventure lies in that gloom.
+        - The biggest mystery is that way.
+      # Bubble lines for the far_side approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      far_side:
+        - Let's try the far side of this place.
+        - "Somewhere far from here, then."
+        - I have not been over there yet.
+        - Time for fresh ground.
+      # Bubble lines for the collect_coins approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      collect_coins:
+        - Coins! That's worth a detour!
+        - Shiny! Mine!
+        - I can hear the coins calling.
+        - "Gold, gold, gold!"
+      # Bubble lines for the heal approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      heal:
+        - A heart! I need that.
+        - That heart will patch me up.
+        - Hearts mend knights.
+        - "One more life, please."
+      # Bubble lines for the go_to_exit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      go_to_exit:
+        - The portal! Time to leave.
+        - Home stretch. To the portal!
+        - Loot secured. Out we go.
+        - Out of this place at last.
+      # Bubble lines for the slip_past approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      slip_past:
+        - I can slip past!
+        - "Quiet feet, quiet feet..."
+        - Tiptoe around it.
+        - "Sneaking by, nothing to see."
+      # Bubble lines for the run_away approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      run_away:
+        - Run away!
+        - Nope nope nope!
+        - Time to go. Now!
+        - "Too many claws, bye!"
+      # Bubble lines for the engage approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      engage:
+        - Have at you!
+        - Charge!!
+        - Take this!!
+        - Taste my sword!!
+      # Bubble lines for the hide approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      hide:
+        - Duck out of sight.
+        - "Hush, hide, wait..."
+        - Into the shadows!
+        - Nobody here but me.
+      # Bubble lines for the race_to_exit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      race_to_exit:
+        - Go for the portal!
+        - Race you to the exit!
+        - "Faster, faster, portal!"
+        - Catch me if you can!
+      # Bubble lines for the carry_on approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      carry_on:
+        - "It hasn't seen me, keep going."
+        - Still unseen. Good.
+        - "Eyes elsewhere, ghost..."
+        - "Stay calm, carry on."
+      # Bubble lines for the direct_pursuit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      direct_pursuit:
+        - I see you!
+        - Get back here!
+        - You cannot hide!
+        - Got you in my sights!
+      # Bubble lines for the cut_off approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      cut_off:
+        - You will come this way.
+        - I will block your path!
+        - Cutting you off!
+        - Wait for it...
+      # Bubble lines for the sweep_last_seen approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      sweep_last_seen:
+        - Where did you go?
+        - It was right here...
+        - "Come out, come out!"
+        - Just checking the corners.
+    mood:
+      # Bubble lines for the explorer in the panic mood (the built-in wording; edit to change it, delete to restore)
+      panic:
+        - Out! Out! Out!
+        - Just get away from here!
+        - Nothing matters but the way out!
+      # Bubble lines for the explorer in the wary mood (the built-in wording; edit to change it, delete to restore)
+      wary:
+        - Something's wrong. Keep my distance.
+        - I don't like this. Back off.
+        - "Find cover first, think later."
+      # Bubble lines for the explorer in the guarded mood (the built-in wording; edit to change it, delete to restore)
+      guarded:
+        - "Stay sharp, keep moving."
+        - "Eyes open, away from trouble."
+        - No detours. Careful progress.
+      # Bubble lines for the explorer in the cautious mood (the built-in wording; edit to change it, delete to restore)
+      cautious:
+        - "Slow down, check the corners."
+        - Stay clear and slip past.
+        - Fight only if I'm cornered.
+      # Bubble lines for the explorer in the steady mood (the built-in wording; edit to change it, delete to restore)
+      steady:
+        - Stick to the plan.
+        - One room at a time.
+        - "If one shows up, I can handle it."
+      # Bubble lines for the explorer in the greedy mood (the built-in wording; edit to change it, delete to restore)
+      greedy:
+        - I smell coins nearby.
+        - Worth a detour.
+        - Let's see what else is in here.
+      # Bubble lines for the explorer in the bold mood (the built-in wording; edit to change it, delete to restore)
+      bold:
+        - Come at me.
+        - I can take this one.
+        - "Press on, no backing down."
+      # Bubble lines for the explorer in the fearless mood (the built-in wording; edit to change it, delete to restore)
+      fearless:
+        - Bring them all.
+        - I'm cutting through.
+        - Nothing here stops me.
+    troll:
+      # Troll bubble lines for direct_pursuit (the built-in wording; edit to change it, delete to restore)
+      direct_pursuit:
+        - ARRRGGGH! SMASH!
+        - MEAT! GRAAAAH!
+        - RRRAAAGH! I WILL EAT YOUR FACE!
+        - GRRRRR... CRUSH! CRUSH! CRUSH!
+        - "AAARGH! COME HERE, SNACK!"
+        - BLOOD! BLOOD! BLOOOOD!
+        - "HRAAAGH! I SEE YOU, TINY KNIGHT!"
+        - GRAAAH! YOUR BONES ARE MY BREAKFAST!
+      # Troll bubble lines for cut_off (the built-in wording; edit to change it, delete to restore)
+      cut_off:
+        - "GRRR... NOWHERE TO RUN, MEAT!"
+        - HRAAH! I WAIT. THEN I STOMP.
+        - "ARRGH! THIS WAY, THEN SPLAT!"
+        - GRRRNH... AMBUSH. THEN MURDER.
+        - HEH-HEH-AARGH! TRAP FOR TINY KNIGHT!
+      # Troll bubble lines for sweep_last_seen (the built-in wording; edit to change it, delete to restore)
+      sweep_last_seen:
+        - ARRRGH! WHERE IS MY SNACK?!
+        - GRAAAH! COME OUT AND DIE!
+        - HRRRN... SNIFF... I SMELL BLOOD...
+        - RAAAGH! I WILL TEAR THE WALLS DOWN!
+        - GRRR! HIDING WON'T SAVE YOUR SKULL!
+        - AAARGH! WHERE DID THE CRUNCHY ONE GO?!
+      # Troll bubble lines for struck (the built-in wording; edit to change it, delete to restore)
+      struck:
+        - AAARGH! MY FACE!
+        - GRAAAH! YOU DIE FOR THAT!
+        - OWWRGH! I WILL EAT YOUR SWORD!
+        - HRAAGH! NOW I AM ANGRY!
+        - ARRRGH! BLOOD FOR BLOOD!
+      # Troll bubble lines for hit (the built-in wording; edit to change it, delete to restore)
+      hit:
+        - HAAARGH! SPLAT!
+        - GRAAAH! TASTES LIKE VICTORY!
+        - RAAAGH! BLEED FOR ME!
+        - AHAAARGH! ONE CLAW CLOSER TO DEAD!
+        - HRAAH! CRUNCH!
+      # Troll bubble lines for blocked (the built-in wording; edit to change it, delete to restore)
+      blocked:
+        - GRRAAAH! CHEAP SHIELD!
+        - ARRGH! I WILL SNAP THAT TOY!
+        - "HRRRN! HIDING BEHIND TIN, COWARD!"
+      # Troll bubble lines for bump (the built-in wording; edit to change it, delete to restore)
+      bump:
+        - "OOF-AARGH! OUT OF MY WAY, MEAT!"
+        - GRRR! DID YOU JUST TOUCH ME?!
+        - HRAAH! I WILL BITE YOUR HEAD OFF!
+      # Troll bubble lines for alerted (the built-in wording; edit to change it, delete to restore)
+      alerted:
+        - ARRRGH! I HEAR THE KILLING CALL!
+        - RAAAAH! DINNER IS SERVED!
+        - GRAAAH! COMING TO SMASH!
+      # Troll bubble lines for gave_up (the built-in wording; edit to change it, delete to restore)
+      gave_up:
+        - GRRRR... I WILL BE BACK. WITH AN AXE.
+        - ARRGH... NEXT TIME I CRUSH YOU.
+        - HRRRN... COWARD. I WILL FIND YOU.
+      # Troll bubble lines for caught (the built-in wording; edit to change it, delete to restore)
+      caught:
+        - AAAAAARGH! ROOOOAR! DEAD! DEAD! DEAD!
+
 # Defaults of the small test arenas (gyms).
 testbed:
   size:

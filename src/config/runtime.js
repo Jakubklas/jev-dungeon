@@ -18,6 +18,7 @@ import { configureCoins } from '../coins.js';
 import { configureHearts } from '../hearts.js';
 import { configureCharacters, configureDistribution, configureTraits } from '../characters/adversary/character.js';
 import { configureQuestion } from '../skills/question.js';
+import { configureJev } from '../jev.js';
 import { configureExplorerPrompts } from '../characters/explorer/brain.js';
 import { configureCharacterPrompts } from '../characters/adversary/character.js';
 import { configureMonsterPrompts } from '../characters/adversary/memory.js';
@@ -82,6 +83,7 @@ function push() {
   configureExplorerMemory(applied);
   configureAdversaryLimits(applied);
   configureAttack(applied);
+  configureJev(applied);
   configureExplorerPrompts(applied);
   configureCharacterPrompts(applied);
   configureMonsterPrompts(applied);
@@ -186,6 +188,18 @@ export const view = () => ({
   pending: KNOBS.filter((s) => s.when === 'next' && !eq(applied[s.key], saved[s.key])).map((s) => s.key),
   central: { file: central.path, warnings: central.warnings },
 });
+
+// ---------- the browser's share (served at api/ui) ----------
+// Timing constants and the bubble pools that differ from the built-in lines (the page keeps its own defaults for the rest).
+export function uiView() {
+  const constants = Object.fromEntries(KNOBS.filter((k) => k.key.startsWith('ui_')).map((k) => [k.key.slice(3), applied[k.key]]));
+  const thoughts = { approach: {}, mood: {}, troll: {} };
+  for (const k of KNOBS) {
+    const pool = k.key.startsWith('thm_') ? 'mood' : k.key.startsWith('tht_') ? 'troll' : k.key.startsWith('th_') ? 'approach' : null;
+    if (pool && Array.isArray(applied[k.key])) thoughts[pool][k.path.split('.').pop()] = applied[k.key];
+  }
+  return { constants, thoughts };
+}
 
 // ---------- the player-facing scope (userSetting) ----------
 const userRows = () => KNOBS.filter(isUserSetting);

@@ -2,6 +2,7 @@
 // cross-field rules, bad-entry warnings, a broken file, the userSetting flag and the user scope. Free, no Jev, no network.
 // Never reads the real central-config.yaml: JEV_CONFIG is set to scratch files before the modules load.
 import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import YAML from 'yaml';
@@ -36,6 +37,13 @@ const AV = await import('../src/characters/adversary/adversary-view.js');
 const EM = await import('../src/characters/explorer/memory.js');
 const AT = await import('../src/skills/attack.js');
 const { REQUEST_BYTES } = R;
+const JV = await import('../src/jev.js');
+const TX = await import('../src/config/texts.js');
+const TH = await import('../public/thoughts.js');
+const appSrc = readFileSync(fileURLToPath(new URL('../public/app.js', import.meta.url)), 'utf8');
+// The browser's timing constants, read from app.js itself: the registry default must be the literal the page falls back to.
+const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
+const uiLiteral = (name) => { const m = new RegExp(`\\b${name} = (\\.?[0-9][0-9._]*)`).exec(appSrc); return m ? Number(m[1].replace(/_/g, '')) : undefined; };
 const { eq } = L;
 const { generateDungeon } = D;
 
@@ -122,6 +130,9 @@ const LIT = {
   ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(),
   // P6: text knobs are null in the registry (= the built-in wording)
   ...Object.fromEntries(R.KNOBS.filter((k) => k.type === 'text').map((k) => [k.key, null])),
+  // P7
+  ...JV.jevSnapshot(),
+  ...Object.fromEntries(Object.entries(UI_CONST).map(([n, c]) => [`ui_${n}`, uiLiteral(c)])),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
@@ -328,12 +339,16 @@ check(sortedEntries(backP5) === sortedEntries(Object.fromEntries(Object.entries(
 check(REQUEST_BYTES.explorerChasing === 9500 && REQUEST_BYTES.explorerPatrolling === 10500 && REQUEST_BYTES.adversaryMax === 8000, 'the request-size bounds the checks use are the documented ones');
 
 // 6g. P6: prompt wording. null/absent = built-in; the file replaces it; bad text is refused
-const builtins = { ...BR.explorerPromptDefaults(), ...C.characterPromptDefaults(), ...AM.monsterPromptDefaults(), ...QS.skillPromptDefaults() };
+const builtins = { ...BR.explorerPromptDefaults(), ...C.characterPromptDefaults(), ...AM.monsterPromptDefaults(), ...QS.skillPromptDefaults(), ...TX.thoughtDefaults() };
 const textRows = R.KNOBS.filter((k) => k.type === 'text');
 check(textRows.length === Object.keys(builtins).length && textRows.every((k) => k.key in builtins), 'every text knob has a built-in wording, and every built-in has a knob');
-check(textRows.every((k) => k.def === null && (k.len ? Array.isArray(builtins[k.key]) : typeof builtins[k.key] === 'string')), 'text knobs default to null and the built-ins have the right shape');
-check(textRows.every((k) => (k.len ? builtins[k.key].every((x) => x.length <= k.maxLen) : builtins[k.key].length <= k.maxLen)), 'no built-in wording exceeds its own limit');
-check(sortedEntries({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() }) === sortedEntries(builtins), 'with no config every module speaks its built-in wording');
+check(textRows.every((k) => k.def === null && (k.len || k.list ? Array.isArray(builtins[k.key]) : typeof builtins[k.key] === 'string')), 'text knobs default to null and the built-ins have the right shape');
+check(textRows.every((k) => (k.len || k.list ? builtins[k.key].every((x) => x.length <= k.maxLen) : builtins[k.key].length <= k.maxLen)), 'no built-in wording exceeds its own limit');
+check(textRows.filter((k) => k.list).every((k) => builtins[k.key].length >= k.minLen && builtins[k.key].length <= k.maxItems), 'every built-in bubble pool fits its own size range');
+check(Object.keys(TH.THOUGHTS).length + Object.keys(TH.MOOD_THOUGHTS).length + Object.keys(TH.TROLL_THOUGHTS).length === textRows.filter((k) => k.list).length, 'every bubble pool in thoughts.js has a knob and vice versa');
+const moduleWording = () => ({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() });
+const builtinsOfModules = () => Object.fromEntries(Object.entries(builtins).filter(([k]) => k in moduleWording()));
+check(sortedEntries(moduleWording()) === sortedEntries(builtinsOfModules()), 'with no config every module speaks its built-in wording');
 writeFileSync(cfg, `explorer:
   moods:
     wary: { when: "Custom wary when.", gloss: careful }
@@ -365,7 +380,35 @@ check(same.values.trigger_start === null && same.warnings.length === 0, 'text eq
 writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
-check(sortedEntries({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() }) === sortedEntries(builtins), 'removing the keys restores every built-in wording');
+check(sortedEntries(moduleWording()) === sortedEntries(builtinsOfModules()), 'removing the keys restores every built-in wording');
+
+// 6h. P7: the Jev client, the browser's share
+check(Object.values(UI_CONST).every((c) => uiLiteral(c) !== undefined), 'every ui constant is found in app.js');
+writeFileSync(cfg, `jev: { hedgeCopies: 3, hedgeDelayMs: 500, retries: 1, timeoutMs: 5000, retryStatus: [429], model: jev-test }
+ui:
+  walkMs: 900
+  revealAlpha: 0.5
+  thoughts:
+    troll: { struck: ["OW!", "AGH!"] }
+    mood: { bold: [Onward] }
+`);
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+const jv = JV.jevSnapshot();
+check(jv.jevHedgeCopies === 3 && jv.jevHedgeDelayMs === 500 && jv.jevRetries === 1 && jv.jevTimeoutMs === 5000 && eq(jv.jevRetryStatus, [429]) && jv.jevModel === 'jev-test' && JV.jevModel() === 'jev-test', 'the Jev client follows the file (live)');
+const ui = S.uiView();
+check(ui.constants.walkMs === 900 && ui.constants.revealAlpha === 0.5 && ui.constants.camMs === 120, 'api/ui carries the timing constants');
+check(eq(ui.thoughts.troll.struck, ['OW!', 'AGH!']) && eq(ui.thoughts.mood.bold, ['Onward']) && Object.keys(ui.thoughts.approach).length === 0 && !('hit' in ui.thoughts.troll), 'api/ui carries only the bubble pools the file overrides');
+p = L.parseConfig(YAML.parse('jev: { hedgeCopies: 9, model: "Bad Model!", retryStatus: [200] }\nui: { thoughts: { mood: { bold: [] , wary: [a, a] }, troll: { hit: [' + JSON.stringify('x'.repeat(70)) + '] } } }'));
+check(p.warnings.length === 6, 'out-of-range, malformed, empty, repeated and too long entries are each refused by name: ' + p.warnings.join(' | '));
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+const back = JV.jevSnapshot();
+check(back.jevHedgeCopies === 2 && back.jevModel === 'jev-latest' && eq(back.jevRetryStatus, [429, 502, 503, 504, 529]) && Object.keys(S.uiView().thoughts.troll).length === 0 && S.uiView().constants.walkMs === 620, 'removing the keys restores the Jev client and the browser defaults');
+
+// 6i. CONFIG.md is generated from the registry and must be current
+check(readFileSync(fileURLToPath(new URL('../CONFIG.md', import.meta.url)), 'utf8') === L.docsMarkdown(), 'CONFIG.md is up to date (run: node scripts/config.mjs docs --write)');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

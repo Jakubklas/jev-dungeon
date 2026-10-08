@@ -2,7 +2,7 @@
 // name), value cleaning, parsing a central-config.yaml mapping into flat values, and the commented YAML template.
 // No file or game state here: runtime.js does the I/O. See PLAN-central-config.md.
 import YAML from 'yaml';
-import { KNOBS, KIND_WEIGHTS, CATEGORIES } from './registry.js';
+import { KNOBS, KIND_WEIGHTS, CATEGORIES, isUserSetting } from './registry.js';
 import { TRAITS, SPECIAL_IDS, defaultPresets } from '../characters/adversary/character.js';
 import { builtinText } from './texts.js';
 
@@ -20,6 +20,10 @@ const step1 = (def, v) => {
 };
 export function clean(def, v) {
   if (v === null && def.nullable) return null;
+  if (def.type === 'string') {
+    if (typeof v !== 'string' || !new RegExp(def.pattern).test(v)) throw new Error(`${def.label} must match ${def.pattern}`);
+    return v;
+  }
   if (def.type === 'text') {
     const one = (x) => {
       if (typeof x !== 'string') throw new Error(`${def.label} must be text`);
@@ -30,6 +34,11 @@ export function clean(def, v) {
     };
     if (def.len) {
       if (!Array.isArray(v) || v.length !== def.len) throw new Error(`${def.label} must be a list of ${def.len} texts`);
+      return v.map(one);
+    }
+    if (def.list) {
+      if (!Array.isArray(v) || v.length < def.minLen || v.length > def.maxItems) throw new Error(`${def.label} must be a list of ${def.minLen} to ${def.maxItems} lines`);
+      if (new Set(v).size !== v.length) throw new Error(`${def.label} cannot repeat a line`);
       return v.map(one);
     }
     return one(v);
@@ -183,8 +192,8 @@ export function templateYaml() {
     for (const p of parts.slice(0, -1)) n = (n[p] ??= {});
     n[parts.at(-1)] = entry;
   };
-  const leaf = (value, doc, block = false) => ({ __leaf: true, value, doc, block });
-  for (const k of KNOBS) if (k.path) put(k.path, k.type === 'text' ? leaf(builtinText(k.key), `${k.doc} (the built-in wording; edit to change it, delete to restore)`, true) : leaf(k.def, k.doc));
+  const leaf = (value, doc, block = false, listBlock = false) => ({ __leaf: true, value, doc, block, listBlock });
+  for (const k of KNOBS) if (k.path) put(k.path, k.type === 'text' ? leaf(builtinText(k.key), `${k.doc} (the built-in wording; edit to change it, delete to restore)`, true, Boolean(k.list)) : leaf(k.def, k.doc));
   for (const k of KIND_WEIGHTS) put(k.path, leaf(k.def, k.doc));
   put('monsters.characters.mix', leaf('mixed', "'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }"));
   const presets = {};
@@ -209,7 +218,8 @@ export function templateYaml() {
       const pad = '  '.repeat(indent);
       if (v.__leaf) {
         const text = `${pad}${k}: ${scalar(v.value)}`;
-        if (v.block) { lines.push(`${pad}# ${v.doc}`); lines.push(text); } else lines.push(v.doc ? `${text.padEnd(COL)}  # ${v.doc}` : text);
+        if (v.listBlock) { lines.push(`${pad}# ${v.doc}`); lines.push(`${pad}${k}:`); for (const item of v.value) lines.push(`${pad}  - ${scalar(item)}`); }
+        else if (v.block) { lines.push(`${pad}# ${v.doc}`); lines.push(text); } else lines.push(v.doc ? `${text.padEnd(COL)}  # ${v.doc}` : text);
       } else {
         const path = depthPath ? `${depthPath}.${k}` : k;
         if (indent === 0 && CATEGORIES[k]) lines.push(`# ${CATEGORIES[k].doc}`);
@@ -232,4 +242,35 @@ export function templateYaml() {
   lines.push('# arena/main, gym/main, arena/a1, ... Example:  arena/main: { explorer: { lives: 4 } }');
   lines.push('instances: {}');
   return lines.join('\n') + '\n';
+}
+
+// ---------- the generated reference (CONFIG.md) ----------
+const show = (v) => (typeof v === 'string' ? JSON.stringify(v) : JSON.stringify(v));
+export function docsMarkdown() {
+  const rows = [
+    ...KNOBS.filter((k) => k.path).map((k) => ({
+      path: k.path,
+      def: k.type === 'text' ? '(built-in wording)' : show(k.def),
+      range: k.type === 'range' ? `${k.min}..${k.max}` : k.type === 'toggle' ? 'on/off' : k.type === 'choice' ? k.options.join(' / ') : k.type === 'list' ? `list of ${k.options.join(', ')}${k.maxLen ? ` (max ${k.maxLen})` : ''}` : k.type === 'tuple' ? `${k.len} numbers ${k.min}..${k.max}` : k.type === 'string' ? `/${k.pattern}/` : k.type === 'text' ? (k.list ? `${k.minLen}-${k.maxItems} lines, up to ${k.maxLen} chars` : k.len ? `${k.len} texts, up to ${k.maxLen} chars` : `text, up to ${k.maxLen} chars`) : '',
+      when: k.when, user: isUserSetting(k) ? 'yes' : 'no', doc: k.doc,
+    })),
+    ...KIND_WEIGHTS.map((k) => ({ path: k.path, def: show(k.def), range: 'number >= 0 (relative)', when: 'next', user: 'no', doc: k.doc })),
+    { path: 'monsters.characters.mix', def: '"mixed"', range: '"mixed" / "standard" / weights', when: 'next', user: 'no', doc: "Character mix of spawned monsters" },
+    { path: 'monsters.characters.presets.<id>.<trait|style>', def: '(built-in presets)', range: 'traits 1..3, style text', when: 'next', user: 'no', doc: 'Trait levels and style line of an existing character preset' },
+  ];
+  const sections = new Map();
+  for (const r of rows) { const top = r.path.split('.')[0]; if (!sections.has(top)) sections.set(top, []); sections.get(top).push(r); }
+  const out = [
+    '# Central config reference',
+    '',
+    'Generated by `node scripts/config.mjs docs --write` from `src/config/registry.js`; `check-config` fails if it is out of date. Do not edit by hand.',
+    'Settings live in `central-config.yaml` (`JEV_CONFIG=<path>` for another file). `applies`: **live** takes effect on the next step, **next** from the next game. `player UI` = flagged `userSetting`.',
+    '',
+  ];
+  for (const [top, list] of sections) {
+    out.push(`## ${top}`, '', CATEGORIES[top]?.doc ?? '', '', '| path | default | range | applies | player UI | what it does |', '| --- | --- | --- | --- | --- | --- |');
+    for (const r of list) out.push(`| \`${r.path}\` | ${String(r.def).replace(/\|/g, '\\|')} | ${r.range.replace(/\|/g, '\\|')} | ${r.when} | ${r.user} | ${r.doc.replace(/\|/g, '\\|')} |`);
+    out.push('');
+  }
+  return out.join('\n');
 }

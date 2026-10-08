@@ -36,6 +36,7 @@ const STATIC = {
   '/settings': ['settings.html', 'text/html; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/sprites.js': ['sprites.js', 'text/javascript; charset=utf-8'],
+  '/thoughts.js': ['thoughts.js', 'text/javascript; charset=utf-8'],
   '/props/index.js': ['props/index.js', 'text/javascript; charset=utf-8'],
   '/props/floor-art.js': ['props/floor-art.js', 'text/javascript; charset=utf-8'],
   '/props/wall-art.js': ['props/wall-art.js', 'text/javascript; charset=utf-8'],
@@ -107,6 +108,9 @@ createServer(async (req, res) => {
         return send(res, 400, { error: err.message });
       }
     }
+
+    // The browser's timings and bubble lines from central-config.yaml (ui.*); page defaults stand if this fails.
+    if (req.method === 'GET' && path === '/api/ui') { await settings.refresh(); return send(res, 200, settings.uiView()); }
 
     // The central config for tools and a future player UI. ?scope=user lists and accepts only knobs flagged userSetting
     // (src/config/registry.js); without a scope it is the full settings view / save, like /api/settings.

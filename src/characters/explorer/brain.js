@@ -32,7 +32,7 @@ import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
   PRESSED_RANGE, allowedMoods, defaultMood, panicNext, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
-import { askJev, shuffle } from '../../jev.js';
+import { askJev, shuffle, jevModel } from '../../jev.js';
 
 let REVIEW_EVERY = 8; // steps between approach reviews
 let APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
@@ -439,7 +439,7 @@ export class ExplorerBrain {
 
   // One Jev request. Keeps its exact body for lastRequest()/lastRequests().
   async #request(kind, state, questions) {
-    const body = JSON.stringify({ model: 'jev-latest', state, questions });
+    const body = JSON.stringify({ model: jevModel(), state, questions });
     this.#lastBodies.push(body);
     const started = performance.now();
     const answers = await this.#ask({ kind, state, questions, body });

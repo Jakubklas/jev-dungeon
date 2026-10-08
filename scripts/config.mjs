@@ -7,11 +7,11 @@
 //   validate                  print every warning the loader has for the file; exit 1 if any
 //   diff                      the values that differ from the built-in defaults
 //   user                      the knobs flagged userSetting (what a player UI may list)
-//   docs                      a markdown table of every knob
+//   docs [--write]            the markdown reference of every knob (--write updates CONFIG.md)
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import YAML from 'yaml';
 import { KNOBS, isUserSetting } from '../src/config/registry.js';
-import { parseConfig, templateYaml, defaults, eq } from '../src/config/load.js';
+import { parseConfig, templateYaml, defaults, eq, docsMarkdown } from '../src/config/load.js';
 import { configFile } from '../src/config/runtime.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -68,6 +68,6 @@ if (!cmd || cmd === 'help') {
 } else if (cmd === 'user') {
   for (const row of KNOBS.filter(isUserSetting)) console.log(`${(row.path ?? row.key).padEnd(28)} ${row.label}`);
 } else if (cmd === 'docs') {
-  console.log('| path | default | range | applies | player UI |\n| --- | --- | --- | --- | --- |');
-  for (const r of KNOBS) console.log(`| ${r.path ?? `(${r.key}, derived)`} | ${fmt(r.def)} | ${r.type === 'range' ? `${r.min}..${r.max}` : 'on/off'} | ${r.when} | ${isUserSetting(r) ? 'yes' : 'no'} |`);
+  const md = docsMarkdown();
+  if (rest.includes('--write')) { writeFileSync(new URL('../CONFIG.md', import.meta.url), md); console.log('wrote CONFIG.md'); } else console.log(md);
 } else fail(`unknown command: ${cmd} (try: help)`);

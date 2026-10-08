@@ -4,6 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
 import { MOOD_IDS } from '../src/characters/explorer/memory.js';
+import { MOOD_THOUGHTS, TROLL_THOUGHTS, THOUGHTS } from '../public/thoughts.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -14,7 +15,7 @@ const literal = (name) => {
   ok(!!m, `${name} found in app.js`);
   return m ? Function(`return (${m[1]})`)() : {};
 };
-const thoughts = literal('MOOD_THOUGHTS');
+const thoughts = MOOD_THOUGHTS; // plain data in public/thoughts.js (the browser imports the same file)
 const notes = literal('SENTIMENT_NOTES');
 const ids = Object.keys(SENTIMENTS);
 ok(MOOD_IDS.join() === ids.join(), `memory MOOD_IDS (${MOOD_IDS}) match SENTIMENTS (${ids})`);
@@ -30,6 +31,8 @@ for (const id of ids) {
   ok(new RegExp(`\\[data-sentiment="${id}"\\]\\s*\\{\\s*--senti:`).test(css) || id === 'steady', `${id}: has a tint in style.css`);
 }
 ok(Object.keys(thoughts).every((id) => ids.includes(id)), 'no bubble pool for an unknown mood');
+ok(/import \{[^}]*\} from '\.\/thoughts\.js'/.test(app), 'app.js imports its bubble lines from thoughts.js');
+for (const [pool, lines] of [...Object.entries(THOUGHTS), ...Object.entries(TROLL_THOUGHTS)]) ok(Array.isArray(lines) && lines.length >= 1 && lines.every((l) => typeof l === 'string' && l.length > 0 && l.length <= 60), `bubble pool ${pool}: 1+ lines of at most 60 characters`);
 ok(/if \(t\.key === key\) return;/.test(app), 'the bubble shows only when the approach changes (not on a mood change alone)');
 if (fails) { console.log(`check-moods-ui: ${fails} failure(s)`); process.exit(1); }
 console.log(`check-moods-ui: ok (${ids.length} moods)`);

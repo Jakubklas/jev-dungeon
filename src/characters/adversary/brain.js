@@ -17,7 +17,7 @@
 import { SIGHT_RANGE } from '../../dungeon.js';
 import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
 import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach } from './memory.js';
-import { askJev, shuffle } from '../../jev.js';
+import { askJev, shuffle, jevModel } from '../../jev.js';
 import { PRESETS, profileOf, traitsOf } from './character.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 
@@ -375,7 +375,7 @@ export function buildRequest(view, a, tick, cfg) {
   if (hasSkill) questions.skill = skillQuestion(skillOptions, h.profile.skillPriority);
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
   const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters)), withCharacter, Boolean(cfg.characters));
-  const body = JSON.stringify({ model: 'jev-latest', state, questions });
+  const body = JSON.stringify({ model: jevModel(), state, questions });
   return { legal, state, questions, body, options, skillOptions };
 }
 
