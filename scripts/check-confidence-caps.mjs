@@ -10,7 +10,6 @@
 //  5. out of sight a closed mood is swapped to steady silently: a policy, no event, no request
 //  6. fog twin: a hidden never-seen ghost leaves C, the options and every request byte-identical
 //  7. text: no word 'outnumbered' in any caps-mode request; the claims (stakes, default engage) only under the #fightOn gate;
-//     with caps off none of the caps wording appears
 // Free, no Jev. Run from dungeon-game: node scripts/check-confidence-caps.mjs
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -229,15 +228,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
     await playDuel({ ghosts: g, ghostHp: 2, health: 4, maxTicks: 25, confidence: { caps: true, start: 50 }, onAsk: (r) => bodies.push(r.body) });
   }
   ok(bodies.length > 20 && !bodies.some((b) => /outnumbered/.test(b)), `no 'outnumbered' in ${bodies.length} caps-mode requests`);
-  // caps off: none of the caps wording, and the old text is intact
-  const off = [];
-  await playDuel({ ghosts: cells[2], ghostHp: 2, health: 4, maxTicks: 6, onAsk: (r) => off.push(r.body) });
-  const offText = off.join('\n');
-  ok(/outnumbered/.test(offText), 'caps off: the old wary text still says outnumbered');
-  ok(!/Only the moods your confidence allows|it decides which moods are offered|usually costs at most one life|self\.confidence/.test(offText), 'caps off: no caps wording, no self.confidence');
-  const sentBody = off.map((b) => JSON.parse(b)).find((b) => b.questions.sentiment);
-  ok(Object.keys(sentBody?.questions.sentiment.criteria ?? {}).length === 4, 'caps off: 4 moods');
-  ok(ORDER.every((id) => id in SENTIMENTS), 'SENTIMENTS unchanged');
+  ok(ORDER.every((id) => id in SENTIMENTS), 'the four moods are still in SENTIMENTS (commit 3 replaces them)');
 }
 
 rmSync(dir, { recursive: true, force: true });

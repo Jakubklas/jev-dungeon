@@ -25,7 +25,7 @@ export function sanitiseDirective(text) {
 // One game in progress. `opts`: `ask` / `decide` replace the explorer's / adversaries' Jev call
 // (the checks pass stubs), `memoryDir` is where the explorer's memory files go, `dir` where
 // adversaries.json goes. Without them a Run talks to the real Jev and writes next to the server.
-// `confidence` (default false) switches on the explorer's confidence model (PLAN-confidence, the `confidenceModel` setting).
+// `confidence` (default none) is an optional arm object { start, wPerExtra, weights, model } for the checks and measurements; the explorer's confidence caps its moods always (PLAN-moods).
 export class Run {
   #dir;
   #memoryDir;
@@ -34,7 +34,7 @@ export class Run {
   #pending = null; // { text, steps } to set, or { clear: true }, applied at the start of the next playTurn
   #lastInjectAt = -Infinity; // wall-clock ms of the last accepted directive (the cooldown)
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
+  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;

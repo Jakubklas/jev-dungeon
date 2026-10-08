@@ -14,7 +14,6 @@ import { clawDecide, mulberry32 } from './lib/duel-harness.mjs'; // installs the
 import { newTestGame } from '../src/turn.js';
 import { validateMemory, renderMarkdown } from '../src/characters/explorer/memory.js';
 import { configureSkills, skillConfig } from '../src/skills/config.js';
-import { CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -65,37 +64,14 @@ async function play(run, n, hook = null) {
 }
 const C = (run) => run.memory.progress.confidence;
 
-// 1. toggle off: no field anywhere. Toggle on: a 50 start and the turn object.
-{
-  const off = build({ map: ROOM, seed: 1 }, { confidence: false, ask: stub() });
-  ok(!('confidence' in off.memory.progress), 'toggle off: no progress.confidence at the start');
-  const t = await play(off, 5);
-  ok(t.every((x) => !('confidence' in x)), 'toggle off: no `confidence` in the turn shape');
-  ok(!('confidence' in off.memory.progress) && !/Confidence/.test(renderMarkdown(off.memory)), 'toggle off: no confidence in memory or memory.md');
-  await off.explorer.noteBlocked();
-  ok(!('confidence' in off.memory.progress), 'toggle off: noteBlocked is a no-op');
-  const on = build({ map: ROOM, seed: 1 }, { ask: stub() });
-  ok(JSON.stringify(C(on)) === JSON.stringify({ value: 50, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 } }), `toggle on: starts at 50, got ${JSON.stringify(C(on))}`);
-  const t2 = await play(on, 3);
-  ok(t2.every((x) => x.confidence && x.confidence.value === 50 && x.confidence.band === 'even' && x.confidence.delta === 0), 'toggle on: quiet turns report 50 even, delta 0');
-  ok(/Confidence: 50 \(even;/.test(renderMarkdown(on.memory)), 'toggle on: memory.md shows the score');
-  const m = JSON.parse(JSON.stringify(on.memory));
-  validateMemory(m);
-  for (const bad of [{ value: 101, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 } }, { value: 50, counts: { strikes: -1, blocked: 0, evaded: 0, pressed: 0 } }, { value: 50 }, null]) {
-    m.progress.confidence = bad;
-    let threw = false;
-    try { validateMemory(m); } catch { threw = true; }
-    ok(threw, `validation rejects progress.confidence ${JSON.stringify(bad)}`);
-  }
-}
-
 // 2. strike +6, dispel +12 (a 2 hp ghost: 50 -> 56 -> 68); then a hit on the last life clamps to the cap 45; blocked never lowers C.
 {
   const run = build({ map: withGhost(ROOM, 10, 3), seed: 2, explorerSkills: ['sword_strike'], ghostHp: 2 }, { ask: stub({ mood: 'bold', tactic: 'engage', skill: true }) });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
   run.game.health = run.game.maxHealth = 9;
   const trace = [];
-  await play(run, 40, (turn) => trace.push({ v: turn.confidence.value, d: turn.confidence.delta, why: turn.confidence.reason, ev: turn.events.map((e) => e.type) }));
+  let prevH = 50; // the report's `value` is C = capability + history; these checks follow the history score H
+  await play(run, 40, (turn) => trace.push({ v: turn.confidence.history, d: (() => { const d = Math.round((turn.confidence.history - prevH) * 100) / 100; prevH = turn.confidence.history; return d; })(), why: turn.confidence.reason, ev: turn.events.map((e) => e.type) }));
   const struck = trace.find((x) => x.ev.includes('struck'));
   const dispelled = trace.find((x) => x.ev.includes('dispelled'));
   ok(struck && struck.d === 6 && struck.v === 56 && struck.why === 'struck', `strike tick: +6 to 56, got ${JSON.stringify(struck)}`);
@@ -131,18 +107,17 @@ for (const [maxLives, lives, want] of [[2, 1, 35], [3, 2, 35], [3, 1, 35], [9, 8
   ok(C(one).value === 53, `maxLives 1: the cap is 100, got ${C(one).value}`);
 }
 
-// 4. calm: +0.3 per step with nothing in sight, only below 50.
+// 4. regen: nothing happens for REGEN_WAIT quiet ticks after a change, then +0.25 per tick toward 50, enemy in sight or not.
 {
   const run = build({ map: ROOM, seed: 4, numAdversaries: 0 }, { ask: stub() });
   run.game.maxHealth = 3; run.game.health = 2;
   await run.explorer.noteHit('a1');
-  const turns = await play(run, 10);
-  ok(Math.abs(C(run).value - 38) < 1e-9, `35 + 10 calm steps of 0.3 = 38, got ${C(run).value}`);
-  ok(turns[0].confidence.delta === -14.7 && turns[0].confidence.reason === 'hit', `first report carries the hit (calm is not named beside a real event): ${JSON.stringify(turns[0].confidence)}`);
-  ok(turns[1].confidence.delta === 0.3 && turns[1].confidence.reason === 'calm', `later reports: +0.3 calm, got ${JSON.stringify(turns[1].confidence)}`);
+  const turns = await play(run, 20);
+  ok(Math.abs(C(run).value - 37.5) < 1e-9, `35, ten quiet ticks of waiting, then 10 regen steps of 0.25 = 37.5, got ${C(run).value}`);
+  ok(turns[0].confidence.reason === 'hit' && turns[1].confidence.reason === null, `the first report names the hit, quiet ticks name nothing: ${JSON.stringify(turns.slice(0, 2).map((t) => t.confidence.reason))}`);
   const quiet = build({ map: ROOM, seed: 4, numAdversaries: 0 }, { ask: stub() });
-  await play(quiet, 10);
-  ok(C(quiet).value === 50, 'at 50 calm adds nothing');
+  await play(quiet, 30);
+  ok(C(quiet).value === 50, 'at 50 regen adds nothing');
 }
 
 // 5. evaded: a chasing sighting that ends with no hit and no dispel gives +4; a hit or a dispel in it cancels it.
@@ -155,7 +130,7 @@ async function encounter({ hit = false } = {}) {
       if (hit) { r.game.maxHealth = 3; r.game.health = 2; await r.explorer.noteHit('a1'); }
       r.game.adversaries = [];
     }
-    if (turn.decision?.trigger === 'chase_over' && !over) over = { v: turn.confidence.value, why: turn.confidence.reason, evaded: C(r).counts.evaded };
+    if (turn.decision?.trigger === 'chase_over' && !over) over = { v: turn.confidence.history, why: turn.confidence.reason, evaded: C(r).counts.evaded };
   });
   return { run, over };
 }
@@ -192,8 +167,9 @@ async function encounter({ hit = false } = {}) {
   const turns = await play(run, 30);
   const c = C(run);
   ok(c.counts.pressed >= 5, `a cornered, swordless explorer is pressed on several ticks, got ${c.counts.pressed}`);
-  ok(c.value === 42, `pressed stops at -8 per encounter: 42, got ${c.value}`);
-  ok(turns.every((t) => t.confidence.delta <= 0 && t.confidence.delta >= -2), 'each pressed tick is -2 at most');
+  const hs = turns.map((t) => t.confidence.history);
+  ok(Math.min(...hs) === 42, `pressed stops at -8 per encounter: 42, got ${Math.min(...hs)}`);
+  ok(hs.every((h, i) => { const d = h - (i ? hs[i - 1] : 50); return d >= -2 && d <= 0.25; }), 'each pressed tick is -2 at most (regen waits 10 ticks after it)');
 }
 
 // 7. fog twin: a ghost walled into another room (two different cells) changes neither C nor any request.
@@ -202,7 +178,7 @@ async function encounter({ hit = false } = {}) {
   const play2 = async (gx, gy) => {
     const bodies = [];
     const run = build({ map: withGhost(rows, gx, gy), seed: 8 }, { ask: async (req) => { bodies.push(req.body); return stub()(req); } });
-    const trace = (await play(run, 25)).map((t) => t.confidence.value);
+    const trace = (await play(run, 25)).map((t) => t.confidence.history);
     return { trace, bodies, memory: JSON.stringify(C(run)) };
   };
   const a = await play2(10, 1), b = await play2(15, 3);
@@ -251,75 +227,6 @@ async function encounter({ hit = false } = {}) {
     ok(strikeAt !== null && closeInStun >= 1 && pressedInStun === 0, `no pressed while the own strike's stun lasts (strike tick ${strikeAt}, close ${closeInStun}, pressed ${pressedInStun})`);
     ok(pressedAfter >= 1, `pressed returns once the stun is over and the sword is still down (${pressedAfter})`);
   } finally { configureSkills(before); }
-}
-
-// 10. C3 gates and the word. A hit from 50 gives 35: gaps +1 everywhere (sentiment question, mood lines, tactic
-// feasibility), engage closed; at 50 the same scenario is the plain one. self.confidence on every request, the
-// sentence only in the sentiment question.
-{
-  const capture = async (hit) => {
-    const reqs = [];
-    const ask = async (req) => { reqs.push(JSON.parse(req.body)); return stub({ mood: 'steady', tactic: 'run_away' })(req); };
-    const run = build({ map: withGhost(ROOM, 9, 3), seed: 21, ghostSkills: 'none', ghostHp: 2 }, { ask });
-    run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
-    if (hit) { run.game.maxHealth = 3; run.game.health = 2; await run.explorer.noteHit('a1'); }
-    const turns = await play(run, 4);
-    return { reqs, run, turns };
-  };
-  const plain = await capture(false), low = await capture(true);
-  ok(C(low.run).value < 40 && C(low.run).value > 30, `scenario: hit puts C in 30..39, got ${C(low.run).value}`);
-  const all = [...plain.reqs, ...low.reqs];
-  ok(all.every((r) => /^\d+ (shaken|unsure|even|sure|dominant)$/.test(r.state.self.confidence)), 'self.confidence is "<value> <band>" on every request');
-  ok(low.reqs[0].state.self.confidence.endsWith(' unsure') && plain.reqs[0].state.self.confidence === '50 even', `words: ${low.reqs[0].state.self.confidence} / ${plain.reqs[0].state.self.confidence}`);
-  const sent = (r) => r.questions.sentiment;
-  ok(all.filter(sent).every((r) => sent(r).instructions.includes(CONFIDENCE_SENTENCE.trim())), 'the sentence is in every sentiment question');
-  ok(all.filter((r) => !sent(r)).every((r) => !JSON.stringify(r).includes('sums up how your fights')), 'the sentence is in no other request (rules() stays clean)');
-  const sp = sent(plain.reqs.find(sent)).criteria, sl = sent(low.reqs.find(sent)).criteria;
-  ok(/min gap 3;/.test(sp.steady) && /min gap 4;/.test(sl.steady), 'sentiment effect: steady min gap 3 -> 4 after a hit');
-  ok(/min gap 2;/.test(sp.bold) && /min gap 3;/.test(sl.bold) && /min gap 4;/.test(sp.wary) && /min gap 5;/.test(sl.wary), 'bold 2 -> 3, wary 4 -> 5');
-  const opts = (turns) => turns.map((t) => t.decision?.tactic?.options).find(Boolean);
-  ok(opts(plain.turns) && Object.keys(opts(plain.turns)).includes('engage'), 'C 50: engage offered (sword ready)');
-  ok(opts(low.turns) && !Object.keys(opts(low.turns)).includes('engage'), `C 35: engage not offered (${Object.keys(opts(low.turns) ?? {})})`);
-  const tq = plain.reqs.find((r) => r.questions.tactic);
-  ok(tq && /keeps adversaries 3\+ steps away/.test(tq.questions.tactic.instructions.question), 'tactic question states the effective gap at C 50');
-  const lines = (rs) => JSON.stringify(rs.map((r) => Object.entries(r.questions).filter(([k]) => k === 'next_move' || k.startsWith('move_if_')).map(([, q]) => q.instructions)));
-  ok(/at least 4 steps/.test(lines(low.reqs)) && !/at least 3 steps/.test(lines(low.reqs)) && /under 4 steps/.test(lines(low.reqs)), 'steady priority and safety lines say 4 after a hit');
-  ok(/at least 3 steps/.test(lines(plain.reqs)), 'steady priority says 3 at C 50');
-}
-
-// 11. neutral-zone identity end to end: toggle on versus off, a strike duel that keeps C in 50..68: same moves, same turns.
-{
-  const mk = (confidence) => build({ map: withGhost(ROOM, 10, 3), seed: 22, explorerSkills: ['sword_strike'], ghostHp: 2 }, { confidence, ask: stub({ mood: 'bold', tactic: 'engage', skill: true }) });
-  const a = mk(false), b = mk(true);
-  for (const r of [a, b]) { r.game.adversaries.forEach((x) => { x.mode = 'chase'; }); r.game.health = r.game.maxHealth = 9; }
-  const ta = await play(a, 30), tb = await play(b, 30);
-  const sig = (ts) => ts.map((t) => `${t.dir}|${t.decision?.tactic?.choice ?? ''}|${t.events.map((e) => e.type).join()}`).join(';');
-  ok(sig(ta) === sig(tb) && ta.length === tb.length, 'neutral zone: toggle on plays the same moves, tactics and events as off');
-  ok(tb.some((t) => t.events.some((e) => e.type === 'dispelled')) && C(b).value >= 40 && C(b).value < 80, `... through a dispel (C ${C(b).value})`);
-}
-
-// 12. display mode (the UI bar): C is tracked and reported, but nothing Jev reads and no gate changes. After a hit
-// pushes C to 35 (where the full model widens the gap and closes engage) display plays and asks exactly like off.
-{
-  const rec = (inner, bodies) => async (req) => { bodies.push(JSON.stringify({ s: req.state, q: req.questions })); return inner(req); };
-  const mk = async (confidence) => {
-    const bodies = [];
-    const run = build({ map: withGhost(ROOM, 8, 3), seed: 31, explorerSkills: ['sword_strike'], ghostHp: 2 }, { confidence, ask: rec(stub({ mood: 'bold', tactic: 'engage', skill: true }), bodies) });
-    run.game.adversaries.forEach((x) => { x.mode = 'chase'; });
-    run.game.health = 2; run.game.maxHealth = 3;
-    await run.explorer.noteHit('a1'); // C 50 -> 35 with the tracker on; a plain log line with it off
-    const turns = await play(run, 25);
-    return { run, turns, bodies };
-  };
-  const off = await mk(false), disp = await mk('display'), full = await mk(true);
-  const sig = (ts) => ts.map((t) => `${t.dir}|${t.decision?.tactic?.choice ?? ''}|${t.events.map((e) => e.type).join()}`).join(';');
-  ok(disp.bodies.length === off.bodies.length && disp.bodies.every((b, i) => b === off.bodies[i]), 'display: every request is byte-identical to off, even at C 35');
-  ok(sig(disp.turns) === sig(off.turns), 'display: same moves, tactics and events as off');
-  ok(JSON.stringify(full.bodies) !== JSON.stringify(off.bodies), 'sanity: the full model (true) does change requests at C 35');
-  ok(C(disp.run) && C(disp.run).value !== 50 && C(disp.run).counts.strikes > 0 && disp.turns[0].confidence.value < 40, `display: C is tracked (after the hit ${disp.turns[0].confidence.value}, at the end ${JSON.stringify(C(disp.run))})`);
-  ok(disp.turns.every((t) => t.confidence && typeof t.confidence.value === 'number' && t.confidence.band), 'display: every turn reports confidence for the bar');
-  ok(!('confidence' in off.run.memory.progress) && off.turns.every((t) => !('confidence' in t)), 'off: no confidence anywhere');
-  ok(!disp.bodies.some((b) => /self\.confidence|"confidence":"/.test(b)), 'display: no confidence word in any request');
 }
 
 rmSync(dir, { recursive: true, force: true });

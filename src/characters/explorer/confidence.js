@@ -1,6 +1,6 @@
 // The explorer's confidence score C (PLAN-confidence.md, model v3): pure functions, no imports, no clock,
 // no randomness. C is 0..100, 50 at the start of every game. The explorer's own fights move it; code turns
-// it into a risk dial (gaps, engageOpen) and Jev gets only its band word. brain.js and memory.js import it
+// it into the history term of C = capability + history (below), which caps the moods. brain.js and memory.js import it
 // (C2); it imports nothing itself, so the acyclic chain and the explorer static guard stay intact.
 //
 // State (plain JSON): { value, counts: { strikes, blocked, evaded, pressed },
@@ -15,7 +15,6 @@
 //   evaded    an encounter with a chasing sighting ended with no hit and no dispel: +4, only up to
 //             EVADE_CEILING; closes the encounter
 //   pressed   a chaser within 2 steps with the sword not ready: -2 per tick, at most -8 per encounter
-//   calm      a step with no adversary in sight: +0.3, only while C < CALM_TARGET (repairs, never exceeds it)
 //   regen     PLAN-moods: 0.25 toward 50 from either side, but only after REGEN_WAIT ticks with no change to C
 //             (any other event that moves C restarts the wait); the caller sends one per tick
 // Every change ends with C clamped to 0..100 and to the lives cap.
@@ -28,7 +27,6 @@ export const D_BLOCKED = 3;
 export const D_EVADED = 4;
 export const D_PRESSED = -2;
 export const PRESSED_MAX = 8; // per encounter
-export const D_CALM = 0.3;
 export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
 export const REGEN_WAIT = 10; // ticks since C last changed before regen starts
 export const TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..75, high > 75
@@ -36,22 +34,18 @@ export const TIER_HIGH_MIN = 76;
 export const TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 71)
 export const PANIC_ENTER = 20; // panic starts below this
 export const PANIC_EXIT = 25; // and ends only at or above this
-export const CALM_TARGET = 50;
 export const BLOCK_CEILING = 65;
 export const EVADE_CEILING = 65;
 export const LAST_LIFE_CAP = 45;
 export const CAP_FLOOR = 0.3; // cap = 100 * (CAP_FLOOR + (1 - CAP_FLOOR) * lives / maxLives)
 // Band lower bounds: <30 shaken, 30-39 unsure, 40-64 even, 65-79 sure, 80+ dominant.
 export const BANDS = [[80, 'dominant'], [65, 'sure'], [40, 'even'], [30, 'unsure'], [0, 'shaken']];
-// Gap deltas: +2 below 30, +1 below 40, 0 up to 79, -1 from 80. ENGAGE_MIN: engage needs C >= this.
-export const GAP_STEPS = [[80, -1], [40, 0], [30, 1], [0, 2]];
-export const ENGAGE_MIN = 40;
 export const PRESSED_RANGE = 2; // steps, for applyTurn
 
 // The default event weights as one object, so C4's sweep can swap them (createConfidence({ weights })).
-export const WEIGHTS = { hit: D_HIT, struck: D_STRUCK, dispelled: D_DISPELLED, blocked: D_BLOCKED, evaded: D_EVADED, pressed: D_PRESSED, calm: D_CALM };
+export const WEIGHTS = { hit: D_HIT, struck: D_STRUCK, dispelled: D_DISPELLED, blocked: D_BLOCKED, evaded: D_EVADED, pressed: D_PRESSED };
 
-const EVENTS = new Set(['hit', 'struck', 'dispelled', 'blocked', 'evaded', 'pressed', 'calm', 'regen']);
+const EVENTS = new Set(['hit', 'struck', 'dispelled', 'blocked', 'evaded', 'pressed', 'regen']);
 
 const round2 = (v) => Math.round(v * 100) / 100; // keeps 0.3 steps free of float drift
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -60,7 +54,7 @@ const freshEnc = () => ({ chased: false, hurt: false, killed: false, pressed: 0 
 // createConfidence() is the shipped model. C4's arms: { weights: {hit, struck, ...} } overrides some weights
 // (kept in the state as `w`, only when given, so the default state shape is unchanged), and { model: 'beta' }
 // is the weight-free alternative: value = 100 * (landed + 2) / (landed + taken + 4), landed = own strikes that
-// landed (struck or dispelled), taken = hits; blocked, evaded, pressed and calm do not move it. The lives cap
+// landed (struck or dispelled), taken = hits; blocked, evaded, pressed and regen do not move it. The lives cap
 // still applies to both. `start` (default START) forces the history score from tick 0: the caps checks drive C with it
 // (PLAN-confidence-mood phase 3); with the lives cap applied by the first event, never by the constructor.
 export function createConfidence({ weights = null, model = null, start = START } = {}) {
@@ -101,7 +95,6 @@ export function apply(state, event, lives, maxLives) {
       enc.pressed += d; v -= d; counts.pressed += 1; break;
     }
     case 'regen': if (idle >= REGEN_WAIT) v = v < START ? Math.min(START, v + REGEN) : Math.max(START, v - REGEN); break;
-    case 'calm': if (v < CALM_TARGET) v = Math.min(CALM_TARGET, v + w.calm); break;
   }
   if (beta) v = 100 * (beta.landed + 2) / (beta.landed + beta.taken + 4); // the posterior replaces every weighted change
   const value = clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100);
@@ -126,12 +119,6 @@ export function closeEncounter(state, lives, maxLives) {
   return { ...state, enc: freshEnc() };
 }
 
-// The idle step: a convenience for apply(state, 'calm', ...). Calm never lowers C, so the lives cap
-// (default: none) only matters when the caller passes it.
-export function calm(state, lives = 2, maxLives = 2) {
-  return apply(state, 'calm', lives, maxLives);
-}
-
 // PLAN-moods tiers. `prev` is the tier held so far (hysteresis at both edges); null starts from C alone.
 export function tierOf(C, prev = null) {
   if (C <= TIER_LOW_MAX || (prev === 'low' && C <= TIER_LOW_MAX + TIER_HYST)) return 'low';
@@ -149,19 +136,9 @@ export function band(C) {
   return 'shaken';
 }
 
-// min_gap delta for the mood's gap (the caller keeps the result at 2 or more; engage keeps its gap of 1).
-export function gaps(C) {
-  for (const [lo, d] of GAP_STEPS) if (C >= lo) return d;
-  return 2;
-}
-
-export function engageOpen(C) {
-  return C >= ENGAGE_MIN;
-}
-
 // Derives this turn's events from the explorer's turn shape as Run.playTurn returns it
 // ({ skill_events, events, decision, ... }) and applies them in a fixed order: strikes, hit, blocked,
-// then the encounter-end / pressed / calm step. Own state only (fog-safe). `ctx`:
+// then the encounter-end / regen / pressed step. Own state only (fog-safe). `ctx`:
 //   lives, maxLives  after the turn
 //   armed            the sword was ready at the start of the turn
 //   visible          [{ id, distance, mode }] adversaries in sight (the brain's own view)
@@ -181,8 +158,8 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
     if (s.enc.chased && !s.enc.hurt && !s.enc.killed) step('evaded');
     else s = { ...s, enc: freshEnc() };
   }
-  if (!visible.length) step('calm');
-  else if (!armed && !engaging && visible.some((a) => a.mode === 'chase' && a.distance <= PRESSED_RANGE && !stunned.includes(a.id))) step('pressed');
+  step('regen');
+  if (visible.length && !armed && !engaging && visible.some((a) => a.mode === 'chase' && a.distance <= PRESSED_RANGE && !stunned.includes(a.id))) step('pressed');
   return s;
 }
 

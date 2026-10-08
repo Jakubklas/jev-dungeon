@@ -1,4 +1,4 @@
-# Jev Dungeon: Cloud and Multiplayer Implementation Plan (rev. 3)
+# Jev Dungeon: Cloud and Multiplayer Implementation Plan (rev. 4)
 
 ## 1. Bottom line
 
@@ -8,11 +8,13 @@
 - **Persona text has nowhere to go.** `memory.objective` and `sentiment.profile_note` no longer exist, and the explorer's largest request has about 80-125 B of headroom against the `check-dungeon.mjs` size asserts (AGENTS.md "Request-size headroom is gone"). **Phase 2 agents choose from server-defined persona presets that only change numbers (mind defaults and clamps). Free persona text needs an explicit byte budget, paid for by shortening something else** (open question 3).
 - **A touch is a bump, and only a claw strike takes a life.** Phase 4's combat task is rewritten around `bumpCheck`, `strikeWith` and `resolveAttack`. Skills add per-explorer state (`facing`, `block`, `strikes`, the block-roll stream) and cross-player questions, such as whose sword dispels a ghost.
 
+**Rev. 4 (sync to commit 92fc01e) adds four more deviations, detailed in "Changes since rev. 3" at the end.** (1) A player directive (`POST /api/inject`) now puts player-written text into Jev's request, which contradicts the "no player text reaches Jev" rule. (2) The explorer has four moods (`wary`, `steady`, `greedy`, `bold`), not six, so `AgentConfig` is wrong. (3) Snapshot scope grew again: coins, `winBy`, the confidence model, the engage hold and the directive. (4) Phase 0.7 will change every request hash, so the request-hash fixtures need a planned regeneration.
+
 The rest of rev. 2 still holds, with updated evidence:
 
-- **Spend safety comes first.** The browser `loop()` (`public/app.js:1602`) is the only thing that spends money today, so closing the tab stops it. Server-side ticking ships together with a kill switch, a daily post cap, per-game limits and pause-on-cap (Phase 1). Autoplay stays off by default.
+- **Spend safety comes first.** The browser `loop()` (`public/app.js:1868` (`loop()`)) is the only thing that spends money today, so closing the tab stops it. Server-side ticking ships together with a kill switch, a daily post cap, per-game limits and pause-on-cap (Phase 1). Autoplay stays off by default.
 - **One paid path only.** Both brains still default to the real Jev:
-  - explorer: `askReal` and `ask ?? askReal` (`explorer/brain.js:48,194`);
+  - explorer: `askReal` and `ask ?? askReal` (`explorer/brain.js:53,300`);
   - adversary: `jevAsk` and `(ask ?? jevAsk)` at call time (`adversary/brain.js:79,393`).
 
   `jev.js` reads `process.env.JEV_API_KEY` on every post (`jev.js:17`). Phase 0 makes `ask`/`decide` required, and only the `JevGateway` builds real askers.
@@ -44,9 +46,9 @@ Total effort is roughly 14-19 engineer-weeks for Phases 0-3, up from 12-16 becau
 | 5 | Shared env key, hedge ×2, retries ×3, 20 s timeout. | `jev.js:4-6,17,19` | `JevGateway` with a per-tenant key, policy, usage and budgets. |
 | 6 | No JSON clone of a `Game` or `Adversary`. Some game state lives **outside** both, in module-level WeakMaps. | AGENTS.md rule 4; `adversary.js:62` (`views`), `:311` (`patrolRands`), `:322` (`homeDists`); `explorer/memory.js:50` (`revisitWindows`) | Explicit versioned `serialize()` and `restore()` that also cover the WeakMap state. |
 | 7 | Determinism: option shuffles use global `Math.random`. | `jev.js:52-58` | Inject a seeded `rand` per actor. |
-| 8 | The browser drives ticks. | `app.js:1602-1610`, `server.js` `/api/step`, `turn.js` `playTurn` | Server `TickScheduler`, with cost guards. |
+| 8 | The browser drives ticks. | `app.js:1868` (`loop()`), `server.js` `/api/step`, `turn.js` `playTurn` | Server `TickScheduler`, with cost guards. |
 | 9 | Shared-world fog and combat assume one explorer. | `adversary.js` `seesExplorer`, `startsChase`, `bumpCheck`, `strikeWith`, `alertNearby`, `stepAdversaries`; `skills/resolve.js` | No mutual visibility in shared-world v1. Per-explorer combat in Phase 4. |
-| 10 | Both brains default to the real Jev. | `explorer/brain.js:48,194`; `adversary/brain.js:79,393` | Make `ask` and `decide` required (Phase 0). |
+| 10 | Both brains default to the real Jev. | `explorer/brain.js:53,300`; `adversary/brain.js:79,393` | Make `ask` and `decide` required (Phase 0). |
 | 11 | Hub and settings APIs have no auth, and the hub binds every interface. | `hub.js:191-197,234`; `server.js` `/api/settings` | Dev-only tools. They never ship to the internet as they are (Phase 2). |
 
 ### 2.2 Facts established from the code
@@ -62,8 +64,8 @@ The code wins (AGENTS.md rule 3).
 - **Light is derivable from `visits`.** `lightAround` (`dungeon.js:209`) is the only writer of `light`, and it takes the max, so the result depends only on the set of visited cells. Restore replays it. **`LIGHT_RADIUS` is a `next` setting**, so restore must use the game's frozen radius, not the process value.
 - **Adversary step order is numeric**: `byId` uses `localeCompare(..., { numeric: true })` (`adversary.js:554`).
 - **Runtime files are gitignored and untracked.** The hub's `runs/` folder is gitignored too.
-- **Network tripwire coverage.** `check-dungeon`, `check-adversaries`, `check-testbed`, `check-characters`, `check-skills` and `measure-memory` install it. `check-props`, `check-memory-kit`, `run-testbed` (dry mode) and `arenas.mjs` do not. `arenas.mjs` makes only localhost calls to the hub.
-- **Global `Math.random` swaps in the twin tests**: `check-adversaries.mjs:607,1161,1221` and `check-dungeon.mjs:699`.
+- **Network tripwire coverage (re-audit in rev. 4).** Several newer scripts (`check-duels`, `check-confidence*`, `check-inject`, `measure-outnumbered`, `calibrate-confidence`) get it through `scripts/lib/duel-harness.mjs` or `request-hashes.mjs`, not their own `globalThis.fetch` line; task 0.1 must confirm each one, including scripts that import neither. Original list: `check-dungeon`, `check-adversaries`, `check-testbed`, `check-characters`, `check-skills` and `measure-memory` install it. `check-props`, `check-memory-kit`, `run-testbed` (dry mode) and `arenas.mjs` do not. `arenas.mjs` makes only localhost calls to the hub.
+- **Global `Math.random` swaps are now in 12 scripts, 47 assignments (rev. 4 sweep), not 4.** `check-dungeon.mjs` 11, `check-adversaries.mjs` 6, `check-skills.mjs` 6, `check-confidence-caps.mjs` 4, `check-confidence-wiring.mjs` 4, `check-inject.mjs` 4, and 2 each in `calibrate-confidence`, `measure-caps`, `measure-memory`, `measure-confidence`, `request-hashes` and `lib/duel-harness.mjs`. The request-hash baseline and the duel harness depend on a seeded global `Math.random`.
 - **Ghost load.**
   - `alertNearby` switches on every patrolling packmate within `ALERT_STEPS` path steps.
   - A brain-on ghost with `budget >= 1` and no stun calls Jev, all ghosts in parallel (`adversary.js:585`). That is about 60% of ticks at speed 0.6.
@@ -74,10 +76,12 @@ The code wins (AGENTS.md rule 3).
   - character assignment `rng(seed ^ 0x6a09e667)` (`character.js:123`): derivable, used once at spawn;
   - patrol: `game.patrolRand` (toggle off) or per-ghost `patrolRands` (toggle on, `adversary.js:311-316`);
   - block rolls: `game.skillRand` (`dungeon.js:319-322`);
+  - coin drops: `game.coinRand` (`seed ^ 0x3c6ef372`, created on the first `coinRandom()`; **new in rev. 4**, needs a draw-count wrapper like the others);
+  - opening coins `rng(seed ^ 0x5be0cd19)` (`src/coins.js`): derivable, used once at spawn;
   - the testbed stream `seed ^ 0x51ed27a3`: derivable;
   - option shuffles: `Math.random`.
 - **Late answers mutate the live world.** `takeTurn` awaits the sentiment and tick requests, *then* calls `#useSkill` (a strike can dispel a ghost) and `world.move(dir)`, then awaits `#save()` (`explorer/brain.js:462-508`). If a deadline-missed brain instance is simply dropped, its late answer still drives a real `KnownWorld` over the live `Game`. Rev. 2's claim that "late promises hit a dead object" was wrong (section 3).
-- **The renderer reads `game.seed`** to derive wall and decor heights (`app.js:301,310`), and reads `explored_pct` (`app.js:1256,1672`). Both are leak-surface fields (section 10).
+- **The renderer reads `game.seed`** to derive wall and decor heights (`app.js:316,325`), and reads `explored_pct` (`app.js:1510,1940`). Both are leak-surface fields (section 10).
 
 ### 2.3 Unverified, to be tested or measured
 
@@ -96,8 +100,8 @@ The code wins (AGENTS.md rule 3).
 | Snapshot write path | Synchronous transactional commit per tick, before publishing. One hot `game_state` row fenced by `expectTick` (and by the lease from Phase 3). Cold snapshots every 25th tick. | |
 | Terminology | Keep the code class `Run` (`turn.js`). The DB container is `game` (`gm_`). A participant's tenure is `par_`. | |
 | Patrol and skill RNG state | Phase 0: draw-count wrappers on `game.patrolRand`, each per-ghost `patrolRands` stream and `game.skillRand`. They must not change draw order. Later: an optional `{next, state}` object. | AGENTS.md rule 8. |
-| Shuffle RNG | `shuffle(items, rand = Math.random)`. `rand` is injected through the `Run`, `ExplorerBrain` and `stepAdversaries` opts, one stream per actor seeded from `(game seed, actor id)`, with its draw count persisted. | All four `Math.random` swaps in the twin suites switch to injected `rand` in the same change. |
-| Seeds | Generated by the server with `crypto.randomInt` and stored in `games.seed`. `randomSeed()` (`dungeon.js:57`) is unused by the server. | |
+| Shuffle RNG | `shuffle(items, rand = Math.random)`. `rand` is injected through the `Run`, `ExplorerBrain` and `stepAdversaries` opts, one stream per actor seeded from `(game seed, actor id)`, with its draw count persisted. | Every `Math.random` swap in the scripts (12 files) switches to injected `rand` in the same change. |
+| Seeds | Generated by the server with `crypto.randomInt` and stored in `games.seed`. `randomSeed()` (`dungeon.js:57` (a private, unexported function)) is unused by the server. | |
 | API shape | `/v1/games/:id/...`. The old `/api/*` stays only as a dev shim. | |
 | Auth | Hosted OIDC (magic link and one OAuth provider). Cookie sessions with CSRF protection. | |
 | Transport | SSE plus POST. Resume via `Last-Event-ID`. Heartbeat 15 s. Per-user SSE cap. Slow-client backpressure. | |
@@ -290,8 +294,8 @@ CREATE TABLE agent_versions (                 -- immutable
 ```jsonc
 { "schema": 1,
   "persona": "steady",                          // server-defined preset id, never free text
-  "default_sentiment": "cautious",              // one of SENTIMENTS: scared, risk_averse, cautious, curious, courageous, aggressive
-  "sentiment_overrides": { "cautious": { "min_gap": 3, "end_ticks": 4 } },
+  "default_sentiment": "steady",                // one of MOOD_IDS: wary, steady, greedy, bold (memory.js:57)
+  "sentiment_overrides": { "steady": { "min_gap": 3, "end_ticks": 4 } },
   "review_every": 8, "redecide_cooldown": 3,
   "skills": "default",                          // 'default' | 'none' | up to 4 loadout ids (as testbed explorerSkills)
   "model": "jev-latest" }
@@ -299,7 +303,7 @@ CREATE TABLE agent_versions (                 -- immutable
 
 - Clamps: `min_gap` 1..6, `end_ticks` 1..8, `review_every` 4..16, `redecide_cooldown` 1..6. `model` is an allow-list; it is hard-coded today (`jev.js:40` and both brains' request bodies).
 - These constants become defaults a profile overrides: `SENTIMENTS` (`explorer/brain.js:59`), `DEFAULT_SENTIMENT` (`:111`), and `REVIEW_EVERY`, `APPROACH_FAILING`, `REDECIDE_COOLDOWN` (`:34-36`). Text fields of `SENTIMENTS` (`priority`, `move_priority`, `skill_priority`, `when`, `note`) are **not** overridable.
-- **No config field reaches Jev as text.** Persona text needs a new state field, and the request-size asserts (≤ 9500 B chasing, ≤ 10500 B patrolling; measured 9421 / 10374 B) leave no room. Adding any text means shortening something first and recording the raise in AGENTS.md (open question 3).
+- **No agent-config field reaches Jev as text.** (The player directive is the one exception, see section 12.) Persona text needs a new state field, and the request-size asserts (≤ 9500 B chasing, ≤ 10500 B patrolling; measured 9421 / 10374 B) leave little room (rev. 4: about 250 B chasing / 670 B patrolling left against the unchanged 9500 / 10500 asserts, AGENTS.md "Request-size headroom"). Adding any text means shortening something first and recording the raise in AGENTS.md (open question 3).
 - No config field may reach a `KnownWorld` read path or change fog behaviour.
 
 ### 6.3 Games and participants (Phase 1 creates `games`; participants from Phase 2)
@@ -406,7 +410,8 @@ CREATE TABLE quotas (account_id text PRIMARY KEY, daily_cap_micro bigint, per_ga
 - `serialize()` emits:
   - movement and lives: `steps, pos, health, maxHealth, graceTicks, won, lost, caughtBy, trail, visits (ordered), litOutside (sorted array)`;
   - adversary bookkeeping: `adversaryTicks, patrolRand: {draws}`;
-  - skills: `facing, block, skillRand: {draws}`.
+  - skills: `facing, block, skillRand: {draws}`;
+  - coins and victory (rev. 4): `coinPiles` (ordered array, one entry per coin), `coins`, `coinRand: {draws}`, `winBy` (`'chest'` | `'cleared'` | `null`).
 
   `strikes` is per-tick and cleared by `clearTickState()`, but a snapshot taken after a tick holds that tick's strikes for the view, so serialize it too. Placement is in `dungeon.js` with no new relative imports.
 - `static restore(dungeon, snap, profile)` builds through `new Game(dungeon)`, then overwrites fields. `light`, `knownCount` and `knownFloor` are recomputed by replaying `lightAround` over `Object.keys(visits)` **with the profile's `lightRadius`**. The constructor reads the live `LIGHT_RADIUS` and `EXPLORER_LIVES`, so the worker must have applied the game's profile first; restore refuses a mismatch.
@@ -438,6 +443,7 @@ CREATE TABLE quotas (account_id text PRIMARY KEY, daily_cap_micro bigint, per_ga
   - `encounter` (`#encounter`: Set and Map as arrays, `pending`, `lastDecision` with `-Infinity` encoded as `null`);
   - `exclude` (`#exclude`, a Set or `null`) and `seen` (`#seen`, the frozen sightings Map);
   - `hitsLanded` (`#hitsLanded`) and `skills` (`#skills` `SkillSet` state, 7.5);
+  - rev. 4 additions: `everSeen` (`#everSeen`), `struck` (`#struck` Map), `hold` (`#hold`), the coin bookkeeping (`#coinKnown` Set, `#coinDue`, `#coinStep`), `dirAskStep`, `leaveDue`, the confidence state (`#cs`, `#csLast`, `#csWhy`, `#capFired` Set) and the mode flags (`#csOn`, `#csAct`, `#caps`, `#holdOn`, which come from the profile, not the snapshot). `memory.directive` rides inside `memory`. `#visibleIds` is recomputed by `#observe()`. Restore must re-run the `check-request-hashes` scenarios from a mid-game snapshot, since any missed field changes request bytes;
   - the shuffle stream's draw count.
 - `#remembered` and `#zone` are recomputed by `#observe()` at the start of each turn, so they are not stored. `#lastBodies` and `#skillEvents` are per-turn and are not stored either.
 - The brain is rebuilt over a `KnownWorld` on the restored `Game`. It never holds a `Game`.
@@ -448,11 +454,12 @@ CREATE TABLE quotas (account_id text PRIMARY KEY, daily_cap_micro bigint, per_ga
 | Source | Location | Fix |
 |---|---|---|
 | Global `Math.random` shuffle | `jev.js:52-58`, called from both brains (explorer: tactic, move, approach and skill criteria; adversary `adversary/brain.js:320,357`) | `shuffle(items, rand)` with a per-actor stream injected through opts. |
-| `randomSeed()` | `dungeon.js:57`; `turn.js` `newGame(seed ?? undefined)` | Server seed from `crypto.randomInt`, stored. |
+| `randomSeed()` | `dungeon.js:57` (a private, unexported function); `turn.js` `newGame(seed ?? undefined)` | Server seed from `crypto.randomInt`, stored. |
 | `game.patrolRand` | `adversary.js:334` | Draw-count wrapper. |
 | per-ghost `patrolRands` | `adversary.js:311-316` | Draw-count wrapper per ghost. |
 | `game.skillRand` (block rolls) | `dungeon.js:319-322` | Draw-count wrapper. |
-| Twin tests swapping `Math.random` | `check-adversaries.mjs:607,1161,1221`; `check-dungeon.mjs:699` | Switch all four to injected `rand` in the same change. |
+| `game.coinRand` (coin drops) | `dungeon.js` `coinRandom()` | Draw-count wrapper (rev. 4). Every dispel draws exactly once, so the count equals the dispel count. |
+| Scripts swapping `Math.random` | 12 scripts, 47 assignments (list in section 2.2), including `lib/duel-harness.mjs` and `request-hashes.mjs` | Switch all of them to injected `rand` in the same change, or keep a thin `seedGlobalRandom()` helper in `scripts/lib` for the ones that only need determinism. Grep `Math.random =` to prove none are left. |
 
 - Keep the synchronous, in-id-order build of adversary request bodies (AGENTS.md "Run") until per-actor streams land and the fog twins are re-proven.
 - Shuffle changes alter the option order Jev sees. That is an accepted behaviour change and must be documented.
@@ -482,16 +489,16 @@ Effort is in engineer-days.
 |---|---|---|
 | 0.1 | Shared network tripwire in `scripts/lib/no-network.mjs`. Import it in every check, including `check-props.mjs` and `check-memory-kit.mjs`, and in `run-testbed.mjs` and `measure-memory.mjs` when `--live` is absent. | `scripts/*` |
 | 0.2 | CI pipeline: no secrets, egress to `api.typesafe.ai` blocked, `node --check` on all files, and every `check-*.mjs` plus the dry `measure-memory.mjs` runs (including `--who adversary`). | `.github/workflows/ci.yml` |
-| 0.3 | **Close the paid-path bypass.** Remove `askReal` / `ask ?? askReal` (`explorer/brain.js:48,194`) and `jevAsk` / `ask ?? jevAsk` (`adversary/brain.js:79,393`). `ExplorerBrain` throws without `ask`, `stepAdversaries` without `decide`. `jev.js` takes `apiKey` explicitly. Only `server.js` boot wiring (a dev gateway gated by `JD_JEV_LIVE=1`) builds real askers. `run-testbed --live` and `measure-memory --live` go through the same gateway. New `check-paid-paths.mjs`. | both brains, `adversary.js`, `jev.js`, `turn.js`, `server.js`, `scripts/*` |
+| 0.3 | **Close the paid-path bypass.** Remove `askReal` / `ask ?? askReal` (`explorer/brain.js:53,300`) and `jevAsk` / `ask ?? jevAsk` (`adversary/brain.js:79,393`). `ExplorerBrain` throws without `ask`, `stepAdversaries` without `decide`. `jev.js` takes `apiKey` explicitly. Only `server.js` boot wiring (a dev gateway gated by `JD_JEV_LIVE=1`) builds real askers. `run-testbed --live` and `measure-memory --live` go through the same gateway. New `check-paid-paths.mjs`. | both brains, `adversary.js`, `jev.js`, `turn.js`, `server.js`, `scripts/*` |
 | 0.4 | `Store` interface plus `FileStore` as the default. `memoryDir`, `dir` and `DATA_DIR` stay as sugar. Replace the writes in `ExplorerBrain#save`, `noteHit`, `noteCaught`, `Run.persist` and `Run.playTurn` (`saveMemories`) with one tick-level call. | `src/store/*`, `turn.js`, `explorer/brain.js`, `explorer/memory.js`, `adversary/memory.js` |
 | 0.5 | `MemoryStore`. Convert `check-testbed.mjs`, `run-testbed.mjs` and `measure-memory.mjs` to it, removing their temp-dir handling. | `scripts/*` |
 | 0.6 | `jev.js` options: `apiKey`, `policy` (`hedge`, `retries`, `timeoutMs`), external `signal`, abortable backoff, `onAttempt` per HTTP post, returns `{answers, usage}`. Defaults reproduce today's constants exactly. | `jev.js` |
-| 0.7 | `shuffle(items, rand)` with per-actor seeded streams and tracked draw counts, injected through `Run`/`ExplorerBrain`/`stepAdversaries` opts. Update all four twin swaps in the same change. | `jev.js`, both brains, `check-adversaries.mjs`, `check-dungeon.mjs` |
+| 0.7 | (Rev. 4: this changes every explorer and ghost request's option order, so `scripts/fixtures/request-hashes.json` and `request-hashes-caps.json` must be regenerated deliberately, in their own commit, with the old-vs-new diff reviewed to show only option order moved.) `shuffle(items, rand)` with per-actor seeded streams and tracked draw counts, injected through `Run`/`ExplorerBrain`/`stepAdversaries` opts. Update every `Math.random` swap (12 scripts, section 2.2) in the same change. | `jev.js`, both brains, `check-adversaries.mjs`, `check-dungeon.mjs` |
 | 0.8 | Draw-count wrappers for `game.patrolRand`, the per-ghost `patrolRands` and `game.skillRand`, without changing draw order. | `dungeon.js`, `adversary.js` |
 | 0.9 | Serialize/restore: `Game`, `Adversary`, the adversary WeakMap state (`views` including the limited K, `patrolRands`), `AdversaryView`, `Skill`/`SkillSet`, `ExplorerBrain` (bypassing the constructor), `setRevisitWindow`. | `dungeon.js`, `adversary.js`, `adversary-view.js`, `skills/skill*.js`, `explorer/brain.js`, `explorer/memory.js` |
 | 0.10 | **Settings profiles.** In `settings.js`: `profileOf(values)` returns `{id, hash, values}`, and `applyProfile(profile)` is applied once at boot. Add a `freeze` mode that rejects later `saveSettings` calls (the cloud default). `Game`, `Run` and the snapshots record the profile hash. The dev `/settings` page keeps working unfrozen. | `src/settings.js`, `server.js`, `turn.js` |
 | 0.11 | `KnownWorld.revoke()`: after it, `move` and `useSkill` throw and the reads still work. `ExplorerBrain` accepts its world per turn, or the actor hands it a fresh `KnownWorld` per turn. The static guard still passes. | `known-world.js`, `explorer/brain.js` |
-| 0.12 | Doc sync. Fix the stale grace comment (`adversary.js:28-29`). AGENTS.md's "Ordinary tick: with exactly one legal move, the move is forced" should point at the dormant-D4 note. Fix the `check-dungeon --measure` sizes (`check-dungeon.mjs:1217`: 140..150 against `MAX_SIZE = 90`). | `AGENTS.md`, `CONTRACT.md`, `adversary.js`, `check-dungeon.mjs` |
+| 0.12 | Doc sync. Fix the stale grace comment (`adversary.js:28-29`). AGENTS.md's "Ordinary tick: with exactly one legal move, the move is forced" should point at the dormant-D4 note. Fix the `check-dungeon --measure` sizes (`check-dungeon.mjs:1950-1958`: 140..150 against `MAX_SIZE = 90`). | `AGENTS.md`, `CONTRACT.md`, `adversary.js`, `check-dungeon.mjs` |
 
 Dropped from rev. 2: the plan/commit split, the constants-drift doc fix (AGENTS.md is now correct), and "remove the dead `forced` branches" (they now carry the D4 skill path; leave them).
 
@@ -499,7 +506,7 @@ Dropped from rev. 2: the plan/commit split, the constants-drift doc fix (AGENTS.
 
 - `node --check` passes, and CI is green with egress blocked.
 - All existing checks pass: `check-dungeon`, `check-adversaries`, `check-testbed`, `check-props`, `check-characters`, `check-skills`, `check-memory-kit`, and the dry `measure-memory` including `--who adversary --accept`. The twin suites change only to inject `rand`. The request-size asserts are unchanged.
-- The 200-seed determinism check passes (`check-dungeon.mjs:149`). The 30-seed spawn-position check in `check-characters.mjs` still passes.
+- The 200-seed determinism check passes (`check-dungeon.mjs:134-135`). The 30-seed spawn-position check in `check-characters.mjs` still passes.
 - `check-paid-paths.mjs` passes.
 - New `check-persistence.mjs` passes, **for both settings modes** (defaults; `adversaryCharacters` + `limitedMap` on) and for a testbed arena:
   - `serialize → JSON → restore → serialize` is byte-equal, including `litOutside` at a map edge, a limited view with faded and evicted cells, a stunned ghost, a skill mid-cooldown, a raised block, and a game after a dispel.
@@ -620,6 +627,8 @@ Dropped from rev. 2: the plan/commit split, the constants-drift doc fix (AGENTS.
 
 **Goal.** Several explorers in one dungeon, competitive, with no mutual visibility at first.
 
+Rev. 4 note: the `cleared` win (the explorer dispels the last ghost) needs a shared-world rule. Recommended: the dispelling explorer wins, so `winBy: 'cleared'` is per participant (open question 5).
+
 **Decide first:** open question 5 (win rule), open question 6 (ghost billing) and open question 7 (cross-player combat).
 
 | # | Task | Files |
@@ -695,15 +704,19 @@ GET    /v1/admin/...                        omniscient view, call log, usage, pr
 |---|---|---|
 | `tiles` | `publicView` | Removed. Admin Reveal only. |
 | `treasure` | `publicView` | Only once lit (`seenTreasure()` semantics), else `null`. |
-| `seed` | `publicView` | Removed. **The renderer derives wall and big-decor heights from it** (`app.js:301,310`). Send `render_salt = HMAC(server secret, game id)` instead. Heights stay stable per game and reveal nothing about the map. |
+| `seed` | `publicView` | Removed. **The renderer derives wall and big-decor heights from it** (`app.js:316,325`). Send `render_salt = HMAC(server secret, game id)` instead. Heights stay stable per game and reveal nothing about the map. |
 | `start` | `publicView` | Own start only. |
 | `width`, `height` | `publicView` | Padded bounding box of the known region plus a margin. The true size is acceptable for the owner of a private game and rejected in competitive games (open question 10). |
 | `props`, `decor` | `publicView` | Projected to lit cells. Solid props and forge footprints outline the layout. |
-| `explored_pct` | `publicView` (`exploredPct()`) | Dropped: `knownFloor / floorCount` reveals map size. Replaced by a known-floor count. UI reads at `app.js:1256,1672`. |
+| `explored_pct` | `publicView` (`exploredPct()`) | Dropped: `knownFloor / floorCount` reveals map size. Replaced by a known-floor count. UI reads at `app.js:1510,1940`. |
 | `light` (full grid), `visits`, `trail` | `publicView` | Own state only. Full grid on connect or resume, then deltas. |
 | own `pos`, `steps`, `won`, `lost`, `health`, `max_health`, `facing` | `publicView` | Sent. |
 | `strikes` | `publicView` | The explorer's own strikes, plus ghost strikes whose attacker is visible or whose cells include the explorer's cell. A strike by a hidden ghost would otherwise place it. |
 | `block` | `Run.view()` | Own state, sent. |
+| `coins`, `coin_piles` (rev. 4) | `Run.view()` | Own purse sent. Piles only on lit cells (as `seenCoins()`); unlit piles are hidden state. |
+| `won_by` (rev. 4) | `Run.view()` | Sent. |
+| `directive` (rev. 4) | `Run.view()`, `/api/step` | Owner only (player-written text). |
+| `confidence` (`value`, `band`, `capability`, `history`) (rev. 4) | `turn` | Owner only, with the decision probabilities. |
 | `grace_ticks`, `invulnerable`, `over` | `Run.view()` | Sent. |
 | `testbed` | `Run.view()` | Sent (a property of the owner's own game). |
 | adversaries `{id, pos, mode, visible}` | `Run.view()` | Only those `seesExplorer` now, with `{id, pos, mode}`. |
@@ -733,7 +746,8 @@ A nightly job prunes by these windows and never touches running or paused games.
 
 ## 12. Security and prompt-injection rules
 
-- **v1: no player-controlled text reaches Jev.** Personas are preset ids that map to numbers. Agent names, handles and display names never enter any `state`.
+- **The player directive is an existing exception (rev. 4).** `POST /api/inject` (PLAN-inject I1-I4) already puts one sanitised, length-capped (`injectMaxChars` 140), control-stripped string into the explorer's request (`state.directive`, the first priority line, one rules sentence). It is the "one bounded field" this section anticipates, and it is already built, so open question 3's byte budget is partly spent (about 250 / 670 B left). Cloud rules: private games, owner only, behind the `injectEnabled` profile value, with the cooldown and step limits; **disabled in races and shared worlds** until question 18 is answered; never reaches a ghost's state; an audit row per directive. `check-inject.mjs` already proves the bytes change only where the directive appears.
+- **v1 otherwise: no player-controlled text reaches Jev.** Personas are preset ids that map to numbers. Agent names, handles and display names never enter any `state`.
 - If free text is ever allowed (Phase 5), it goes into exactly one new, bounded, control-stripped field, with a byte budget agreed under open question 3 and a twin test proving it changes bytes only there.
 - Never place player-controlled text in `rules()`, `questions`, option criteria or anything that can name a move or skill key. Option keys (`up`, `sword_strike_left`, tactic ids) stay code-generated.
 - Never put another player's data in any player's `state` or in a ghost's `state`. Ghost `character` words come from `character.js` presets, never from players.
@@ -785,6 +799,7 @@ A nightly job prunes by these windows and never touches running or paused games.
 15. **Staging latency run.** Do you authorise one budget-capped live run to measure Jev p50/p95? It is the only paid step this plan needs before Phase 1 exits.
 16. **Spectators and Reveal.** Confirm that spectators never see agent thoughts and that Reveal is admin-only (owner-only in non-competitive games).
 17. **Dependency policy.** Confirm that `pg` plus a migration tool ends the zero-dependency convention.
+18. **Player directive in the cloud (new).** Keep it for private games only (recommended), allow it everywhere, or switch it off in the cloud profile? It is player free text in Jev's request and a cheating channel in a race.
 
 ## 15. Phase summary
 
@@ -801,7 +816,7 @@ Phases 0-3 change **no adversary targeting or balance logic**. They do make smal
 
 ## 16. Caveats
 
-- Line numbers drift. Prefer the symbol names given beside them.
+- Line numbers drift. Prefer the symbol names given beside them. **Rev. 4 sweep:** the citations for `app.js`, `explorer/brain.js` (53, 300), `check-dungeon.mjs` and the `Math.random` swaps were re-checked against 92fc01e and updated. Other citations were spot-checked by symbol and still resolve (`SPAWN_STEPS`, `lightAround`, `skillRandom`, `patrolRands`, `views`, `homeDists`, `byId`, `revisitWindows`, `LIMITS`, `MEMORY_ON`, `KEEP_HUNTING_MIN`, `codeHuntDir`, `saveMemory`, `saveMemories`, `loadEnvFile`, hub `listen`), but their line numbers have moved.
 - This revision re-read:
   - `server.js` and `src/jev.js`, `src/turn.js`, `src/settings.js` (all);
   - `dungeon.js:6-15,28,46,57,163,209,268-295,300-340,381-408`;
@@ -815,12 +830,27 @@ Phases 0-3 change **no adversary targeting or balance logic**. They do make smal
   - `character.js:120-123`;
   - `hub.js:1-40,90-106,177-234`;
   - `app.js:285-310,577-579,1036,1066,1256,1602-1610`;
-  - `check-dungeon.mjs:25,149,699,1217`;
+  - `check-dungeon.mjs:134-135,715,1950-1958`;
   - `check-adversaries.mjs:6,607,1161,1221`;
   - the tripwire grep over `scripts/*.mjs`.
 
   Other citations come from AGENTS.md.
 - The CPU, billing, latency and per-process memory claims are inferences. Each has a measurement step.
+
+## Changes since rev. 3 (sync to commit 92fc01e)
+
+Code facts re-verified against HEAD: `askReal`/`jevAsk` defaults, `HEDGE`/`RETRIES`/`TIMEOUT_MS`, the hub's all-interface listen (`hub.js:234`), the single `placeProps` import in `dungeon.js`, and the 9500 / 10500 asserts are all unchanged. Line numbers throughout have drifted; use symbol names.
+
+- **Four moods.** `SENTIMENTS` has `wary`, `steady`, `greedy`, `bold` and memory validation rejects any other id. `AgentConfig` and its clamps now use these (6.2).
+- **Player directive** (`/api/inject`, `Run.submitDirective`, `memory.directive`, `inject*` settings). Player text reaches Jev. Section 12 and open question 18 added; the API table gains a directive route.
+- **Coins, cleared win, health bars.** New `Game` state (`coinPiles`, `coins`, `coinRand`, `winBy`), new view fields and a new RNG stream; serialize, views and the shared-world win rule updated.
+- **Confidence model and caps, engage hold.** Brain state (`#cs*`, `#caps`, `#hold`, `#struck`, `#everSeen`) enters the snapshot. `server.js` derives the brain's `confidence` option from `confidenceCaps` / `confidenceModel` / `confidenceMeter`, so these settings belong in the profile hash.
+- **Request headroom** is about 250 / 670 B, not about 100 B.
+- **Request-hash fixtures** are a new determinism guard that Phase 0.7 will deliberately break.
+- **Thought-bubble variants** use `Math.random` only in `public/app.js` (display only), so they are outside the RNG scope.
+- **Tripwire coverage** needs re-auditing (section 2.2).
+- **`Math.random` swaps** are in 12 scripts (47 assignments), not 4: task 0.7, the RNG table and the Phase 0 exit criteria now cover all of them.
+- **Citations** re-checked by symbol; `app.js`, `explorer/brain.js` and `check-dungeon.mjs` line numbers updated (section 16).
 
 ## Changes since rev. 2
 

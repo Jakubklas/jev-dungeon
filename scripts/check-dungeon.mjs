@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Adversary, visibleAdversaries, spawnAdversaries } from '../src/characters/adversary/adversary.js';
 import { configureSkills, skillConfig } from '../src/skills/loadouts.js';
+const FIXED_MOOD = { fixedMood: true }; // C never moves the mood: these brain checks pin the four moods' own wording and gates (PLAN-moods commit 3 rewrites them)
 
 // Tripwire: the brain checks inject stubs; a missed one would call the paid Jev API.
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
@@ -630,7 +631,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   ];
   const g = handGame(room, [2, 2], 16);
   g.knownFloor = 1; g.visits = { '2,2': 1 };
-  const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+  const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
   const memory = brain.memory;
   const t1 = await brain.takeTurn();
   if (t1.decision?.trigger !== 'start' || t1.decision.tactic !== null) fail(`first turn decision ${JSON.stringify(t1.decision)}`);
@@ -722,7 +723,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const run = async (hiddenCell) => {
       const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
       const g = makeRoom();
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       g.adversaries = [chaser([8, 2])];
       const asked0 = sizes.length;
       const t1 = await withSeed(1, () => brain.takeTurn());
@@ -757,7 +758,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   {
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const g = makeRoom();
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: answerWith((k, ds) => ds[0]), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     g.adversaries = [chaser([8, 2])];
     await brain.takeTurn();
     g.pos = [14, 9];
@@ -826,7 +827,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       return ds.includes(want) ? want : ds[0];
     });
     g.adversaries = [chaser([9, 2])];
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const triggers = [];
     let factSeen = null, preFail = null;
     for (turnNo = 1; turnNo <= 8; turnNo++) {
@@ -880,7 +881,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const g = makeRoom();
     sizes.length = 0;
     const ask = answerWith((k, ds) => (k === 'sentiment' ? 'bold' : k === 'tactic' ? (ds.find((d) => d !== 'run_away') ?? ds[0]) : ds[0]));
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const m = brain.memory;
     await brain.takeTurn();
     g.adversaries = [chaser([g.pos[0] + 5 > 14 ? g.pos[0] - 5 : g.pos[0] + 5, g.pos[1]])];
@@ -923,7 +924,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         big.adversaries = [chaser([1, 5], mode)];
         sizes.length = 0;
         const bd = mkdtempSync(join(tmpdir(), 'jev-check-'));
-        const bb = new ExplorerBrain(new KnownWorld(big), { ask: answerWith((k, ds) => (k === 'sentiment' ? 'bold' : ds[0])), memoryDir: pathToFileURL(bd + '/') });
+        const bb = new ExplorerBrain(new KnownWorld(big), { ask: answerWith((k, ds) => (k === 'sentiment' ? 'bold' : ds[0])), confidence: FIXED_MOOD, memoryDir: pathToFileURL(bd + '/') });
         for (let i = 0; i < 3; i++) await bb.takeTurn();
         const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
         if (most < wantTactics) fail(`size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
@@ -957,7 +958,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
       // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
       // neutral zone and close tactics, so this is the worst case inside the zone.
-      for (const conf of [false, true, 'caps']) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      for (const conf of [FIXED_MOOD, { caps: true }]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -973,7 +974,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
           await bb.takeTurn();
           big.pos = [...start]; big.adversaries = [];
           for (let i = 0; i < 4; i++) { await bb.takeTurn(); big.pos = [...start]; }
-          if (conf) {
+          if (!conf.fixedMood) {
             // noteHit's memory writes, verbatim (same events and hit_here landmark), without its confidence update.
             for (let h = 0; h < 2; h++) {
               const at = Math.max(big.steps, 1);
@@ -993,7 +994,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
         if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
         if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
-        console.log(`  worst-case decision tick (${mode}${conf === 'caps' ? ', confidence CAPS' : conf ? ', confidence ON' : ''}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
+        console.log(`  worst-case decision tick (${mode}${conf.fixedMood ? ', fixed mood' : ', confidence caps'}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
     }
@@ -1051,7 +1052,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const g = handGame(room, [2, 3]);
     g.adversaries = [new Adversary({ id: 'a1', pos: [3, 3], mode: 'chase', hp: 3 })];
     if (variant !== 'fresh') hurt(g.adversaries[0], variant === 'stunned');
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     await seeded(1, () => brain.takeTurn());
     const out = { bodies: [...bodies], reqs: brain.lastRequests() };
     rmSync(dir, { recursive: true, force: true });
@@ -1080,7 +1081,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       bodies = [];
       const g = handGame(walled, [2, 2]);
       g.adversaries = [new Adversary({ id: 'a1', pos: [8, 2], mode: 'patrol', hp })];
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask: ask(false), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       await seeded(1, () => brain.takeTurn());
       rmSync(dir, { recursive: true, force: true });
       return [...bodies];
@@ -1104,7 +1105,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       const c = k === 'sentiment' ? 'bold' : k === 'tactic' ? (keys.includes('engage') ? 'engage' : keys[0]) : k === 'skill' ? 'none' : keys[0];
       return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
     }));
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: pickAsk, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: pickAsk, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     await seeded(3, () => brain.takeTurn());
     if (brain.memory.approach.id !== 'engage') fail(`hit re-decision: engage not taken (${brain.memory.approach.id})`);
     else {
@@ -1140,7 +1141,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const chance = skillConfig().coinDropChance;
     configureSkills({ ...skillConfig(), coinDropChance: 1 });
     let next = 'stay';
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: (x) => step(next)(x), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: (x) => step(next)(x), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const t1 = await seeded(1, () => brain.takeTurn());
     const sq = brain.lastRequests().map((r) => r.questions?.skill).find(Boolean);
     if (!sq || /Choose `none` unless/.test(sq.instructions.question)) fail(`skill question: not the neutral explorer wording: ${sq?.instructions?.question}`);
@@ -1245,7 +1246,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const g = handGame(room, me);
     g.visits = { [me.join(',')]: 1 };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('wary'), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('wary'), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const a = chaser(ghost);
     g.adversaries = [a];
     const cells = [[...g.pos]], ghostState = { budget: 0 }, tactics = new Set();
@@ -1302,7 +1303,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     g.light = g.light.map((row) => row.map((_, x) => (x >= 4 && x <= 50 ? 1 : 0)));
     g.visits = { '26,2': 1 };
     const world = new KnownWorld(g);
-    const brain = new ExplorerBrain(world, { ask: smartAsk('greedy'), memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(world, { ask: smartAsk('greedy'), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const spot = [20, 2];
     g.adversaries = [chaser(spot)];
     await withSeed(7, () => brain.takeTurn());
@@ -1366,7 +1367,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       }
       return answers;
     };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const approaches = [];
     for (let i = 0; i < ticks && !g.won; i++) { await brain.takeTurn(); approaches.push(brain.memory.approach.id); }
     rmSync(dir, { recursive: true, force: true });
@@ -1420,7 +1421,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         bodies.push(body);
         return Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === 'noul' ? { noul: 0.1 } : { choice: Object.keys(q.criteria)[0], probabilities: {}, confidence: 1 }]));
       };
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       const real = Math.random;
       Math.random = rng(7);
       try { await brain.takeTurn(); } finally { Math.random = real; }
@@ -1453,7 +1454,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       const c = k === 'sentiment' ? 'steady' : keys.find((d) => /Closer to the target/.test(String(q.criteria[d]))) ?? (keys.includes(STAY) ? STAY : keys[0]);
       return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
     }));
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const portal = g.dungeon.treasure;
     for (let i = 0; i < 20 && !g.won; i++) {
       // Every frontier lies past the portal in this 1-wide corridor, so none is reachable without crossing it.
@@ -1487,7 +1488,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
     };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     for (let i = 0; i < 12 && !g.won; i++) {
       // A chaser two cells behind, in sight, for the first 7 ticks; then it is gone.
       g.adversaries = i < 7 ? [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])] : [];
@@ -1576,7 +1577,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         const c = k === 'sentiment' ? 'steady' : keys.includes('right') ? 'right' : keys[0];
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       await seeded(7, () => brain.takeTurn());
       await seeded(8, () => brain.takeTurn());
       const out = JSON.stringify(brain.lastRequests());
@@ -1610,7 +1611,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
           return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
         }));
       };
-      brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       const turns = [];
       for (let i = 0; i < ticks && !g.won; i++) {
         if (ghost) g.adversaries = [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])];
@@ -1668,7 +1669,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   }
   const g0 = handGame(['######', '#....#', '######'], [1, 1]);
   const d0 = mkdtempSync(join(tmpdir(), 'jev-check-'));
-  const b0 = new ExplorerBrain(new KnownWorld(g0), { ask: async () => ({}), memoryDir: pathToFileURL(d0 + '/') });
+  const b0 = new ExplorerBrain(new KnownWorld(g0), { ask: async () => ({}), confidence: FIXED_MOOD, memoryDir: pathToFileURL(d0 + '/') });
   if (b0.memory.sentiment.id !== 'steady') fail(`default mood ${b0.memory.sentiment.id}`);
   for (const old of ['cautious', 'scared', 'risk_averse', 'curious', 'courageous', 'aggressive']) {
     const m = structuredClone(b0.memory);
@@ -1693,11 +1694,11 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
     };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     await brain.takeTurn();
     const q = seen[0].q;
     if (Object.keys(q.criteria).length !== 4) fail('sentiment question does not have 4 options');
-    if (!/What should the explorer go after right now: safety \(wary\), the plan \(steady\), loot \(greedy\) or the fight \(bold\)\?/.test(q.instructions)) fail(`sentiment question wording: ${q.instructions}`);
+    if (!/What should the explorer go after right now\? Only the moods your confidence allows are listed: safety \(wary\), the plan \(steady\), loot \(greedy\), the fight \(bold\)\./.test(q.instructions)) fail(`sentiment question wording: ${q.instructions}`);
     console.log(`sentiment request (start): ${seen[0].bytes} bytes, 4 moods`);
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1723,7 +1724,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
           return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
         }));
       };
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       const turns = [];
       for (let i = 0; i < ticks; i++) {
         if (adversaryAt && i === adversaryAt) g.adversaries = [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])];
@@ -1769,7 +1770,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
     };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     await seeded(3, () => brain.takeTurn());
     if (g.adversaries.some((a) => a.id === 'a1')) fail('dispelled setup: the ghost was not dispelled');
     else {
@@ -1819,7 +1820,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
             return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
           }));
         };
-        const brain = new ExplorerBrain(new KnownWorld(g), { ask, skills, memoryDir: pathToFileURL(dir + '/') });
+        const brain = new ExplorerBrain(new KnownWorld(g), { ask, skills, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
         await brain.takeTurn();
         rmSync(dir, { recursive: true, force: true });
         return out;
@@ -1833,7 +1834,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const greedy = await probe({ ghosts: [17], mood: 'greedy' });
     if (!greedy.priorities || !DEFAULT_LINE.test(greedy.priorities[0])) fail('greedy keeps the old tactic priority order for a lone ghost');
     const bold = await probe({ ghosts: [17], mood: 'bold' });
-    if (!bold.priorities || DEFAULT_LINE.test(bold.priorities[0]) || !bold.priorities.some((l) => /^Engage a lone adversary when the sword is ready/.test(l))) fail('bold tactic priorities changed');
+    if (!bold.priorities || DEFAULT_LINE.test(bold.priorities[0]) || !bold.priorities.some((l) => /^Engage while the sword is ready/.test(l))) fail('bold tactic priorities changed');
     const two = await probe({ ghosts: [16, 17] });
     if (two.sentiment.includes(STAKES)) fail('stakes sentence with two adversaries visible');
     if (two.priorities?.some((l) => DEFAULT_LINE.test(l))) fail('default-engage line with two adversaries visible');
@@ -1858,7 +1859,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         if (questions.sentiment) text = questions.sentiment.instructions;
         return Object.fromEntries(Object.entries(questions).map(([k, q]) => { const keys = Object.keys(q.criteria ?? {}); return [k, q.type === 'noul' ? { noul: 0.1 } : { choice: keys[0], probabilities: { [keys[0]]: 1 }, confidence: 1 }]; }));
       };
-      await new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') }).takeTurn();
+      await new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') }).takeTurn();
       rmSync(dir, { recursive: true, force: true });
       return text;
     })();
@@ -1876,7 +1877,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         const c = k === 'sentiment' ? 'steady' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : keys.includes('left') ? 'left' : keys[0];
         return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
       }));
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask, memoryDir: pathToFileURL(dir + '/') });
+      const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
       await brain.takeTurn();
       if (!isTactic(brain.memory.approach.id)) fail(`leave setup: no tactic on (${brain.memory.approach.id})`);
       g.dungeon.treasure = [12, 1];
