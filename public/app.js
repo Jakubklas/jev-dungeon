@@ -85,7 +85,7 @@ const SLASH_MS = 340;             // the slash crescent sweeps in the first part
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
   claw: ['#6b0f12', '#c22a2a', '#ff8f80', '#fff1ea'],
-  shield: ['#1c2f66', '#4f7fd6', '#f0a640', '#ffe9b0'], // the shield's steel-blue rim and amber face
+  shield: ['#3b4558', '#8a97ad', '#e0a92a', '#fff0b0'], // the shield's steel rim and gold face
 };
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
@@ -967,26 +967,35 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   }
 }
 
-// Shield over the knight while game.block is active: a 15x20 art px heater shield (steel-blue rim, dark
-// outline, a lit left half and a shaded right half of amber) that covers the whole sprite. Built once.
+// Shield over the knight while game.block is active: a 15x14 art px heater shield with a dark outline, a
+// bevelled steel rim (lit top and left, shaded right and bottom) and a gold plank face with grain and cracks.
+// Its corners are notched and the sides run straight before tapering to the point. Built once.
 const SHIELD_W = 15, SHIELD_H = 14;
-const SHIELD_COLORS = { E: '#0b1430', B: '#4f7fd6', L: '#f0a640', D: '#b8652a', H: '#ffe0a0' };
+const SHIELD_COLORS = { E: '#14121c', s: '#aab6c8', S: '#5d6a80', G: '#e0a92a', g: '#f6cf5a', Y: '#b8801c', W: '#6b4512' };
+const SHIELD_FLASH = { E: '#ffffff', s: '#ffffff', S: '#dbe6ff', G: '#fff1b8', g: '#ffffff', Y: '#ffd97a', W: '#f0c460' };
 const SHIELD_ROWS = (() => {
-  const half = (r) => (r < 8 ? 7 : Math.round(7 * (1 - (r - 8) / 6)));
-  const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half(r);
+  const half = [6, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 4, 3, 1]; // half-width per row: notched corners, straight sides, taper
+  const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half[r];
+  // Wood grain streaks (x, first row, last row) and a crack stepping down the face.
+  const grain = new Set();
+  for (const [x, r0, r1] of [[4, 3, 6], [7, 2, 4], [7, 7, 9], [10, 4, 8], [5, 8, 10]]) for (let r = r0; r <= r1; r++) grain.add(`${x},${r}`);
+  for (const [x, r] of [[6, 5], [6, 6], [7, 6]]) grain.add(`${x},${r}`);
   const rows = [];
   for (let r = 0; r < SHIELD_H; r++) {
     let row = '';
     for (let x = 0; x < SHIELD_W; x++) {
       if (!inside(x, r)) { row += '.'; continue; }
       const nb = (d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([ox, oy]) => !inside(x + ox, r + oy));
-      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 2 && r < 6 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
+      if (nb(1)) row += 'E';
+      else if (nb(2)) row += x <= 7 || r <= 1 ? (r > 9 && x > 7 ? 'S' : 's') : 'S'; // lit on the top and left, shaded right and low
+      else if (grain.has(`${x},${r}`)) row += 'W';
+      else if (grain.has(`${x - 1},${r}`) || (x < 6 && r < 6)) row += 'g';
+      else row += x >= 10 || r >= 11 ? 'Y' : 'G';
     }
     rows.push(row);
   }
   return rows;
 })();
-const SHIELD_FLASH = { E: '#ffffff', B: '#cfe0ff', L: '#fff1c8', D: '#ffd27a', H: '#ffffff' };
 function drawShield(x, y, now) { // x: centre column, y: top row; flashes while a block's slash plays
   const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && st.by !== 'explorer')
     && (now - strikeFx.t0) / SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SLASH_MS * 4) % 2 === 0;
