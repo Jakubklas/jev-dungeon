@@ -280,7 +280,7 @@ let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'chest', 'coin']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'chest', 'coin', 'heart']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -713,6 +713,12 @@ function drawScene(now) {
     ents.push({ depth: cx2 + cy2, order: -.5, gx: cx2, gy: cy2, kind: 'coin', n, face: 1,
       alpha: lit ? Math.min(1, Math.max(.15, shown[cy2][cx2] / .4)) : REVEAL_ALPHA });
   }
+  for (const [hx, hy] of game.heart_cells ?? []) { // hearts: lit cells only (or Reveal), like coins
+    const lit = known(hx, hy);
+    if (!(lit || reveal) || game.light[hy]?.[hx] === undefined) continue;
+    ents.push({ depth: hx + hy, order: -.5, gx: hx, gy: hy, kind: 'heart', n: 1, face: 1,
+      alpha: lit ? Math.min(1, Math.max(.15, shown[hy][hx] / .4)) : REVEAL_ALPHA });
+  }
   if (propArt) {
     for (const p of floorProps) {
       if (p.w) { pushForge(ents, p, known, shown, reveal); continue; }
@@ -1095,14 +1101,15 @@ function drawEntity(en, now, cx, cy) {
     }
     return;
   }
-  if (en.kind === 'coin') {
+  if (en.kind === 'coin' || en.kind === 'heart') { // a heart hovers exactly like a coin
+    const spr = sprites[en.kind];
     const bob = Math.round(Math.sin(now / 380 + en.gx * 1.7 + en.gy * 2.3));
     b.globalAlpha = en.alpha * .7;
     b.fillStyle = PALETTE.shadow;
     pixelEllipse(px, py + 1, 4, 1);
     b.globalAlpha = 1;
-    if (en.n > 1) blitSprite(sprites.coin, px + 3, py + 1, 1, en.alpha); // a second coin peeks out behind
-    blitSprite(sprites.coin, px - (en.n > 1 ? 1 : 0), py - 1 + bob, 1, en.alpha);
+    if (en.n > 1) blitSprite(spr, px + 3, py + 1, 1, en.alpha); // a second coin peeks out behind
+    blitSprite(spr, px - (en.n > 1 ? 1 : 0), py - 1 + bob, 1, en.alpha);
     return;
   }
   if (en.kind === 'chest') {
@@ -1683,7 +1690,7 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop', 'heart'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
@@ -1703,6 +1710,7 @@ const EVENT_TEXT = {
   struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
   bump: (id) => `${id} bumped Jev`,
   coin_drop: (id) => `${id} dropped a coin`,
+  heart: () => 'Jev picked up a heart: one life back',
   coin: (id, e) => `Jev picked up a coin${Number.isFinite(e.total) ? ` (${e.total})` : ''}`,
   alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,

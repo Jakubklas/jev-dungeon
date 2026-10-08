@@ -117,6 +117,7 @@ export class Run {
     const wasLost = game.lost;
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
     const coinsBefore = game.coins;
+    const healthBefore = game.health;
     const explorer = await this.explorer.takeTurn();
     // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
     // read from game.strikes (struck / dispelled need the brain's list).
@@ -125,7 +126,8 @@ export class Run {
     // nothing once the game is won or lost.
     const { events: adversaryEvents, turns } = await stepAdversaries(game, { decide: this.#decide });
     const coinEvents = game.coins > coinsBefore ? [{ id: 'explorer', type: 'coin', at: [...game.pos], gained: game.coins - coinsBefore, total: game.coins }] : [];
-    const events = [...skillEvents, ...coinEvents, ...adversaryEvents];
+    const heartEvents = game.health > healthBefore ? [{ id: 'explorer', type: 'heart', at: [...game.pos], health: game.health }] : [];
+    const events = [...skillEvents, ...coinEvents, ...heartEvents, ...adversaryEvents];
     await saveMemories(game.adversaries.map((a) => a.memory), game.steps, this.#dir);
     const hit = events.find((e) => e.type === 'hit');
     if (game.lost && !wasLost) await this.explorer.noteCaught(game.caughtBy);
@@ -149,6 +151,7 @@ export class Run {
       over: game.won || game.lost,
       directive: this.directive, // the live player directive { text, from_step, until_step, steps_left } or null
       testbed: !!game.dungeon.testbed,
+      heart_cells: game.heartPiles.map((c) => [...c]), // floating hearts (testbed, display only)
     };
   }
 }

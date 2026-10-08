@@ -5,7 +5,7 @@
 // Tripwire: every Run here gets stubbed ask/decide; a missed stub would call the paid Jev API.
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
-import { DIRS, SIGHT_RANGE, hasLineOfSight } from '../src/dungeon.js';
+import { Game, DIRS, SIGHT_RANGE, hasLineOfSight } from '../src/dungeon.js';
 import { buildArena, normalizeConfig, explorerSkillSetOf, ghostSkillSetOf, TestbedError } from '../src/testbed.js';
 import { buildSkillSet } from '../src/skills/loadouts.js';
 import { newTestGame } from '../src/turn.js';
@@ -263,6 +263,22 @@ for (const { name, config } of scenarios) {
   }
 }
 check(explorerCalls > 0, 'stub explorer was asked');
+// 6b. Hearts: the display-only `hearts` option.
+{
+  check(buildArena({}).dungeon.hearts.length === 0, 'hearts: default arena has none');
+  check(buildArena({ hearts: '3,3;4,4' }).dungeon.hearts.length === 2, 'hearts: URL form');
+  let threw = false;
+  try { buildArena({ hearts: [[0, 0]] }); } catch { threw = true; }
+  check(threw, 'hearts: a wall cell is rejected');
+  const hg = new Game(buildArena({ size: '9x9', start: '3,3', hearts: '4,3;5,3' }).dungeon);
+  hg.applyMove('right');
+  check(hg.health === hg.maxHealth && hg.heartPiles.length === 2, 'hearts: at full lives a heart stays');
+  hg.health = 1;
+  const r = hg.applyMove('right');
+  check(r.healed === 1 && hg.health === 2 && hg.heartPiles.length === 1, 'hearts: stepping on one restores a life');
+  check(hg.applyMove('right').healed === 0 && hg.health === hg.maxHealth, 'hearts: never above max');
+}
+
 // 7. Coins: the testbed `coins` option (count, cell list, ASCII 'c'), and the opening coins of a generated
 //    dungeon (src/coins.js): own PRNG stream, count from the floor area, spread over rooms, never on the
 //    start, the chest or a small prop, and the layout and ghost spawns unchanged.

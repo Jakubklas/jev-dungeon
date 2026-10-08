@@ -28,6 +28,7 @@ export const DEFAULTS = {
   explorerSkills: 'default', // 'default' | 'none' | a list of loadout ids (<= 4)
   ghostSkills: 'default', // 'default' (claw) | 'none' (harmless ghosts)
   ghostHp: null, // 1..5; null = the Skills setting
+  hearts: null, // [x, y] cells of floating hearts: display only, no gameplay yet (null = none)
   coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
 export const TESTBED_MAX_COINS = 60;
@@ -158,6 +159,15 @@ export function normalizeConfig(raw = {}) {
     } else {
       cfg.coins = toInt(c, 'coins');
       if (cfg.coins < 0 || cfg.coins > TESTBED_MAX_COINS) bad(`coins must be 0..${TESTBED_MAX_COINS} or a list of cells`);
+    }
+  }
+  if (given('hearts')) {
+    let h = raw.hearts;
+    if (typeof h === 'string') h = h.split(/[;|]/).filter(Boolean);
+    if (h !== null) {
+      if (!Array.isArray(h)) bad('hearts must be a list of cells');
+      if (h.length > TESTBED_MAX_COINS) bad(`at most ${TESTBED_MAX_COINS} hearts`);
+      cfg.hearts = h.map((cell, i) => toCell(cell, `hearts[${i}]`));
     }
   }
   if (given('ghostHp')) {
@@ -399,5 +409,9 @@ export function buildArena(rawConfig = {}) {
   } else {
     dungeon.coins = spawnCoins(dungeon, { count: cfg.coins });
   }
+  dungeon.hearts = (cfg.hearts ?? []).map((c) => {
+    if (!floorAt(c)) bad(`heart at ${c} is not an inside floor cell`);
+    return [...c];
+  });
   return { dungeon, adversaries, config: cfg };
 }

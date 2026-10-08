@@ -121,6 +121,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Small floor props | About 18-20 × 12-16 (skull 20×12, tools/sword 20×14, anvil 18×12, goblet 12×16) | floor-art.js |
 | Solid floor props | About 24-25 × 23-30, roughly one cell's diamond wide (chest 24×23, shelf 24×30, crates 25×30) | floor-art.js |
 | Coin | 7×7 | `COIN_A` |
+| Heart (floating pickup) | 7×7, anchor (3, 5) like the coin; knight red ramp `#d11920` / `#750b0f` with outline `#2b0508` and highlight `#ff9a8f`. Hovers and casts its shadow exactly like a coin (`kind: 'heart'` in `drawEntity`). Placed only by the testbed `hearts` option; stepping on one restores a life | `HEART_A` |
 | Wall decor | At most 14×19, front view, bottom row on the floor line | wall-art.js header |
 | Shield overlay | 11×14 hand-placed heater shield (steel rim lit top-left with rivet corners, coin-gold face split lit / shaded down a seam, domed steel boss), held out on the facing side: centre 5 px from the anchor toward the face, top 13 px above the feet, over the sprite's own small shield so the visor stays clear. Symmetric, never mirrored | `SHIELD_ROWS`, `SHIELD_HOLD_X`, `SHIELD_TOP`, `drawShield` |
 | Hp pips | 2×2 fill in a 4×4 dark frame, 4 px apart | `drawEntity` |
