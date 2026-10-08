@@ -109,7 +109,7 @@ explorer:
     directiveDone: 0.5 # directive_done above this ends the player directive
     directiveAskEvery: 5 # Steps between directive_done questions
     leaveNow: 0.5 # leave_now above this switches to go_to_exit
-    cornerMode: off # Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both)
+    cornerMode: full # Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both)
   perception:
     sightingNear: 8 # A move within this many steps of a sighting counts as toward it
     zoneSteps: 6 # Avoid-zone radius around an older sighting, steps
