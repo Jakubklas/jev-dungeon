@@ -1,6 +1,6 @@
 # AGENTS.md: Jev Dungeon
 
-Guide for AI coding agents (and humans) about to change this game. Full API signatures live in [CONTRACT.md](CONTRACT.md); this file tells you how not to break things. CONTRACT.md was brought in line with the code after the memory redesign and the skills work (explorer and adversary memory, settings, skills).
+Guide for AI coding agents (and humans) about to change this game. Full API signatures live in [CONTRACT.md](CONTRACT.md); this file tells you how not to break things. **Touching any art, colour or animation in `public/`? Read [STYLE_GUIDELINES.md](STYLE_GUIDELINES.md) first** (palette ramps, sizes, construction techniques, the reference sprites). CONTRACT.md was brought in line with the code after the memory redesign and the skills work (explorer and adversary memory, settings, skills).
 
 ## Architecture
 
@@ -78,6 +78,7 @@ Jev, a paid decision API at TypeSafe (`api.typesafe.ai/v1/systemone`), steers a 
 | `server.js`, `package.json` | HTTP server, static whitelist, the single `Run`, `/api/settings` | UI agent (testbed change: `/api/new` parses `{ testbed }`) |
 | `public/index.html`, `public/app.js`, `public/style.css`, `public/settings.html` | Step loop, iso renderer, pane (events / encounters / landmarks / recent from explorer memory), minimap, the `/settings` page | UI agent (testbed change: `?testbed` query in `api`/`init`, chest guards in renderer and minimap) |
 | `public/sprites.js` | Pixel-art knight, ghost, chest | sprites agent |
+| `STYLE_GUIDELINES.md` | The visual style guide: palette ramps, sizes, sprite/prop construction, animation timings, reference assets | shared: update it when you change a value it lists |
 | `src/settings.js` | The tunables' schema, validation, per-port persistence, and the hooks `configureWorld` / `configureAdversaries` (incl. the toggles `adversaryCharacters`, `limitedMap` and `confidenceModel` (Explorer group, PLAN-confidence; `server.js` reads it with `settings.appliedValue`), all off by default, `when: 'next'`) | shared: add a knob here, wire it in the module it tunes |
 | `src/dungeon.js`, `scripts/check-dungeon.mjs` | Map gen, the `Game` class (lighting, movement, damage, `publicView`, `twin`), LOS; the check holds the static fog guard | world agent (testbed change: `applyMove` treats a `null` treasure as no win) |
 | `src/characters/explorer/known-world.js` | `KnownWorld`: the explorer's fog-safe window on a `Game` | world agent. The only explorer file that may hold a `Game` |
