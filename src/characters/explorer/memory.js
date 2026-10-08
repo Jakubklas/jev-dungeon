@@ -14,6 +14,7 @@
 //   events            - up to 6 short milestones [{ step, text }] (portal seen, hit, switch, win)
 //   skills            - a plain-JSON mirror of the skill set, up to 4: [{ id, kind, name, text, ready, cooldown_left }]
 //                       (brain.js rewrites it every turn from the live skills; Jev's state carries id -> readiness only)
+//   directive         - the player's live instruction { text, from_step, until_step } or null (PLAN-inject)
 //   landmarks         - up to 8 typed, located facts [{ kind, cell, step, note }]; the portal is
 //                       pinned, the oldest of the rest is evicted. Perception turns them into
 //                       relative direction/distance each tick.
@@ -40,6 +41,7 @@ export const LIMITS = {
   recentMoves: 6,
   skills: 4,
   skillText: 120,
+  directive: 140, // the player's instruction (PLAN-inject)
   confidenceCount: 1e6, // each confidence counter (progress.confidence, toggle on only)
   recentCells: 8, // 6 moves plus the two positions before them, so every move can be judged
 };
@@ -67,6 +69,7 @@ export function createMemory({ approachId, approachText, thought, sentiment, sta
     events: [],
     skills: [],
     landmarks: [],
+    directive: null, // { text, from_step, until_step } while the player's instruction is live
   };
   revisitWindows.set(memory, []);
   return memory;
@@ -252,6 +255,10 @@ export function validateMemory(m) {
     if (skillIds.has(k.id)) fail(`skills[${i}] duplicates ${k.id}`);
     skillIds.add(k.id);
   });
+  const d = m.directive ?? null;
+  if (d !== null) {
+    if (typeof d !== 'object' || !isStr(d.text, LIMITS.directive) || !d.text || !isNum(d.from_step) || !isNum(d.until_step) || d.until_step < d.from_step - 1) fail('directive');
+  }
   if (!Array.isArray(m.landmarks) || m.landmarks.length > LIMITS.landmarks) fail('landmarks');
   const seen = new Set();
   m.landmarks.forEach((l, i) => {
@@ -277,6 +284,7 @@ export function renderMarkdown(m) {
   lines.push('', '## Skills');
   if (!m.skills.length) lines.push('_None._');
   for (const k of m.skills) lines.push(`- **${k.name}** (${k.kind}): ${k.ready ? 'ready' : `ready again in ${k.cooldown_left} step${k.cooldown_left === 1 ? '' : 's'}`}${k.text ? ` — ${k.text}` : ''}`);
+  if (m.directive) lines.push('', '## Directive', `“${m.directive.text}” (steps ${m.directive.from_step}-${m.directive.until_step})`);
   lines.push('', '## Events');
   if (!m.events.length) lines.push('_None yet._');
   for (const ev of m.events) lines.push(`- ${ev.text} — _step ${ev.step}_`);

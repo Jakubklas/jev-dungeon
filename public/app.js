@@ -28,6 +28,11 @@ let strikeFx = null;      // this tick's attacks to flash: { t0, strikes } (S5),
 let lastConfidence = null; // turn.confidence ({ value, band, delta, reason }); null with the confidenceModel toggle off
 let lastSkillDecision = null; // turn.skill_decision with its step, null before the first one
 let elapsed = 0, resumedAt = 0;
+let directive = null;     // the live whisper { text, from_step, until_step, steps_left } or null
+let cooldownUntil = 0;    // performance.now() time the Send button unlocks
+let sendBusy = false;
+let whisperOff = false;  // the server answered 403: directives are switched off in the settings
+let whisperCooldownMs = 10000; // from the injectCooldownS setting
 
 const delayMs = () => Number($('delay').value);
 const playTime = () => elapsed + (running ? performance.now() - resumedAt : 0);
@@ -1788,6 +1793,7 @@ function renderTurn(turn) {
   }
 
   lastConfidence = turn.confidence ?? null;
+  noteDirective(turn.directive ?? null, turn.step);
   const sd = turn.skill_decision;
   lastSkillDecision = sd && typeof sd === 'object' ? { ...sd, step: turn.step } : null; // this turn's only
   if (turn.review) lastReview = { ...turn.review, step: turn.step };
@@ -1823,6 +1829,8 @@ function resetPane() {
   advLatency = null;
   approachesUsed = new Set();
   eventLog = [];
+  directive = game?.directive ?? null;
+  renderWhisper();
   $('probs').replaceChildren();
   $('probs').removeAttribute('title');
   $('forced').hidden = true;
@@ -1939,6 +1947,8 @@ function endGame() {
 
 async function reload() {
   epoch++;
+  cooldownUntil = 0;
+  loadWhisperSettings();
   running = false;
   $('overlay').classList.remove('open');
   setStatus('Generating a new dungeon…');
@@ -1965,6 +1975,123 @@ async function init() {
     setStatus(game.steps ? 'Press Resume to keep exploring.' : 'Press Start to let Jev explore.');
   }
 }
+
+// ---------- whisper (directive) ----------
+// POST api/inject { text }: empty text clears. The server enforces the limits; the UI mirrors them.
+const WHISPER_COOLDOWN_MS = () => whisperCooldownMs; // used after a success when the server names no retry time
+const whisperInput = $('whisper-text');
+
+function logWhisper(text, type = 'directive') {
+  eventLog.unshift({ step: game?.steps ?? 0, text, type });
+  eventLog.length = Math.min(eventLog.length, LOG_MAX);
+  renderDanger();
+}
+
+function whisperMsg(text, isError = false) {
+  $('whisper-msg').textContent = text;
+  $('whisper-msg').hidden = !text;
+  $('whisper-msg').classList.toggle('error', isError);
+}
+
+// Called with each turn's directive: a live one updates the countdown, a vanished one is logged as ended.
+function noteDirective(next, step) {
+  const prev = directive;
+  directive = next;
+  if (prev && !next && !game?.lost) logWhisper(`Directive ended: "${prev.text}"`);
+  renderWhisper();
+}
+
+function renderWhisper() {
+  const d = directive;
+  $('whisper-live').hidden = !d;
+  if (d) {
+    $('whisper-live-text').textContent = `“${d.text}”`;
+    const n = d.steps_left;
+    $('whisper-left').textContent = Number.isFinite(n) ? `${n} step${n === 1 ? '' : 's'} left` : '';
+  }
+  const len = whisperInput.value.length;
+  $('whisper-count').textContent = `${len}/${whisperInput.maxLength}`;
+  $('whisper-count').classList.toggle('full', len >= whisperInput.maxLength);
+  const left = cooldownUntil - performance.now();
+  const dead = !game || !!game.over || whisperOff;
+  whisperInput.disabled = dead;
+  $('whisper-clear').disabled = dead;
+  const btn = $('whisper-send');
+  btn.disabled = dead || sendBusy || left > 0;
+  btn.textContent = left > 0 ? `Wait ${Math.ceil(left / 1000)}s` : 'Send';
+}
+setInterval(renderWhisper, 250);
+
+async function sendWhisper(text) {
+  if (sendBusy) return;
+  sendBusy = true;
+  renderWhisper();
+  const myEpoch = epoch;
+  try {
+    let res;
+    try {
+      const r = await fetch('api/inject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      res = { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
+    } catch (err) {
+      res = { ok: false, status: 0, data: { error: err.message } };
+    }
+    if (myEpoch !== epoch) return;
+    if (res.ok) {
+      const d = res.data.directive ?? null;
+      const prev = directive;
+      directive = d;
+      if (d) {
+        logWhisper(`Whispered: "${d.text}"`);
+        whisperInput.value = '';
+        whisperMsg(prev ? 'Replaced the earlier directive.' : 'Sent. Jev follows it from the next step.');
+        cooldownUntil = performance.now() + WHISPER_COOLDOWN_MS();
+      } else {
+        if (prev) logWhisper('Directive cleared');
+        whisperMsg(prev ? 'Cleared.' : 'Nothing to clear.');
+      }
+    } else if (res.status === 403) {
+      whisperOff = true;
+      whisperMsg(res.data.error || 'Player directives are switched off in the settings.', true);
+    } else if (res.status === 429) {
+      const ms = Number(res.data.retry_in_ms);
+      cooldownUntil = performance.now() + (Number.isFinite(ms) ? ms : WHISPER_COOLDOWN_MS());
+      whisperMsg(`Too soon: wait ${Math.ceil((cooldownUntil - performance.now()) / 1000)} s before the next whisper.`, true);
+    } else if (res.status === 409) {
+      whisperMsg(res.data.error || 'No game in progress, so nobody can hear you.', true);
+    } else if (res.status === 400) {
+      whisperMsg(res.data.error || 'That text was not accepted.', true);
+    } else {
+      whisperMsg(`Could not send: ${res.data.error || `HTTP ${res.status}`}`, true);
+    }
+  } finally {
+    sendBusy = false;
+    renderWhisper();
+  }
+}
+
+// Mirror the Player settings (injectEnabled / injectMaxChars / injectCooldownS) from the existing settings endpoint.
+async function loadWhisperSettings() {
+  try {
+    const r = await fetch('api/settings');
+    const v = (await r.json()).values ?? {};
+    whisperOff = v.injectEnabled === false;
+    if (whisperOff) whisperMsg('Player directives are switched off in the settings.', true);
+    if (Number.isFinite(v.injectMaxChars)) whisperInput.maxLength = v.injectMaxChars;
+    if (Number.isFinite(v.injectCooldownS)) whisperCooldownMs = v.injectCooldownS * 1000;
+  } catch { /* keep the defaults */ }
+  renderWhisper();
+}
+loadWhisperSettings();
+
+$('whisper').onsubmit = (e) => {
+  e.preventDefault();
+  const text = whisperInput.value.replace(/\s+/g, ' ').trim();
+  if (!text) return whisperMsg('Type a short instruction first (Clear removes the live one).', true);
+  if ($('whisper-send').disabled) return;
+  sendWhisper(text);
+};
+whisperInput.oninput = () => { renderWhisper(); if ($('whisper-msg').classList.contains('error')) whisperMsg(''); };
+$('whisper-clear').onclick = () => sendWhisper('');
 
 $('start').onclick = () => (running ? pause() : resume());
 $('reload').onclick = reload;

@@ -153,7 +153,14 @@ const TRIGGER_TEXT = {
   review: 'The explorer just dropped an exploration approach that was not working and switched to another.',
   hit: 'The explorer just lost a life to an adversary: rethink whether to keep at it.',
   confidence: 'Your confidence changed enough that your mood no longer fits: choose again.',
+  directive: "The player has just given the explorer an instruction (`directive`): it outranks every mood's `when`.",
 };
+
+// The player's text (PLAN-inject): trimmed, whitespace collapsed, control characters out, at most LIMITS.directive chars.
+const DIRECTIVE_DEFAULT_STEPS = 20;
+const cleanDirective = (t) => String(t ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LIMITS.directive).trim();
+// The first priority line while a directive is live: quoted and labelled as the player's words, safety kept.
+const directiveLine = (text) => `Follow the player's directive: ${JSON.stringify(text)}. It outranks the mood and the approach. Never step onto an adversary.`;
 
 // How each tactic should shape the move while an adversary is in sight.
 const TACTIC_MOVE_HINT = {
@@ -168,7 +175,7 @@ const TACTIC_MOVE_HINT = {
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
-const rules = (hasSkills = true, combat = null) =>
+const rules = (hasSkills = true, combat = null, directive = false) =>
   'Goal: loot this dark dungeon and get out alive. Your score is the coins you hold when you win. ' +
   'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every adversary. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
@@ -176,7 +183,8 @@ const rules = (hasSkills = true, combat = null) =>
   `A touch only bumps. An adjacent adversary's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
   '`threats.visible`: in sight now, with each health bar (`hp`); `threats.remembered`: seen earlier, frozen where last seen.' +
   (combat ? ` ${combatRule(combat)}` : '') +
-  (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '');
+  (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '') +
+  (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '');
 
 // What a dispel pays, for the tactic priority line: "may drop a coin" (the chance is never stated), nothing at 0.
 const engagePays = (p) => `dispelling it brings the cleared win closer${p > 0 ? ' and may drop a coin' : ''}`;
@@ -199,6 +207,8 @@ const TACTIC_FACT_KEYS = ['slip_past', 'hide', 'run_away', 'exit'];
 const COIN_NEAR = 8; // a newly seen pile this many known-path steps away or less can start a coin decision
 const COIN_EVERY = 10; // min steps between coin decisions
 const COIN_SWITCH = 0.5; // the coin decision's next_approach pick must reach this probability to switch
+const DIRECTIVE_DONE = 0.5; // directive_done.noul above this ends the player's directive early (PLAN-inject I4)
+const DIRECTIVE_ASK_EVERY = 5; // steps between two directive_done questions
 const LEAVE_NOW = 0.5; // leave_now.noul above this switches the approach to go_to_exit
 const withoutKeys = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
@@ -239,6 +249,7 @@ export class ExplorerBrain {
   #coinKnown = new Set();
   #coinDue = false;
   #coinStep = -Infinity;
+  #dirAskStep = 0; // the step the directive was set or directive_done last asked
   #leaveDue = false; // the portal was just seen: ask leave_now on the next real choice
   // { id, cell }: the goal cell of the current tactic, kept so its target stays put.
   #tacticGoal = null;
@@ -389,6 +400,44 @@ export class ExplorerBrain {
     return this.#memory;
   }
 
+  // The player's live instruction (PLAN-inject): null or { text, from_step, until_step, steps_left }. Lives in game
+  // steps: from_step is the first step it applies to, until_step the last; steps_left counts the steps still to take.
+  get directive() {
+    const d = this.#memory.directive;
+    if (!d) return null;
+    const steps_left = d.until_step - this.#world.steps;
+    return steps_left > 0 ? { text: d.text, from_step: d.from_step, until_step: d.until_step, steps_left } : null;
+  }
+
+  // Sets (or, with empty text, clears) the directive. The caller sanitises; it is clamped again here. A new one
+  // replaces the live one and queues one `directive` decision (merged under the one-sentiment-call rule).
+  setDirective(text, { steps = DIRECTIVE_DEFAULT_STEPS } = {}) {
+    const t = cleanDirective(text);
+    if (!t) { this.clearDirective('cleared by the player'); return null; }
+    const n = Number.isFinite(steps) && steps >= 1 ? Math.floor(steps) : DIRECTIVE_DEFAULT_STEPS;
+    const at = Math.max(this.#world.steps, 1);
+    if (this.directive) addEvent(this.#memory, at, 'Directive ended: replaced by a new one.');
+    this.#memory.directive = { text: t, from_step: this.#world.steps + 1, until_step: this.#world.steps + n };
+    addEvent(this.#memory, at, `Heard: ${t}`);
+    this.#dirAskStep = this.#world.steps;
+    this.#encounter.pending ??= 'directive';
+    return this.directive;
+  }
+
+  // Ends the directive (no-op without one), logs why and lets the parked approach start fresh.
+  clearDirective(reason = 'cleared') {
+    const m = this.#memory;
+    if (!m.directive) return;
+    const was = m.directive; // (not the getter: on expiry steps_left is already 0)
+    m.directive = null;
+    if (this.#encounter.pending === 'directive') this.#encounter.pending = null;
+    addEvent(m, Math.max(this.#world.steps, 1), `Directive ended: ${String(reason).slice(0, 80)}.`);
+    if (was && !isTactic(m.approach.id) && APPROACHES[m.approach.id]) { // resumed with fresh counters and no plan.tried row
+      changeApproach(m, approachOf(m.approach.id), this.#world.steps);
+      this.#review = { step: this.#world.steps, targetSteps: this.#target(m.approach.id)?.steps ?? null };
+    }
+  }
+
   lastRequest() {
     return this.#lastBodies.length ? JSON.parse(this.#lastBodies.at(-1)) : null;
   }
@@ -417,13 +466,19 @@ export class ExplorerBrain {
     const m = this.#memory;
     const a = m.approach;
     const i = a.interrupted;
+    const live = this.directive;
+    // While a directive is live the approach is shown as parked (unless a tactic already parked it).
+    const parked = live && !isTactic(a.id) ? { id: a.id, since_step: a.since_step, reason: 'player directive' } : null;
     return {
-      game: rules(this.#skills.size > 0, this.#combat()),
+      game: rules(this.#skills.size > 0, this.#combat(), Boolean(live)),
+      ...(live ? { directive: { text: live.text, steps_left: live.steps_left, from_step: live.from_step } } : {}),
       self: { ...sit.self, ...(this.#csAct ? { confidence: this.#confidenceWord() } : {}), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: moves ? { ...sit.surroundings, moves } : sit.surroundings,
       threats: tactics && sit.threats.encounter ? { ...sit.threats, encounter: withoutKeys(sit.threats.encounter, TACTIC_FACT_KEYS) } : sit.threats,
       plan: {
-        approach: { id: a.id, current: a.current, since_step: a.since_step, interrupted: i ? { id: i.id, since_step: i.since_step, reason: i.reason } : null },
+        approach: parked
+          ? { id: 'directive', current: "Follow the player's directive (`directive`).", since_step: live.from_step, interrupted: parked }
+          : { id: a.id, current: a.current, since_step: a.since_step, interrupted: i ? { id: i.id, since_step: i.since_step, reason: i.reason } : null },
         // Not on the tactic request (the largest one; no review rides on it, and a tactic never reads `tried`):
         // a full list is about 600 B.
         ...(tactics ? {} : { tried: a.tried.map((t) => ({ id: t.id, steps: t.steps, reason: t.reason })) }),
@@ -586,6 +641,8 @@ export class ExplorerBrain {
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
     }
+    if (memory.directive && !this.directive) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
+    const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
@@ -621,7 +678,7 @@ export class ExplorerBrain {
     }
     // Coins in view with no other decision due: ask the mood first (greedy may fit), then next_approach below.
     // Same gates as askCoins; the 10-step cap is #coinStep (set when a coin decision runs).
-    if (!trigger && this.#coinDue && !forced && !inSight && !isTactic(memory.approach.id) && memory.approach.id !== 'collect_coins' && !this.#leaving() && !this.#leaveDue &&
+    if (!trigger && !liveDirective && this.#coinDue && !forced && !inSight && !isTactic(memory.approach.id) && memory.approach.id !== 'collect_coins' && !this.#leaving() && !this.#leaveDue &&
       step - info.lastDecision >= REDECIDE_COOLDOWN && !(step - this.#review.step >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY)) trigger = 'coins';
     if (trigger && forced && !inSight) {
       info.pending = trigger;
@@ -668,7 +725,7 @@ export class ExplorerBrain {
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
     // A lone fight the duels back (#loneFight): under steady or greedy engaging is the default, so the mood's caution
     // does not talk the explorer out of the one fight it should take.
-    const loneEngage = tacticIds.includes('engage') && this.#fightOn(sit) &&
+    const loneEngage = !liveDirective && tacticIds.includes('engage') && this.#fightOn(sit) &&
       (memory.sentiment.id === 'steady' || memory.sentiment.id === 'greedy');
     if (tacticIds.length) {
       questions.tactic = {
@@ -677,7 +734,9 @@ export class ExplorerBrain {
           question:
             `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps adversaries ` +
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
-          priorities: loneEngage
+          priorities: liveDirective
+            ? [directiveLine(liveDirective.text), 'Pick the tactic that best serves the directive without breaking the safety rule; racing to the portal ends the game.']
+            : loneEngage
             ? [
               sit.threats.visible.length > 1
                 ? 'Default: engage while the sword is ready (you act first; hold off the nearest). Run away when cramped or without the sword.'
@@ -715,20 +774,20 @@ export class ExplorerBrain {
     const sinceReview = step - rInfo.step;
     // No reviews while a tactic or the run for the portal is on: those last as long as the situation does.
     const reviewDue =
-      !forced && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
+      !forced && !liveDirective && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
       sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
     if (reviewDue) this.#addReviewQuestions(questions, approachId, rInfo);
     // leave_now: on the first tick after the portal was seen, and in every review while it is known.
     // Never while leaving is already the plan, and not beside a tactic question (race_to_exit covers
     // leaving under threat; that request is the largest): it waits for the next tick, a tactic may be on.
-    const askLeave = !forced && !tacticIds.length && exitSeen(world) && !this.#leaving() && (this.#leaveDue || reviewDue);
+    const askLeave = !forced && !liveDirective && !tacticIds.length && exitSeen(world) && !this.#leaving() && (this.#leaveDue || reviewDue);
     if (askLeave) {
       this.#leaveDue = false;
       questions.leave_now = this.#leaveQuestion(sit);
     }
     // Coin decision: a new pile came into view nearby. next_approach, in this tick's request, after the sentiment call
     // (only on a decision tick: the `coins` trigger asked the mood just before, or another trigger's call serves). Not beside a tactic, a review or leave_now (they are the big requests); it waits.
-    const askCoins = this.#coinDue && !!trigger && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
+    const askCoins = !liveDirective && this.#coinDue && !!trigger && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
       approachId !== 'collect_coins' && !this.#leaving();
     if (askCoins) {
       this.#coinDue = false;
@@ -738,9 +797,20 @@ export class ExplorerBrain {
         'Coins have come into view (`surroundings.coins`). Which approach should the explorer follow now? Keep `plan.approach.current` unless going for the coins is worth the detour (adversaries, `threats.remembered`, what is left to explore).',
       );
     }
+    // directive_done (Noul): an early end for "until relevant". Rides on a request that is made anyway (never the
+    // tactic request, the largest; never a forced tick), at most once per DIRECTIVE_ASK_EVERY steps.
+    const askDone = !!liveDirective && !forced && !tacticIds.length && step - this.#dirAskStep >= DIRECTIVE_ASK_EVERY;
+    if (askDone) {
+      this.#dirAskStep = step;
+      questions.directive_done = {
+        type: 'noul',
+        instructions: `Is the player's directive (${JSON.stringify(liveDirective.text)}) done or no longer relevant, so the explorer can go back to its own plan? Judge from \`surroundings\` and \`recent\`.`,
+        criteria: { true: 'Done: it was achieved, or cannot be anymore.', false: 'Not done: keep following it.' },
+      };
+    }
     // ONE skill question per request (never per tactic, never in the sentiment request). On a forced tick
     // it is the only question: a skill-only request (PLAN D4-a).
-    const skillQ = hasSkillOptions ? skillQuestion(skillOptions, profile.skill_priority, { neutral: true }) : null;
+    const skillQ = hasSkillOptions ? skillQuestion(skillOptions, liveDirective ? directiveLine(liveDirective.text) : profile.skill_priority, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
     let dir = held ? STAY : legal[0];
@@ -748,6 +818,7 @@ export class ExplorerBrain {
     let review = null;
     let pendingSwitch = null;
     let pendingLeave = null;
+    let doneNow = false;
     let pendingCoins = null;
     let skillDecision = null;
     let skillKey = 'none';
@@ -776,6 +847,9 @@ export class ExplorerBrain {
         moveDecision = { choice: dir, probabilities: a.probabilities, confidence: a.confidence, options: moveOptions[moveFor] };
       }
 
+      const done = askDone ? answers.directive_done?.noul : null;
+      if (typeof done === 'number' && done > DIRECTIVE_DONE) doneNow = true;
+
       const leave = askLeave ? answers.leave_now?.noul : null;
       if (typeof leave === 'number' && leave > LEAVE_NOW) pendingLeave = leave;
 
@@ -799,7 +873,8 @@ export class ExplorerBrain {
         }
       }
     }
-    if (decision) decision.apiMs = apiMs; // the whole decision tick: sentiment + tick request
+    if (decision) decision.apiMs = apiMs;
+    // (apiMs is the whole decision tick: sentiment + tick request)
 
     const csEngaging = memory.approach.id === 'engage'; // after this tick's decision, like the request's plan.approach
     // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
@@ -837,6 +912,8 @@ export class ExplorerBrain {
     }
     if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last adversary and won.');
     this.#skills.turnPassed();
+    if (doneNow && this.directive) this.clearDirective('Jev judged it done');
+    if (memory.directive && !this.directive) this.clearDirective('ran out of steps'); // its last step was just taken
     if (this.#csOn) {
       // Calm repairs toward the start; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
       if (!sit.threats.visible.length) this.#confide('calm');
@@ -846,6 +923,7 @@ export class ExplorerBrain {
 
     return {
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
+      directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
       ...(this.#csOn ? { confidence: this.#confidenceReport() } : {}),
     };
@@ -995,7 +1073,8 @@ export class ExplorerBrain {
           `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} ${caps ? `What should the explorer go after right now? Only the moods your confidence allows are listed: ${ids.map((id) => MOOD_GLOSS[id]).join(', ')}.` : 'What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)?'} ` +
           'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
-          (this.#csAct ? (caps ? CAPS_SENTENCE : CONFIDENCE_SENTENCE) : ''),
+          (this.#csAct ? (caps ? CAPS_SENTENCE : CONFIDENCE_SENTENCE) : '') +
+          (this.directive ? " The player's `directive` outranks every mood's `when`: pick the mood that serves it best." : ''),
         criteria,
       },
     };
@@ -1029,14 +1108,19 @@ export class ExplorerBrain {
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`
     // (same for every move_if_<tactic>); each option keeps only its progress toward this tactic's target.
     const dirs = shuffle(world.availableMoves());
-    const whole = (p) => p.whole ?? [p.shared, p.target].filter(Boolean).join(' ');
+    // A live directive parks the approach: on an ordinary tick the moves lose their "progress toward the target" part.
+    const live = this.directive;
+    const parked = Boolean(live) && !speculative && !isTactic(approachId);
+    const whole = (p) => p.whole ?? [p.shared, parked ? null : p.target].filter(Boolean).join(' ') ?? '';
     // `stay` is the same under every tactic, so its whole fact goes to the shared facts and the option is short.
     const specOption = (d) => (d === STAY ? (parts[d].holding ? parts[d].whole : 'Stand still.') : parts[d].whole ?? parts[d].target);
     const options = Object.fromEntries(dirs.map((d) => [d, speculative ? specOption(d) : whole(parts[d])]));
     const shared = Object.fromEntries(world.availableMoves().filter((d) => d === STAY || !parts[d].whole).map((d) => [d, parts[d].shared ?? parts[d].whole]));
     const question = speculative
       ? `Step for the "${approachId}" tactic? Options: progress to its target; other facts per move: \`surroundings.moves\`.`
-      : `Which way should the explorer step next? It feels ${memory.sentiment.id} (\`self.mind\`); judge each move from its description, \`surroundings\` and \`recent\`.`;
+      : live
+        ? 'Which way should the explorer step next to follow the player\'s `directive`? Judge each move from its description, `surroundings` and `recent`.'
+        : `Which way should the explorer step next? It feels ${memory.sentiment.id} (\`self.mind\`); judge each move from its description, \`surroundings\` and \`recent\`.`;
     const portalSeen = sit.surroundings.exit !== 'not seen yet';
     // Stepping onto the portal ends the game, so it is only the plan when leaving is.
     const leavingNow = approachId === 'go_to_exit' || approachId === 'race_to_exit';
@@ -1059,7 +1143,17 @@ export class ExplorerBrain {
         ]
       : [];
     // The one-per-tactic questions decide the move on a decision tick, so they keep the mood's rule (shortened).
-    const priorities = speculative
+    const dirLine = live ? [directiveLine(live.text)] : [];
+    const priorities = live
+      ? speculative
+        ? [...dirLine, ...(portalSeen ? [portalLine] : []), ...safety]
+        : [
+          ...dirLine,
+          ...(portalSeen ? [portalLine] : []),
+          ...safety,
+          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the directive needs it.'] : []),
+        ]
+      : speculative
       ? [...(portalSeen ? [portalLine] : []), ...safety, ...(engaging ? [] : [profile.move_priority])]
       : engaging ? [
           // engage: the hint in `safety` is the whole plan. The mood's lines ("moving toward one is fine"), "stay makes no

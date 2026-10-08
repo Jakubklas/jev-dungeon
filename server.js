@@ -82,7 +82,7 @@ async function step() {
   busy = p;
   try {
     const turn = await p;
-    return { ...snapshot(), turn };
+    return { ...snapshot(), directive: run.directive, turn };
   } finally {
     busy = null;
   }
@@ -129,6 +129,24 @@ createServer(async (req, res) => {
         if (err instanceof TestbedError) return send(res, 400, { error: `Bad testbed config: ${err.message}` });
         throw err;
       }
+    }
+
+    // The player's directive for the explorer (PLAN-inject). No Jev call. Policy lives in Run.submitDirective.
+    if (req.method === 'POST' && path === '/api/inject') {
+      let body;
+      try {
+        body = JSON.parse((await readBody(req)) || '{}') ?? {};
+      } catch {
+        return send(res, 400, { error: 'Body must be JSON.' });
+      }
+      if (!run) return send(res, 409, { error: 'No game. Call /api/new first.' });
+      if (settings.appliedValue('injectEnabled') === false) return send(res, 403, { error: 'Player directives are switched off in the settings.' });
+      const out = run.submitDirective(body.text, {
+        maxChars: settings.appliedValue('injectMaxChars'),
+        steps: settings.appliedValue('injectSteps'),
+        cooldownMs: settings.appliedValue('injectCooldownS') * 1000,
+      });
+      return send(res, out.status, out.body);
     }
 
     if (req.method === 'POST' && path === '/api/step') {

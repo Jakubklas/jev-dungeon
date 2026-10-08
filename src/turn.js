@@ -12,6 +12,16 @@ import { KnownWorld } from './characters/explorer/known-world.js';
 
 const DIR = new URL('../', import.meta.url); // dungeon-game/ (adversaries.json lives here)
 
+// Player directive text (POST /api/inject): whitespace and newlines become single spaces, control,
+// bidi and zero-width characters go, then trim. Returns '' for nothing left (= clear the directive).
+export function sanitiseDirective(text) {
+  return String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // One game in progress. `opts`: `ask` / `decide` replace the explorer's / adversaries' Jev call
 // (the checks pass stubs), `memoryDir` is where the explorer's memory files go, `dir` where
 // adversaries.json goes. Without them a Run talks to the real Jev and writes next to the server.
@@ -20,6 +30,9 @@ export class Run {
   #dir;
   #memoryDir;
   #decide; // null = the real Jev
+  #stepping = false; // a playTurn is in flight: a directive sent now waits for the next step
+  #pending = null; // { text, steps } to set, or { clear: true }, applied at the start of the next playTurn
+  #lastInjectAt = -Infinity; // wall-clock ms of the last accepted directive (the cooldown)
 
   constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = true, confidence = false } = {}) {
     this.game = new Game(dungeon);
@@ -42,7 +55,64 @@ export class Run {
     await saveMemories(this.game.adversaries.map((a) => a.memory), this.game.steps, this.#dir);
   }
 
+  // Thin passthroughs to the explorer's directive (PLAN-inject). The directive is the player's own text.
+  get directive() {
+    return this.explorer.directive ?? null;
+  }
+
+  inject(text, { steps } = {}) {
+    return this.explorer.setDirective(text, { steps });
+  }
+
+  clearDirective(reason = 'cleared by player') {
+    return this.explorer.clearDirective(reason);
+  }
+
+  // POST /api/inject policy, kept here so it is testable without HTTP. Returns { status, body }:
+  // 200 { directive, queued }, 400 bad / too long text, 409 game over, 429 cooldown with retry_in_ms.
+  // Empty text clears (no cooldown). A step in flight queues the change for the start of the next step,
+  // so it never races takeTurn. `now` is injectable for checks.
+  submitDirective(text, { maxChars = 140, steps = 20, cooldownMs = 10_000, now = Date.now() } = {}) {
+    if (this.game.won || this.game.lost) return { status: 409, body: { error: `The game is already ${this.game.won ? 'won' : 'lost'}.` } };
+    if (typeof text !== 'string') return { status: 400, body: { error: 'text must be a string.' } };
+    const clean = sanitiseDirective(text);
+    if (clean === '') {
+      if (this.#stepping) this.#pending = { clear: true };
+      else { this.#pending = null; this.clearDirective('cleared by player'); }
+      return { status: 200, body: { directive: this.#stepping ? this.directive : null, queued: this.#stepping } };
+    }
+    if (clean.length > maxChars) return { status: 400, body: { error: `Directive is too long: ${clean.length} characters, at most ${maxChars}.`, max_chars: maxChars } };
+    const wait = this.#lastInjectAt + cooldownMs - now;
+    if (wait > 0) return { status: 429, body: { error: 'Wait before sending another directive.', retry_in_ms: Math.ceil(wait) } };
+    this.#lastInjectAt = now;
+    if (this.#stepping) {
+      this.#pending = { text: clean, steps };
+      return { status: 200, body: { directive: { text: clean, from_step: null, until_step: null, steps_left: steps }, queued: true } };
+    }
+    this.#pending = null;
+    this.inject(clean, { steps });
+    return { status: 200, body: { directive: this.directive, queued: false } };
+  }
+
+  #applyPending() {
+    const p = this.#pending;
+    this.#pending = null;
+    if (!p) return;
+    if (p.clear) this.clearDirective('cleared by player');
+    else this.inject(p.text, { steps: p.steps });
+  }
+
   async playTurn() {
+    this.#stepping = true;
+    try {
+      this.#applyPending();
+      return await this.#playTurn();
+    } finally {
+      this.#stepping = false;
+    }
+  }
+
+  async #playTurn() {
     const { game } = this;
     const wasLost = game.lost;
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
@@ -62,7 +132,7 @@ export class Run {
     else if (hit) await this.explorer.noteHit(hit.id);
     // The explorer's own shield stopped a claw (the confidence model's +3). Its own cell, its own shield: fog-safe.
     if (!(game.lost && !wasLost)) for (const e of events) if (e.type === 'blocked') await this.explorer.noteBlocked();
-    return { ...explorer, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns };
+    return { ...explorer, directive: this.directive, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns };
   }
 
   view() {
@@ -77,6 +147,7 @@ export class Run {
       grace_ticks: graceLeft(game),
       invulnerable: graceLeft(game) > 0,
       over: game.won || game.lost,
+      directive: this.directive, // the live player directive { text, from_step, until_step, steps_left } or null
       testbed: !!game.dungeon.testbed,
     };
   }

@@ -23,6 +23,21 @@
         <canvas id="minimap" class="minimap" aria-label="Minimap of known cells"></canvas>
       </div>
       <p id="status">Press Start to let Jev explore.</p>
+      <form id="whisper" class="whisper" autocomplete="off">
+        <label class="whisper-label" for="whisper-text">Whisper to Jev</label>
+        <div class="whisper-row">
+          <input id="whisper-text" type="text" maxlength="140" placeholder="e.g. go for the coins" enterkeyhint="send" spellcheck="false">
+          <span id="whisper-count" class="whisper-count" aria-live="off">0/140</span>
+          <button id="whisper-send" type="submit" class="primary">Send</button>
+        </div>
+        <div id="whisper-live" class="whisper-live" hidden>
+          <span class="chip whisper-chip">Directive</span>
+          <span id="whisper-live-text" class="whisper-live-text"></span>
+          <span id="whisper-left" class="muted"></span>
+          <button id="whisper-clear" type="button" class="small-btn">Clear</button>
+        </div>
+        <p id="whisper-msg" class="whisper-msg" role="status" hidden></p>
+      </form>
     </section>
 
     <aside class="pane">
