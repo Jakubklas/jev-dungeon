@@ -14,6 +14,7 @@ import {
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
 import { assignCharacters, profileOf, traitsOf } from './character.js';
+import { assignKinds, kindOf } from './kinds.js';
 import { setSkills } from './memory.js';
 import { buildSkillSet } from '../../skills/loadouts.js';
 import { skillConfig } from '../../skills/config.js';
@@ -34,6 +35,7 @@ let FLOOR_PER_ADVERSARY = 150; // one adversary per this many floor cells (350 c
 let MAX_ADVERSARIES = 12;
 let PACK_ALERT = true; // a spotter calls in packmates (alertNearby)
 let TEAM_SIGHT = true; // a hunter tracks the explorer through a packmate's sight
+let TROLL_SHARE = 0.25; // chance a spawned monster is a troll (kinds.js)
 export let CHARACTERS_ON = false; // adversaryCharacters toggle: mixed characters at spawn, per-ghost patrol RNG, self.character in state
 export let LIMITED_ON = false; // limitedMap toggle: ghosts know their home zone + what they have seen, not the real map
 // Limited maps need the characters (home radius, ttl and memory come from the character and its memory
@@ -50,6 +52,7 @@ export function configureAdversaries(o) {
   if (o.maxAdversaries !== undefined) MAX_ADVERSARIES = o.maxAdversaries;
   if (o.packAlert !== undefined) PACK_ALERT = o.packAlert;
   if (o.teamSight !== undefined) TEAM_SIGHT = o.teamSight;
+  if (o.trollShare !== undefined) TROLL_SHARE = o.trollShare;
   if (o.keepHuntingMin !== undefined) setKeepHuntingMin(o.keepHuntingMin);
   if (o.limitedMap !== undefined) LIMITED_ON = Boolean(o.limitedMap);
   if (o.adversaryCharacters !== undefined) {
@@ -89,6 +92,7 @@ export class Adversary {
   #hunt; // brain state (brain.js newHunt)
   #route = null; // cached patrol route, cells still to walk, next first
   #lastRequestBody = null; // exact body of the last Jev request, for auditing
+  #kind; // monster kind id (kinds.js: 'ghost' | 'troll'), fixed at spawn
   #character; // preset id (character.js), fixed at spawn
   #profile; // profileOf(traits) for that preset
   #home; // spawn cell: the centre of the patrol territory
@@ -98,18 +102,21 @@ export class Adversary {
   #maxHp;
   #stun = 0; // ticks of stun left: no step, no Jev call
 
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', hp = skillConfig().ghostHp, skills = 'ghost' }) {
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', hp, skills }) {
+    const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
     this.id = id;
     this.pos = pos;
     this.mode = mode;
     this.budget = budget;
     this.lastSeen = lastSeen;
     this.goal = goal;
+    this.#kind = spec.id;
     this.#character = character;
     this.#profile = profileOf(traitsOf(character)); // throws on an unknown id
     this.#home = [...pos];
     this.#hunt = newHunt(id, this.#profile, character);
-    this.#hp = this.#maxHp = hp;
+    this.#hp = this.#maxHp = hp ?? spec.hp();
+    skills ??= spec.skills;
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.syncSkills();
   }
@@ -166,6 +173,10 @@ export class Adversary {
   // Mirrors the SkillSet into the memory (plain JSON, at most 4).
   syncSkills() {
     setSkills(this.#hunt.memory, this.#skills.summaries());
+  }
+
+  get kind() {
+    return this.#kind;
   }
 
   get character() {
@@ -249,9 +260,10 @@ export function spawnAdversaries(dungeon) {
   for (let round = 0; picked.length < count && perRoom.some((cells) => cells.length > round); round++) {
     for (const cells of perRoom) if (picked.length < count && cells[round]) picked.push(cells[round]);
   }
-  // Characters come from their own stream and are drawn after every spawn rng call, so dungeons and ghost cells never change.
+  // Kinds and characters come from their own streams and are drawn after every spawn rng call, so dungeons and ghost cells never change.
   const characters = CHARACTERS_ON ? assignCharacters(dungeon.seed, picked.length, 'mixed') : [];
-  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard' }));
+  const kinds = assignKinds(dungeon.seed, picked.length, TROLL_SHARE);
+  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i] }));
 }
 
 // The numbers this ghost's code runs with. A standard ghost follows the live settings (today's behaviour);
