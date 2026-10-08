@@ -5,5 +5,8 @@
   "scripts": {
     "start": "node hub.js",
     "server": "node server.js"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

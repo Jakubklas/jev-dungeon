@@ -35,7 +35,8 @@ export function placeProps(dungeon, rand) {
     }
     return a;
   };
-  const pickKind = (kinds) => {
+  const pickKind = (all) => {
+    const kinds = all.filter((k) => KINDS[k].weight > 0); // weight 0 (central config) = never picked at random
     let t = rand() * kinds.reduce((s, k) => s + KINDS[k].weight, 0);
     for (const k of kinds) if ((t -= KINDS[k].weight) < 0) return k;
     return kinds[kinds.length - 1];

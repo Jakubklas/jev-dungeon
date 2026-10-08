@@ -12,6 +12,7 @@ import {
   tacticFeasibility, tacticOptions, avoidZone, describeMoveParts,
 } from '../src/characters/explorer/perception.js';
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
+import { REQUEST_BYTES } from '../src/config/registry.js'; // the one definition of the request-size bounds
 import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { LIMITS, MOOD_IDS, addEvent, addLandmark, countEncounter, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
@@ -902,7 +903,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     if (Object.keys(state).join() !== 'game,self,surroundings,threats,plan,recent') fail(`state keys ${Object.keys(state)}`);
     const max = Math.max(...sizes.map((s) => s.bytes));
     const maxTactics = Math.max(...sizes.map((s) => s.tactics));
-    if (max > 9500) fail(`largest stubbed request is ${max} bytes (> 9500)`);
+    if (max > REQUEST_BYTES.explorerChasing) fail(`largest stubbed request is ${max} bytes (> ${REQUEST_BYTES.explorerChasing})`);
     // The busiest decision ticks on a hand-built map where almost every tactic is feasible: a seen portal
     // behind a corner, a side room to hide in, an adversary that is chasing (5 tactics) or patrolling (6).
     {
@@ -918,7 +919,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       ];
       // slip_past no longer routes to the portal (it is a wall to every non-leaving route), so the hall offers
       // one tactic fewer than before P1: run_away, engage, hide, race_to_exit (+ carry_on while patrolling).
-      for (const [mode, wantTactics, bound] of [['chase', 4, 9500], ['patrol', 5, 10500]]) {
+      for (const [mode, wantTactics, bound] of [['chase', 4, REQUEST_BYTES.explorerChasing], ['patrol', 5, REQUEST_BYTES.explorerPatrolling]]) {
         const big = handGame(hall, [5, 3], 12);
         big.dungeon.treasure = [1, 1];
         big.adversaries = [chaser([1, 5], mode)];
@@ -958,7 +959,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
       // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
       // neutral zone and close tactics, so this is the worst case inside the zone.
-      for (const conf of [FIXED_MOOD, { caps: true, start: 100 }]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      for (const conf of [FIXED_MOOD, { caps: true, start: 100 }]) for (const [mode, wantTactics, bound] of [['chase', 5, REQUEST_BYTES.explorerChasing], ['patrol', 6, REQUEST_BYTES.explorerPatrolling]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -1091,7 +1092,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     if (u1.some((b) => /\bhp\b/.test(JSON.parse(b).state.threats ? JSON.stringify(JSON.parse(b).state.threats) : ''))) fail('health bar: hp in threats with nothing in sight');
   }
   const maxAdj = Math.max(...A.bodies.map((b) => Buffer.byteLength(b, 'utf8')));
-  if (maxAdj > 9500) fail(`adjacent-ghost request is ${maxAdj} bytes (> 9500)`);
+  if (maxAdj > REQUEST_BYTES.explorerChasing) fail(`adjacent-ghost request is ${maxAdj} bytes (> ${REQUEST_BYTES.explorerChasing})`);
   console.log(`  adjacent ghost + skill question: ${A.bodies.length} requests, largest ${maxAdj} bytes (skill question ${JSON.stringify(skillQ(A) ?? {}).length} bytes)`);
 
   // A life lost during a tactic asks again next tick (engage never fails by gap on its own): trigger 'hit'.

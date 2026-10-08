@@ -316,3 +316,10 @@ export async function saveMemory(memory, dirURL) {
   ]);
   return Math.round(json.length / 4); // approximate tokens
 }
+
+// Central config hook (src/config/runtime.js): limits apply from a new game, because memory is validated against them.
+export function configureExplorerMemory(o) {
+  for (const k of Object.keys(LIMITS)) if (o[`limExplorer_${k}`] !== undefined) LIMITS[k] = o[`limExplorer_${k}`];
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const explorerMemorySnapshot = () => Object.fromEntries(Object.keys(LIMITS).filter((k) => k !== 'confidenceCount').map((k) => [`limExplorer_${k}`, LIMITS[k]]));

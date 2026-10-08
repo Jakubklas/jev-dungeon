@@ -9,11 +9,14 @@ import { skillConfig } from '../../skills/config.js';
 // hp: a function, so a settings change is read when the monster is built (never cached).
 // skills: a name for buildSkillSet (loadouts.js DEFAULT_SETS) or a list of loadout ids.
 export const KINDS = {
-  ghost: { id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, speed: () => 1, skills: 'ghost', tuning: () => ({}) },
+  ghost: {
+    id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, speed: () => skillConfig().ghostSpeed, skills: 'ghost',
+    tuning: () => (skillConfig().ghostClawCooldown == null ? {} : { claw_strike: { cooldown: skillConfig().ghostClawCooldown } }),
+  },
   // Slower, tougher and harder-hitting than a ghost; it hunts and decides like one for now.
   troll: {
-    id: 'troll', name: 'Troll', hp: () => skillConfig().trollHp, speed: () => skillConfig().trollSpeed, skills: 'ghost',
-    tuning: () => ({ claw_strike: { damage: skillConfig().trollClawDamage } }),
+    id: 'troll', name: 'Troll', hp: () => skillConfig().trollHp, speed: () => skillConfig().trollSpeed, get skills() { return skillConfig().trollSkills; },
+    tuning: () => ({ claw_strike: { damage: skillConfig().trollClawDamage, ...(skillConfig().trollClawCooldown == null ? {} : { cooldown: skillConfig().trollClawCooldown }) } }),
   },
 };
 export const KIND_IDS = Object.keys(KINDS);

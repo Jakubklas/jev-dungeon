@@ -33,6 +33,14 @@ export const DEFAULTS = {
   hearts: null, // [x, y] cells of floating hearts: display only, no gameplay yet (null = none)
   coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
+// Settings hook (src/config/runtime.js): the central config's testbed.* values replace the built-in defaults above.
+export function configureTestbed(o) {
+  if (o.testbedSizeW !== undefined || o.testbedSizeH !== undefined) DEFAULTS.size = [o.testbedSizeW ?? DEFAULTS.size[0], o.testbedSizeH ?? DEFAULTS.size[1]];
+  if (o.testbedSeed !== undefined) DEFAULTS.seed = o.testbedSeed;
+  if (o.testbedNumAdversaries !== undefined) DEFAULTS.numAdversaries = o.testbedNumAdversaries;
+  if (o.testbedMinGap !== undefined) DEFAULTS.minAdversaryGap = o.testbedMinGap;
+  if (o.testbedProps !== undefined) DEFAULTS.props = o.testbedProps;
+}
 export const TESTBED_MAX_COINS = 60;
 export const TESTBED_MAX_GHOST_HP = 5;
 // Solid / small props per interior floor cell for the random prop presets.

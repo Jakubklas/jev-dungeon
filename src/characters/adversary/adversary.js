@@ -13,7 +13,7 @@ import {
 } from './brain.js';
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
-import { assignCharacters, profileOf, traitsOf } from './character.js';
+import { assignSpawnCharacters, profileOf, traitsOf } from './character.js';
 import { assignKinds, kindOf } from './kinds.js';
 import { setSkills } from './memory.js';
 import { buildSkillSet } from '../../skills/loadouts.js';
@@ -30,7 +30,7 @@ export let MAX_SEARCH_TICKS = 18; // ticks without sight before code switches th
 // adversary needs 1/ADVERSARY_SPEED = 2 ticks to step back in, so 4 gives the explorer a real head start.
 export let GRACE_TICKS = 4;
 export let ALERT_STEPS = 24; // path steps within which a patrolling adversary hears a spotter's call
-const MIN_SPAWN_STEPS = 20; // path distance from the explorer's start
+export let MIN_SPAWN_STEPS = 20; // path distance from the explorer's start (spawnMinSteps; dungeon.js mirrors it)
 let FLOOR_PER_ADVERSARY = 150; // one adversary per this many floor cells (350 cells: 2, 1700: 11)
 let MAX_ADVERSARIES = 12;
 let PACK_ALERT = true; // a spotter calls in packmates (alertNearby)
@@ -53,6 +53,7 @@ export function configureAdversaries(o) {
   if (o.packAlert !== undefined) PACK_ALERT = o.packAlert;
   if (o.teamSight !== undefined) TEAM_SIGHT = o.teamSight;
   if (o.trollShare !== undefined) TROLL_SHARE = o.trollShare;
+  if (o.spawnMinSteps !== undefined) MIN_SPAWN_STEPS = o.spawnMinSteps;
   if (o.keepHuntingMin !== undefined) setKeepHuntingMin(o.keepHuntingMin);
   if (o.limitedMap !== undefined) LIMITED_ON = Boolean(o.limitedMap);
   if (o.adversaryCharacters !== undefined) {
@@ -268,7 +269,7 @@ export function spawnAdversaries(dungeon) {
     for (const cells of perRoom) if (picked.length < count && cells[round]) picked.push(cells[round]);
   }
   // Kinds and characters come from their own streams and are drawn after every spawn rng call, so dungeons and ghost cells never change.
-  const characters = CHARACTERS_ON ? assignCharacters(dungeon.seed, picked.length, 'mixed') : [];
+  const characters = CHARACTERS_ON ? assignSpawnCharacters(dungeon.seed, picked.length) : [];
   const kinds = assignKinds(dungeon.seed, picked.length, TROLL_SHARE);
   return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i] }));
 }

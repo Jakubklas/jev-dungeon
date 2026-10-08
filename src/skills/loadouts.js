@@ -3,7 +3,7 @@
 import { AttackSkill } from './attack.js';
 import { BlockSkill } from './block.js';
 import { SkillSet } from './skill-set.js';
-import { loadoutTuning } from './config.js';
+import { loadoutTuning, skillConfig } from './config.js';
 
 export { configureSkills, skillConfig } from './config.js'; // settings.js feeds the numbers; resolve.js reads ghostHp / stunTicks
 
@@ -15,9 +15,10 @@ export const LOADOUTS = {
   claw_strike: { kind: 'attack', id: 'claw_strike', name: 'Claw strike', source: 'claw', damage: 1, cooldown: 2, text: 'Strike the cell in front with a claw.' },
 };
 
+// Named sets. explorer and ghost follow the central config (explorerSkills / ghostSkills); `none` is fixed.
 export const DEFAULT_SETS = {
-  explorer: ['sword_strike', 'shield_block'],
-  ghost: ['claw_strike'], // no block (PLAN D2)
+  get explorer() { return skillConfig().explorerSkills; },
+  get ghost() { return skillConfig().ghostSkills; }, // no block by default (PLAN D2)
   none: [],
 };
 

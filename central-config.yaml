@@ -1,0 +1,812 @@
+# central-config.yaml: every tunable of the Jev dungeon, read by all servers (arena, gym, standalone).
+# Edit and save: a running server picks it up on its next step or new game. Live knobs apply at once, the rest from the next game.
+# Delete a key to fall back to its default. A bad value is skipped with a warning in the server log. Secrets stay in ../.env.
+# Layers, lowest first: defaults, this file, instances.<kind>, instances.<kind/name>, the instance's own settings.json (settings page saves).
+
+# Dungeon layout, light, coins and hearts. Developer only.
+world:
+  sightRange: 7 # How far anyone sees along a clear line (explorer and monsters)
+  coins:
+    floorPerCoin: 60 # Floor cells per coin: lower = more coins
+    max: 30 # Coins lying around at the start (0 = none)
+    dropChance: 0.6 # Chance a dispelled monster drops a coin (0-1)
+  hearts:
+    roomsPerHeart: 4 # One heart (restores a life) per this many rooms
+    max: 6 # Cap on hearts per map (0 = none)
+  lightRadius: 7 # Cells each visited cell lights up
+  size:
+    min: 25 # Smallest map side
+    max: 90 # Largest map side
+  roomArea: 290 # Floor cells per room: lower = more, closer rooms
+  rooms:
+    min: 4 # Smallest room side, cells
+    max: 15 # Largest room side, cells
+    minCount: 4 # Fewest rooms a map gets
+  corridors:
+    loopShare: 0.25 # Extra loop corridors as a share of the rooms
+    loopMin: 2 # Fewest loop corridors
+  treasureShare: 0.6 # The portal sits at least this share of the farthest path distance away
+  props:
+    torches:
+      min: 1 # Fewest wall torches per room
+      max: 3 # Most wall torches per room
+      gap: 3 # Preferred spacing between wall items, cells
+    corridorTorches:
+      perRoom: 0.4 # Expected corridor torches per room
+      gap: 5 # Spacing between corridor torches, cells
+    big:
+      minRun: 6 # Wall run needed for a fireplace, arch or gate, cells
+      chance: 0.5 # Chance a long enough room gets a big wall piece
+    clusters:
+      sizeMin: 1 # Smallest solid prop cluster, cells
+      sizeMax: 4 # Largest solid prop cluster, cells
+      perCells: 30 # About one cluster per this many inner room cells
+      max: 3 # Most clusters per room
+      gap: 2 # Cells kept between different clusters
+      tries: 25 # Placement attempts per room
+    minExits: 2 # Floor neighbours each solid prop leaves open
+    forge:
+      roomChance: 0.12 # Chance a big enough room gets a forge
+      minInner: 4 # Room cells inside the edge ring, each way, a forge needs
+      minArea: 20 # Inner room cells a forge needs
+    small:
+      perCells: 25 # About one small prop per this many room cells
+      max: 3 # Most small props per room
+      corridorPerCells: 150 # About one small prop per this many corridor cells
+    kinds:
+      shelf:
+        weight: 3 # How often shelf is picked, relative to its class (0 = never picked at random)
+      crates:
+        weight: 3 # How often crates is picked, relative to its class (0 = never picked at random)
+      storage_chest:
+        weight: 2 # How often storage_chest is picked, relative to its class (0 = never picked at random)
+      fountain:
+        weight: 1 # How often fountain is picked, relative to its class (0 = never picked at random)
+      forge:
+        weight: 1 # How often forge is picked, relative to its class (0 = never picked at random)
+      pots:
+        weight: 3 # How often pots is picked, relative to its class (0 = never picked at random)
+      skull:
+        weight: 2 # How often skull is picked, relative to its class (0 = never picked at random)
+      tools:
+        weight: 2 # How often tools is picked, relative to its class (0 = never picked at random)
+      sword:
+        weight: 1 # How often sword is picked, relative to its class (0 = never picked at random)
+      anvil:
+        weight: 1 # How often anvil is picked, relative to its class (0 = never picked at random)
+      goblet:
+        weight: 1 # How often goblet is picked, relative to its class (0 = never picked at random)
+      fireplace:
+        weight: 3 # How often fireplace is picked, relative to its class (0 = never picked at random)
+      arch:
+        weight: 2 # How often arch is picked, relative to its class (0 = never picked at random)
+      gate:
+        weight: 2 # How often gate is picked, relative to its class (0 = never picked at random)
+      banner:
+        weight: 2 # How often banner is picked, relative to its class (0 = never picked at random)
+
+# The knight: lives and protection after a hit.
+explorer:
+  graceTicks: 4 # Steps of protection after the explorer is hit
+  lives: 2 # Lives the explorer starts with
+  skills: [ sword_strike, shield_block ] # Skills the explorer starts with (at most 4; empty = none)
+  brain:
+    reviewEvery: 8 # Steps between approach reviews
+    approachFailing: 0.5 # approach_working below this switches the approach
+    redecideCooldown: 3 # Least ticks between decisions for a failing tactic
+    rememberSteps: 30 # Steps a remembered sighting lasts
+    skillNear: 10 # A skill is offered when an enemy is within this many cells
+    skillRememberSteps: 10 # A sighting this young still opens the skill gate, steps
+    threatSteps: 2 # A chaser within this many steps offers the block
+    ghostsCanAttack: true # Offer the block skill against attackers
+    holdMax: 5 # Ticks the engage hold waits for an enemy to come
+    holdAdjacentMax: 2 # Ticks beside an enemy without striking before the hold ends
+    pingpongFails: 3 # Back-and-forth moves that make a tactic fail
+    healNear: 12 # A heart this many steps away starts a heal when hurt above half
+    coinNear: 8 # A new coin pile this close can start a coin decision, steps
+    coinEvery: 10 # Least steps between coin decisions
+    coinSwitch: 0.5 # Probability the coin pick needs to switch approach
+    directiveDone: 0.5 # directive_done above this ends the player directive
+    directiveAskEvery: 5 # Steps between directive_done questions
+    leaveNow: 0.5 # leave_now above this switches to go_to_exit
+  perception:
+    sightingNear: 8 # A move within this many steps of a sighting counts as toward it
+    zoneSteps: 6 # Avoid-zone radius around an older sighting, steps
+    zoneNearSteps: 10 # Avoid-zone radius around a fresh sighting, steps
+    zoneFresh: 10 # A sighting younger than this is fresh, steps
+    zoneRecent: 15 # A sighting younger than this still shapes the avoid zone, steps
+    sectorSlack: 2 # Extra route length that still counts as behind a sighting
+    coinNear: 8 # A pile this close gets a toward fact on moves that close in, steps
+    factSightings: 3 # Most recent sightings that get path facts
+    surveyReach: 12 # Window for the unexplored-by-direction survey, cells
+    heartRunGap: 2 # A run to a heart keeps this many steps from every enemy
+    coinPiles: 3 # Nearest coin piles listed to Jev
+    defaultMinGap: 3 # Minimum enemy gap when no mood is set
+  encounter:
+    maxGap: 6 # Route survey looks for closest approaches up to this gap
+    hideMaxSteps: 10 # A hiding cell farther than this is not ducking, steps
+    areaCap: 600 # Flood-fill cap for the open area around the explorer, cells
+    pastCos: 0.5 # Cosine limit for a slip-past goal bearing
+    escapeFrontier: 20 # Escape-spot score for the edge of the known map
+    escapeThroughExit: 12 # Escape-spot score for cells beyond a room exit
+    escapeKeepGap: 2 # A kept escape goal stays good while a route keeps this gap
+    escapeTravel: 4 # Least steps to a new escape spot
+    holdGap: 2 # Steps the engage hold waits from an enemy
+  confidence:
+    history:
+      start: 50 # Neutral history score that regen returns to
+      hit: -7 # History change when the explorer is hit
+      struck: 5 # History change when a sword strike lands
+      dispelled: 8 # History change when an enemy is dispelled
+      blocked: 3 # History change when the shield stops a claw
+      evaded: 2 # History change when a chase is escaped
+      pressed: -1 # History change per tick under a chasing enemy
+      pressedMax: 8 # Most pressure loss per encounter
+      blockCeiling: 65 # A block lifts confidence only up to this
+      evadeCeiling: 65 # An escape lifts confidence only up to this
+    regen:
+      rate: 0.25 # Points per tick that history moves back toward neutral
+      wait: 10 # Quiet ticks before regen starts
+    tiers:
+      lowMax: 35 # Confidence up to this is the low tier
+      highMin: 70 # Confidence from this is the high tier
+      hysteresis: 5 # A tier is kept this far past its edge
+    panic:
+      enter: 20 # Panic starts below this confidence
+      exit: 25 # Panic ends at or above this confidence
+    cap:
+      lastLife: 45 # Highest confidence on the last life
+      floor: 0.3 # Share of the cap kept at one life of many
+      pressedRange: 2 # Steps within which a chaser presses, for replay
+    capability:
+      perExtraEnemy: 0.35 # Expected lives lost per extra enemy, per claw point
+      histSpan: 30 # History shifts capability by at most this; sightings fade over it
+      max: 70 # Capability never exceeds this
+      noSwordMax: 20 # Capability without an attack skill never exceeds this
+      hpBase: 0.75 # Enemy weight base
+      hpSlope: 0.125 # Enemy weight added per strike needed
+      hpStrikesMax: 5 # Strikes counted per enemy at most
+    bands:
+      dominant: 80 # Confidence from this reads dominant
+      sure: 65 # Confidence from this reads sure
+      even: 40 # Confidence from this reads even
+      unsure: 30 # Confidence from this reads unsure (below is shaken)
+  moods:
+    panic:
+      minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 8 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: Entered by code when confidence collapses; never offered as a choice.
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Flees at any cost: only the way out matters."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Panic: get away at any cost. Only a clear path matters: ignore coins, claws and fights, and keep running from every enemy. Strike only an enemy that blocks the only way."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Panic: get away at any cost; nothing else matters."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike only an enemy that blocks your only way; otherwise keep running.
+    wary:
+      minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 5 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: gets you out alive. Risk: gives up coins and progress. Offered when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Gets away first: runs, hides, never moves toward an enemy."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Wary: getting away comes first. Never move toward an enemy; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Wary: never move toward an enemy; grow the distance, keep exits open, avoid dead ends."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: safety (wary)
+    guarded:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: keeps exploring while staying clear of trouble. Risk: misses loot and fights. Pick when `self.confidence` is low but you are not running: an enemy is known and fighting it looks bad, or nothing else fits."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Explores away from enemies; no detours, no fights."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Guarded: explore, but away from known enemies. Skip loot that lies near one, avoid fights, keep at least 3 steps from enemies and favour well-connected ground over dead ends."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Guarded: explore away from enemies; skip loot and fights."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: caution while exploring (guarded)
+    cautious:
+      minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: avoids needless risk while still exploring. Risk: leaves the initiative to the enemy. Pick when an enemy is known and you would rather slip past it than fight, or when you are cornered."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: Keeps its distance and slips past; fights only a hurt monster or when cornered.
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Cautious: keep your distance. Slip past enemies and explore with a cushion of at least 4 steps; fight only a hurt monster or when cornered."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Cautious: keep your distance; slip past enemies rather than meet them."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: distance (cautious)
+    steady:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when enemies are in sight and you would rather keep to the plan than fight them."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Sticks to the plan: explores, coins on the way, fights a single or hurt monster."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Steady: follow the plan; favour well-connected ground over dead ends."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the plan (steady)
+    greedy:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 2 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no enemy in sight and full lives or hit protection."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: Goes after coins and unexplored rooms; detours are fine.
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from enemies."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Greedy: prefer coins, then the move revealing the most new cells; detours are fine."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: "Strike an adjacent enemy whenever the sword is ready, then carry on looting."
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: loot (greedy)
+    bold:
+      minGap: 2 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and you want the fight: a single monster, a hurt one, or several."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Takes fights it can win, single or several."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Bold: take the fight. Engage enemies you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Bold: take the fight; moving toward an enemy is fine."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: "Strike an adjacent enemy whenever the sword is ready, and step up to a hurt one."
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the fight (bold)
+    fearless:
+      minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+      # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
+      when: "Upside: the fastest way to the cleared win and to the coins enemies drop. Risk: claws cost lives. Pick when the sword is ready and nothing says to hold back: dispelling them is your aim."
+      # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
+      note: "Hunts enemies down, even several at once."
+      # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
+      priority: "Fearless: hunt enemies down. Close in on the nearest one and strike whenever the sword is ready; being outnumbered does not stop you, dispelling them is your aim."
+      # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
+      movePriority: "Fearless: hunt enemies down; close in on the nearest."
+      # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
+      skillPriority: Strike an adjacent enemy whenever the sword is ready and keep closing in on the next.
+      # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
+      gloss: the hunt (fearless)
+    tiers:
+      low: [ wary, guarded ] # Moods the low tier offers, in question order (panic is never offered)
+      mid: [ cautious, steady, greedy, bold ] # Moods the mid tier offers, in question order (panic is never offered)
+      high: [ bold, fearless ] # Moods the high tier offers, in question order (panic is never offered)
+  prompts:
+    triggers:
+      # Why the sentiment is asked: start (the built-in wording; edit to change it, delete to restore)
+      start: The explorer is about to start exploring the dark dungeon.
+      # Why the sentiment is asked: encounter (the built-in wording; edit to change it, delete to restore)
+      encounter: "An enemy has just come into sight (or started chasing): the explorer must choose how to deal with it."
+      # Why the sentiment is asked: tactic_failed (the built-in wording; edit to change it, delete to restore)
+      tactic_failed: "The current tactic stopped working: its target is gone or the enemy got closer than the minimum gap."
+      # Why the sentiment is asked: chase_over (the built-in wording; edit to change it, delete to restore)
+      chase_over: "No enemy has been in sight for a while: the encounter is over and exploring resumes."
+      # Why the sentiment is asked: exit (the built-in wording; edit to change it, delete to restore)
+      exit: The portal (the way out) has just been seen.
+      # Why the sentiment is asked: coins (the built-in wording; edit to change it, delete to restore)
+      coins: Coins have just come into view nearby.
+      # Why the sentiment is asked: dispelled (the built-in wording; edit to change it, delete to restore)
+      dispelled: The explorer has just dispelled an enemy; others may remain.
+      # Why the sentiment is asked: review (the built-in wording; edit to change it, delete to restore)
+      review: The explorer just dropped an exploration approach that was not working and switched to another.
+      # Why the sentiment is asked: hit (the built-in wording; edit to change it, delete to restore)
+      hit: "The explorer just lost a life to an enemy: rethink whether to keep at it."
+      # Why the sentiment is asked: confidence (the built-in wording; edit to change it, delete to restore)
+      confidence: "Your confidence changed enough that your mood no longer fits: choose again."
+      # Why the sentiment is asked: directive (the built-in wording; edit to change it, delete to restore)
+      directive: "The player has just given the explorer an instruction (`directive`): it outranks every mood's `when`."
+    tacticHints:
+      # How the run_away tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      run_away: Keep the distance growing; avoid known dead ends.
+      # How the slip_past tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      slip_past: "Moving toward or alongside it is fine while the gap holds: follow the route past it."
+      # How the engage tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      engage: "Go to the target: 2 steps off a hunting enemy, so it steps next to you and you strike first; next to one you stunned."
+      # How the hide tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      hide: Reach the target out of its sight fast; do not step back into its line of sight.
+      # How the race_to_exit tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      race_to_exit: Head straight for the portal; getting there first matters most.
+      # How the carry_on tactic should shape the move (the built-in wording; edit to change it, delete to restore)
+      carry_on: "It has not seen you: keep exploring, out of its line of sight."
+    # The one sentence that says what self.confidence means (the built-in wording; edit to change it, delete to restore)
+    confidenceSentence: " `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered."
+
+# Sword, shield and the stun they cause.
+skills:
+  sword_strike:
+    damage: 1 # Hit points a sword strike takes
+    cooldown: 1 # Steps before the sword is ready again
+  shield_block:
+    effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
+    cooldown: 2 # Steps before the shield can be raised again
+  stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
+  minProbability: 0.5 # Jev must be at least this sure to use a skill
+  questionText:
+    default:
+      # Skill question lead for monsters (the built-in wording; edit to change it, delete to restore)
+      question: "Besides the move, use at most one skill this step. Choose `none` unless a skill clearly helps right now."
+      # Skill question "none" option for monsters (the built-in wording; edit to change it, delete to restore)
+      none: Use no skill this step (the usual choice).
+    neutral:
+      # Skill question lead for the explorer (the built-in wording; edit to change it, delete to restore)
+      question: "Use at most one skill this step, besides the move."
+      # Skill question "none" option for the explorer (the built-in wording; edit to change it, delete to restore)
+      none: No skill this step.
+
+# Ghosts and trolls: speed, packs, spawn, stats, characters.
+monsters:
+  global:
+    speed: 0.6 # Monster speed as a share of the explorer (1 = same speed)
+    chaseRange: 7 # Cells within which a seen explorer starts a hunt
+    maxSearchTicks: 18 # Ticks without sight before a monster gives up
+    keepHuntingMin: 0.5 # Jev keep-hunting answer below this ends the hunt (0-1)
+    limitedMap: false # true = monsters only know their home zone and what they saw (needs adversaryCharacters)
+    clawCooldown: 2 # Steps before a monster can claw again
+  characters:
+    enabled: false # true = each monster gets a personality (see characters); false = all standard
+    traits:
+      chaseRange: [ 5, 7, 7 ] # Cells within which a seen explorer starts a hunt (levels 1/2/3)
+      restTicks: [ 6, 3, 0 ] # Ticks a monster rests after giving up (levels 1/2/3)
+      maxSearchTicks: [ 10, 18, 32 ] # Ticks without sight before it gives up (levels 1/2/3)
+      keepHuntingMin: [ 0.65, 0.5, 0.3 ] # Keep-hunting answer below this ends the hunt (levels 1/2/3)
+      sweepRadius: [ 6, 10, 14 ] # How far a sweep search reaches, cells (levels 1/2/3)
+      cutMax: [ 12, 24, 36 ] # Longest cut-off route it will plan, steps (levels 1/2/3)
+      alertSteps: [ 8, 24, 40 ] # Path steps within which it hears a call (levels 1/2/3)
+      sightingsKept: [ 1, 3, 5 ] # Sightings of the explorer it remembers (levels 1/2/3)
+      sightingTtl: [ 12, 30, 60 ] # Ticks before a sighting is forgotten (levels 1/2/3)
+      landmarksCap: [ 3, 5, 8 ] # Landmarks it remembers (levels 1/2/3)
+      landmarkTtl: [ 40, 120, 300 ] # Ticks before a landmark is forgotten (levels 1/2/3)
+      eventTtl: [ 40, 120, 300 ] # Ticks before a memory event is forgotten (levels 1/2/3)
+      recentMoves: [ 4, 6, 6 ] # Own recent moves it remembers (levels 1/2/3)
+      recentCells: [ 6, 8, 8 ] # Own recent cells it remembers (levels 1/2/3)
+      seenTtl: [ 40, 120, 300 ] # Limited map: ticks before a seen cell is forgotten (levels 1/2/3)
+      seenCap: [ 120, 300, 600 ] # Limited map: most seen cells it keeps (levels 1/2/3)
+      keepDistance: [ 0, 0, 2 ] # Cells kept from an explorer whose sword is ready (0 = off) (levels 1/2/3)
+      homeRadius: [ 14, 24, null ] # Home zone radius in path steps (levels 1/2/3; null = the whole map)
+    lonerHearing: 10 # A loner answers a call only when the explorer is this close, steps
+    lines:
+      # How a monster closes in, by aggression level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      aggression: [ Close in only when it is near; keep other moves in front of you., Close the distance while keeping its escape routes cut off., "Go straight at it: close the path distance first, cut-off second." ]
+      # When a monster strikes, by aggression level 1/2/3 (level 2 is empty) (the built-in wording; edit to change it, delete to restore)
+      strike: [ Strike only when cornered., "", Strike whenever the explorer is adjacent and the claw is ready. ]
+      # How a monster works with the pack, by pack level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      pack: [ This is your prey; do not wait for others., Close in together with your packmates., "Coordinate: take the route no teammate covers." ]
+      # How far ahead a monster plans, by horizon level 1/2/3 (level 2 is empty) (the built-in wording; edit to change it, delete to restore)
+      horizon: [ Think about the next few steps only., "", Predict where it will go and plan ahead. ]
+    words:
+      # Plain words for the aggression trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      aggression: [ hesitant, steady, fierce ]
+      # Plain words for the persistence trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      persistence: [ gives up fast, standard, relentless ]
+      # Plain words for the horizon trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      horizon: [ short-term, standard, long-term planner ]
+      # Plain words for the roaming trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      roaming: [ stays home, ranges, roams everywhere ]
+      # Plain words for the pack trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      pack: [ loner, team player, pack hunter ]
+    mix: mixed # 'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }
+    presets:
+      aggressive:
+        aggression: 3 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Charges straight at the explorer and does not plan far ahead. # One line Jev reads as its personality
+      pursuer:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 3 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 2 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Never lets go of a trail until it is stone cold. # One line Jev reads as its personality
+      ambusher:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 3 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Predicts where the explorer will pass and waits at the chokepoint. # One line Jev reads as its personality
+      patient_hunter:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 3 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 3 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 3 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Methodical; keeps long memories and works with the pack. # One line Jev reads as its personality
+      short_sighted:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: "Searches close, forgets quickly, gives up soon." # One line Jev reads as its personality
+      timid:
+        aggression: 1 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 1 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: "Only chases what is right next to it, quits quickly, never calls for help." # One line Jev reads as its personality
+      territorial:
+        aggression: 3 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 2 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 1 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Guards its own area fiercely and will not leave it far behind. # One line Jev reads as its personality
+      rover:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 3 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Wanders widely; a hunt is a detour. # One line Jev reads as its personality
+  pack:
+    alert: true # A spotter calls nearby patrolling monsters into the hunt
+    alertSteps: 24 # Path steps within which a call is heard
+    teamSight: true # Hunters see the explorer through packmates' eyes
+    heardSteps: 6 # Path steps around a called cell that a monster copies from the caller's map
+  spawn:
+    floorPerMonster: 150 # Floor cells per monster: lower = more monsters
+    max: 12 # Cap on monsters per map (0 = none)
+    minSteps: 20 # Path steps a monster spawns away from the explorer start
+  kinds:
+    ghost:
+      clawDamage: 1 # Lives a ghost claw strike takes.
+      hp: 2 # Hits a ghost takes before it is dispelled.
+      skills: [ claw_strike ] # Skills a ghost has (at most 4; empty = none)
+      speed: 1 # Share of the global monster speed (1 = full)
+      clawCooldown: null # Ghost claw cooldown, steps (null = the global clawCooldown)
+      weight: 0.75 # Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls)
+    troll:
+      hp: 4 # Hits a troll takes before it is dispelled (a ghost has Ghost hit points).
+      clawDamage: 2 # Lives a troll claw strike takes.
+      speed: 0.65 # A troll moves at this share of the ghost speed.
+      skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
+      clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
+      weight: 0.25 # Spawn weight, relative to the other kinds
+  brain:
+    pingpongs: 3 # Back-and-forth steps while searching before a monster re-picks its search approach
+    skillNear: 10 # A monster asks about a skill when the explorer is within this many cells
+  perception:
+    sweepRadius: 10 # Default sweep radius around the last sighting, steps (a character may override)
+    cutMin: 3 # Nearest cut-off candidate from the last sighting, steps
+    cutMax: 24 # Farthest cut-off candidate from the last sighting, steps (a character may override)
+    surroundReach: 24 # Path steps the surroundings facts look at
+    coverRadius: 12 # Explorer path steps around a monster that coverage looks at
+  memory:
+    sightingSpacing: 3 # A new sighting is stored only after the explorer moved this far
+  prompts:
+    # A monster's objective text (the built-in wording; edit to change it, delete to restore)
+    objective: Catch the explorer before it finds the treasure.
+    # What a monster's memory says while its brain is off (the built-in wording; edit to change it, delete to restore)
+    offText: "Brain off: patrolling the dungeon by code."
+
+# Directives the player may whisper to the explorer.
+player:
+  enabled: true # Player may whisper directives to the explorer
+  maxChars: 140 # Longest directive in characters
+  steps: 20 # Steps a directive stays live
+  cooldownS: 10 # Seconds between two directives
+
+# Memory and prompt-size limits.
+limits:
+  explorer:
+    approach: 240 # Longest approach text
+    triedApproaches: 5 # Tried approaches remembered
+    thought: 60 # Longest thought bubble text
+    sentimentHistory: 5 # Mood picks remembered
+    events: 6 # Events remembered (oldest dropped)
+    eventText: 200 # Longest event text
+    landmarks: 8 # Landmarks remembered (the portal is never evicted)
+    landmarkNote: 120 # Longest landmark note
+    recentMoves: 6 # Recent moves remembered
+    skills: 4 # Skills mirrored into memory
+    skillText: 120 # Longest skill text
+    directive: 140 # Longest player directive (must hold the directive length setting)
+    recentCells: 8 # Recent cells remembered (moves + 2)
+  monster:
+    objective: 200 # Longest objective text
+    approach: 240 # Longest approach text
+    triedApproaches: 5 # Tried search approaches remembered
+    events: 5 # Events remembered
+    event: 200 # Longest event text
+    reason: 200 # Longest reason text
+    trend: 160 # Longest trend text
+    sightings: 5 # Sightings remembered
+    landmarks: 8 # Landmarks remembered
+    landmarkNote: 120 # Longest landmark note
+    moves: 6 # Recent moves remembered
+    cells: 8 # Recent cells remembered
+    skills: 4 # Skills mirrored into memory
+    skillText: 120 # Longest skill text
+  skillFactMax: 160 # Longest skill option text sent to Jev
+  priorityLine: 300 # Longest character priority line sent to Jev
+
+# The Jev API client: hedging, retries, timeout, model.
+jev:
+  hedgeCopies: 2 # Copies of a request that may be in flight (1 = no hedging)
+  hedgeDelayMs: 800 # Wait for an answer before a further copy goes out, ms
+  retries: 3 # Retries per copy on a retryable status or a network error
+  timeoutMs: 20000 # Timeout per attempt, ms
+  retryStatus: [ 429, 502, 503, 504, 529 ] # HTTP statuses that are retried
+  model: jev-latest # Model name sent with every request (endpoint and API key stay in code and ../.env)
+
+# Browser timings and thought-bubble lines (served at api/ui).
+ui:
+  camMs: 120 # Camera easing time constant, ms
+  logMax: 12 # Event log length, lines
+  fadeMs: 300 # Time for a newly lit cell to reach its brightness, ms
+  tweenMs: 150 # Entity move tween, ms
+  bobMs: 1600 # Ghost hover period, ms
+  animMs: 260 # Idle animation frame time, ms
+  walkMs: 620 # A troll's stride after each step, ms
+  strikeMs: 800 # Strike overlay duration, ms
+  slashMs: 340 # Slash crescent duration, ms
+  revealAlpha: 0.42 # Opacity of cells and monsters shown by Reveal map
+  bubbleIn: 200 # Thought bubble fade-in, ms
+  bubbleOut: 400 # Thought bubble fade-out, ms
+  blinkMs: 120 # Knight blink half-period while hit-protected, ms
+  coinGlowMs: 700 # Coin pickup glow, ms
+  thoughts:
+    approach:
+      # Bubble lines for the nearest_frontier approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      nearest_frontier:
+        - Let's check the closest dark edge.
+        - Something lurks in that dark corner.
+        - What is just past the light?
+        - Closest shadow first.
+      # Bubble lines for the largest_unexplored approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      largest_unexplored:
+        - That big dark patch looks promising.
+        - So much unexplored dark over there!
+        - Adventure lies in that gloom.
+        - The biggest mystery is that way.
+      # Bubble lines for the far_side approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      far_side:
+        - Let's try the far side of this place.
+        - "Somewhere far from here, then."
+        - I have not been over there yet.
+        - Time for fresh ground.
+      # Bubble lines for the collect_coins approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      collect_coins:
+        - Coins! That's worth a detour!
+        - Shiny! Mine!
+        - I can hear the coins calling.
+        - "Gold, gold, gold!"
+      # Bubble lines for the heal approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      heal:
+        - A heart! I need that.
+        - That heart will patch me up.
+        - Hearts mend knights.
+        - "One more life, please."
+      # Bubble lines for the go_to_exit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      go_to_exit:
+        - The portal! Time to leave.
+        - Home stretch. To the portal!
+        - Loot secured. Out we go.
+        - Out of this place at last.
+      # Bubble lines for the slip_past approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      slip_past:
+        - I can slip past!
+        - "Quiet feet, quiet feet..."
+        - Tiptoe around it.
+        - "Sneaking by, nothing to see."
+      # Bubble lines for the run_away approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      run_away:
+        - Run away!
+        - Nope nope nope!
+        - Time to go. Now!
+        - "Too many claws, bye!"
+      # Bubble lines for the engage approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      engage:
+        - Have at you!
+        - Charge!!
+        - Take this!!
+        - Taste my sword!!
+      # Bubble lines for the hide approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      hide:
+        - Duck out of sight.
+        - "Hush, hide, wait..."
+        - Into the shadows!
+        - Nobody here but me.
+      # Bubble lines for the race_to_exit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      race_to_exit:
+        - Go for the portal!
+        - Race you to the exit!
+        - "Faster, faster, portal!"
+        - Catch me if you can!
+      # Bubble lines for the carry_on approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      carry_on:
+        - "It hasn't seen me, keep going."
+        - Still unseen. Good.
+        - "Eyes elsewhere, ghost..."
+        - "Stay calm, carry on."
+      # Bubble lines for the direct_pursuit approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      direct_pursuit:
+        - I see you!
+        - Get back here!
+        - You cannot hide!
+        - Got you in my sights!
+      # Bubble lines for the cut_off approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      cut_off:
+        - You will come this way.
+        - I will block your path!
+        - Cutting you off!
+        - Wait for it...
+      # Bubble lines for the sweep_last_seen approach (explorer and monsters) (the built-in wording; edit to change it, delete to restore)
+      sweep_last_seen:
+        - Where did you go?
+        - It was right here...
+        - "Come out, come out!"
+        - Just checking the corners.
+    mood:
+      # Bubble lines for the explorer in the panic mood (the built-in wording; edit to change it, delete to restore)
+      panic:
+        - Out! Out! Out!
+        - Just get away from here!
+        - Nothing matters but the way out!
+      # Bubble lines for the explorer in the wary mood (the built-in wording; edit to change it, delete to restore)
+      wary:
+        - Something's wrong. Keep my distance.
+        - I don't like this. Back off.
+        - "Find cover first, think later."
+      # Bubble lines for the explorer in the guarded mood (the built-in wording; edit to change it, delete to restore)
+      guarded:
+        - "Stay sharp, keep moving."
+        - "Eyes open, away from trouble."
+        - No detours. Careful progress.
+      # Bubble lines for the explorer in the cautious mood (the built-in wording; edit to change it, delete to restore)
+      cautious:
+        - "Slow down, check the corners."
+        - Stay clear and slip past.
+        - Fight only if I'm cornered.
+      # Bubble lines for the explorer in the steady mood (the built-in wording; edit to change it, delete to restore)
+      steady:
+        - Stick to the plan.
+        - One room at a time.
+        - "If one shows up, I can handle it."
+      # Bubble lines for the explorer in the greedy mood (the built-in wording; edit to change it, delete to restore)
+      greedy:
+        - I smell coins nearby.
+        - Worth a detour.
+        - Let's see what else is in here.
+      # Bubble lines for the explorer in the bold mood (the built-in wording; edit to change it, delete to restore)
+      bold:
+        - Come at me.
+        - I can take this one.
+        - "Press on, no backing down."
+      # Bubble lines for the explorer in the fearless mood (the built-in wording; edit to change it, delete to restore)
+      fearless:
+        - Bring them all.
+        - I'm cutting through.
+        - Nothing here stops me.
+    troll:
+      # Troll bubble lines for direct_pursuit (the built-in wording; edit to change it, delete to restore)
+      direct_pursuit:
+        - ARRRGGGH! SMASH!
+        - MEAT! GRAAAAH!
+        - RRRAAAGH! I WILL EAT YOUR FACE!
+        - GRRRRR... CRUSH! CRUSH! CRUSH!
+        - "AAARGH! COME HERE, SNACK!"
+        - BLOOD! BLOOD! BLOOOOD!
+        - "HRAAAGH! I SEE YOU, TINY KNIGHT!"
+        - GRAAAH! YOUR BONES ARE MY BREAKFAST!
+      # Troll bubble lines for cut_off (the built-in wording; edit to change it, delete to restore)
+      cut_off:
+        - "GRRR... NOWHERE TO RUN, MEAT!"
+        - HRAAH! I WAIT. THEN I STOMP.
+        - "ARRGH! THIS WAY, THEN SPLAT!"
+        - GRRRNH... AMBUSH. THEN MURDER.
+        - HEH-HEH-AARGH! TRAP FOR TINY KNIGHT!
+      # Troll bubble lines for sweep_last_seen (the built-in wording; edit to change it, delete to restore)
+      sweep_last_seen:
+        - ARRRGH! WHERE IS MY SNACK?!
+        - GRAAAH! COME OUT AND DIE!
+        - HRRRN... SNIFF... I SMELL BLOOD...
+        - RAAAGH! I WILL TEAR THE WALLS DOWN!
+        - GRRR! HIDING WON'T SAVE YOUR SKULL!
+        - AAARGH! WHERE DID THE CRUNCHY ONE GO?!
+      # Troll bubble lines for struck (the built-in wording; edit to change it, delete to restore)
+      struck:
+        - AAARGH! MY FACE!
+        - GRAAAH! YOU DIE FOR THAT!
+        - OWWRGH! I WILL EAT YOUR SWORD!
+        - HRAAGH! NOW I AM ANGRY!
+        - ARRRGH! BLOOD FOR BLOOD!
+      # Troll bubble lines for hit (the built-in wording; edit to change it, delete to restore)
+      hit:
+        - HAAARGH! SPLAT!
+        - GRAAAH! TASTES LIKE VICTORY!
+        - RAAAGH! BLEED FOR ME!
+        - AHAAARGH! ONE CLAW CLOSER TO DEAD!
+        - HRAAH! CRUNCH!
+      # Troll bubble lines for blocked (the built-in wording; edit to change it, delete to restore)
+      blocked:
+        - GRRAAAH! CHEAP SHIELD!
+        - ARRGH! I WILL SNAP THAT TOY!
+        - "HRRRN! HIDING BEHIND TIN, COWARD!"
+      # Troll bubble lines for bump (the built-in wording; edit to change it, delete to restore)
+      bump:
+        - "OOF-AARGH! OUT OF MY WAY, MEAT!"
+        - GRRR! DID YOU JUST TOUCH ME?!
+        - HRAAH! I WILL BITE YOUR HEAD OFF!
+      # Troll bubble lines for alerted (the built-in wording; edit to change it, delete to restore)
+      alerted:
+        - ARRRGH! I HEAR THE KILLING CALL!
+        - RAAAAH! DINNER IS SERVED!
+        - GRAAAH! COMING TO SMASH!
+      # Troll bubble lines for gave_up (the built-in wording; edit to change it, delete to restore)
+      gave_up:
+        - GRRRR... I WILL BE BACK. WITH AN AXE.
+        - ARRGH... NEXT TIME I CRUSH YOU.
+        - HRRRN... COWARD. I WILL FIND YOU.
+      # Troll bubble lines for caught (the built-in wording; edit to change it, delete to restore)
+      caught:
+        - AAAAAARGH! ROOOOAR! DEAD! DEAD! DEAD!
+
+# Defaults of the small test arenas (gyms).
+testbed:
+  size:
+    w: 11 # Default arena width, floor cells
+    h: 11 # Default arena height, floor cells
+  seed: 1 # Default arena seed
+  numAdversaries: 1 # Default monsters per arena
+  minAdversaryGap: 4 # Default least path distance of a random monster from the start
+  props: none # Default prop preset: none, few or many
+
+# Per-instance overrides, same shape as everything above. Names: arena, gym (every instance of that kind),
+# arena/main, gym/main, arena/a1, ... Example:  arena/main: { explorer: { lives: 4 } }
+instances:
+  arena/main:
+    monsters:
+      global:
+        speed: 1
+        clawCooldown: 0
+      spawn:
+        max: 8
+    player:
+      cooldownS: 100
+    skills:
+      shield_block:
+        effectiveness: 0.45
+        cooldown: 3
+      stunTicks: 0
+    world:
+      coins:
+        dropChance: 0.5
+    explorer:
+      lives: 4
+  gym/main:
+    monsters:
+      global:
+        speed: 1
+      spawn:
+        floorPerMonster: 70
+    world:
+      size:
+        min: 37

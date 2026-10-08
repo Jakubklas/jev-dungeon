@@ -1,13 +1,15 @@
 // Browser side: draws the dungeon and runs the step loop. All game logic and every
 // Jev call live on the server; this file only asks for one step at a time.
+import { THOUGHTS, MOOD_THOUGHTS, TROLL_THOUGHTS } from './thoughts.js';
+
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 
-const CAM_MS = 120;       // camera easing time constant
+let CAM_MS = 120;       // camera easing time constant
 const MINI_MAX = 180;     // longest minimap side in CSS pixels
-const LOG_MAX = 12;       // event log length
-const FADE_MS = 300;      // time for a cell to reach its new brightness
+let LOG_MAX = 12;       // event log length
+let FADE_MS = 300;      // time for a cell to reach its new brightness
 const DIR_ORDER = ['up', 'down', 'left', 'right'];
 const EXPLORER_MOVES = [...DIR_ORDER, 'stay']; // the explorer can also stand still
 
@@ -74,15 +76,15 @@ const BANDS = 8;                  // light bands for known cells
 const FOG_BANDS = 5;              // glow bands for unknown cells (distance 1..5 to known)
 const FOG_PAD = FOG_BANDS;        // the glow may spill this far past the map edge
 const FLOOR_VARIANTS = 6;
-const TWEEN_MS = 150;             // entity move tween
-const BOB_PX = 2, BOB_MS = 1600;  // ghost hover
-const ANIM_MS = 260;              // idle animation frame time
-const WALK_MS = 620;              // a troll's stride after each step: feet cycle through the walk frames (it steps slowly)
-const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
+let TWEEN_MS = 150;             // entity move tween
+let BOB_PX = 2, BOB_MS = 1600;  // ghost hover
+let ANIM_MS = 260;              // idle animation frame time
+let WALK_MS = 620;              // a troll's stride after each step: feet cycle through the walk frames (it steps slowly)
+let STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const SHIELD_SLASH_MS = 260;      // the parry crescent: 6 frames like the sword's slash, a little quicker
-const SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
+let SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
@@ -90,7 +92,7 @@ const SLASH_COLORS = {
   shield: ['#c98a14', '#ffc633', '#fff0a8', '#ffffff'], // the block spark: the coin gold ramp (the shield's face), rim to core
 };
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
-const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
+let REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
 
 // Known stone ramps from cold navy (light 0.2, the edge of what Jev has seen) through
 // dusky stone to warm torchlit amber (light 1.0, where Jev walked). Three stops each.
@@ -1191,7 +1193,7 @@ function drawEntity(en, now, cx, cy) {
 // parked approach counts as a new thought. A bubble shows only while its character is drawn
 // (fog), dimmed like the character under Reveal map; its timer runs on regardless.
 
-const BUBBLE_IN = 200, BUBBLE_OUT = 400;
+let BUBBLE_IN = 200, BUBBLE_OUT = 400;
 const bubbleLayer = $('bubbles');
 const heads = new Map();   // id -> { x, y, alpha } in buf px, refreshed every frame by drawEntity
 const thoughts = new Map(); // id -> { key, text, t0, ms, el }
@@ -1225,39 +1227,33 @@ function think(id, key, text, kind, tag = null) {
   }
 }
 
+// A troll roars on an event (struck, hit, ...). Shows its own text without touching the approach key, so the
+// approach line does not come back at the next view.
+function shout(id, type) {
+  const pool = TROLL_THOUGHTS[type];
+  if (!pool || game?.adversaries?.find((a) => a.id === id)?.kind !== 'troll') return;
+  let t = thoughts.get(id);
+  if (!t) {
+    t = { key: null, tag: null, el: el('div', '', 'bubble adversary') };
+    bubbleLayer.append(t.el);
+    thoughts.set(id, t);
+  }
+  const text = thoughtFor(id, type, null, null, 'troll');
+  t.text = text;
+  t.t0 = performance.now();
+  t.ms = bubbleMs(text);
+  t.el.replaceChildren(text);
+  delete t.el.dataset.sentiment;
+}
+
 // Short first-person lines per approach id (explorer and ghosts). One is picked at random each time a
 // bubble shows, never the one the same character showed last. Visual only: no server state, no rng().
-const THOUGHTS = {
-  nearest_frontier: ["Let's check the closest dark edge.", 'Something lurks in that dark corner.', 'What is just past the light?', 'Closest shadow first.'],
-  largest_unexplored: ['That big dark patch looks promising.', 'So much unexplored dark over there!', 'Adventure lies in that gloom.', 'The biggest mystery is that way.'],
-  far_side: ["Let's try the far side of this place.", 'Somewhere far from here, then.', 'I have not been over there yet.', 'Time for fresh ground.'],
-  collect_coins: ["Coins! That's worth a detour!", 'Shiny! Mine!', 'I can hear the coins calling.', 'Gold, gold, gold!'],
-  heal: ['A heart! I need that.', 'That heart will patch me up.', 'Hearts mend knights.', 'One more life, please.'],
-  go_to_exit: ['The portal! Time to leave.', 'Home stretch. To the portal!', 'Loot secured. Out we go.', 'Out of this place at last.'],
-  slip_past: ['I can slip past!', 'Quiet feet, quiet feet...', 'Tiptoe around it.', 'Sneaking by, nothing to see.'],
-  run_away: ['Run away!', 'Nope nope nope!', 'Time to go. Now!', 'Too many claws, bye!'],
-  engage: ['Have at you!', 'Charge!!', 'Take this!!', 'Taste my sword!!'],
-  hide: ['Duck out of sight.', 'Hush, hide, wait...', 'Into the shadows!', 'Nobody here but me.'],
-  race_to_exit: ['Go for the portal!', 'Race you to the exit!', 'Faster, faster, portal!', 'Catch me if you can!'],
-  carry_on: ["It hasn't seen me, keep going.", 'Still unseen. Good.', 'Eyes elsewhere, ghost...', 'Stay calm, carry on.'],
-  direct_pursuit: ['I see you!', 'Get back here!', 'You cannot hide!', 'Got you in my sights!'],
-  cut_off: ['You will come this way.', 'I will block your path!', 'Cutting you off!', 'Wait for it...'],
-  sweep_last_seen: ['Where did you go?', 'It was right here...', 'Come out, come out!', 'Just checking the corners.'],
-};
 // Mood lines for the explorer (PLAN-moods): shown when the approach changes, picked at random like THOUGHTS.
-const MOOD_THOUGHTS = {
-  panic: ['Out! Out! Out!', 'Just get away from here!', 'Nothing matters but the way out!'],
-  wary: ["Something's wrong. Keep my distance.", "I don't like this. Back off.", 'Find cover first, think later.'],
-  guarded: ['Stay sharp, keep moving.', 'Eyes open, away from trouble.', 'No detours. Careful progress.'],
-  cautious: ['Slow down, check the corners.', 'Stay clear and slip past.', "Fight only if I'm cornered."],
-  steady: ['Stick to the plan.', 'One room at a time.', 'If one shows up, I can handle it.'],
-  greedy: ['I smell coins nearby.', 'Worth a detour.', "Let's see what else is in here."],
-  bold: ['Come at me.', 'I can take this one.', 'Press on, no backing down.'],
-  fearless: ['Bring them all.', "I'm cutting through.", 'Nothing here stops me.'],
-};
+// Trolls do not think in sentences: grunts, roars and threats. Keyed by approach id (what the brain is doing) and
+// by event type (struck, hit, ...), see shout(). Visual only, like THOUGHTS.
 const lastPick = new Map(); // character id -> last line shown
-function thoughtFor(charId, approachId, fallback, moodId = null) {
-  const pool = (moodId && MOOD_THOUGHTS[moodId]) || THOUGHTS[approachId];
+function thoughtFor(charId, approachId, fallback, moodId = null, kind = null) {
+  const pool = (moodId && MOOD_THOUGHTS[moodId]) || (kind === 'troll' && TROLL_THOUGHTS[approachId]) || THOUGHTS[approachId];
   if (!pool) return fallback;
   const prev = lastPick.get(charId);
   const options = pool.filter((t) => t !== prev);
@@ -1277,7 +1273,7 @@ function currentApproaches() {
   for (const ad of game?.adversaries ?? []) {
     const br = ad.brain;
     // Brain off is code patrol, not a formulated approach: no bubble.
-    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? () => thoughtFor(ad.id, br.approach, br.approach_text) : null, kind: 'adversary' });
+    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? () => thoughtFor(ad.id, br.approach, br.approach_text, null, ad.kind) : null, kind: 'adversary' });
   }
   return out;
 }
@@ -1707,7 +1703,7 @@ function renderDanger() {
   }));
 }
 
-const BLINK_MS = 120; // knight blink half-period while hit protection lasts
+let BLINK_MS = 120; // knight blink half-period while hit protection lasts
 const lives = (n) => `${n} ${n === 1 ? 'life' : 'lives'} left`;
 const EVENT_TEXT = {
   hit: (id, e) => `${id} hit Jev — ${e.health > 0 ? lives(e.health) : 'no lives left'}`,
@@ -1813,6 +1809,7 @@ function logEvents(turn) {
   for (const e of turn.events ?? []) {
     if (e.type === 'dispelled') actors.delete(e.id); // snap: no tween
     const text = e.type === 'strike' ? strikeText(e, turn) : (EVENT_TEXT[e.type] ?? ((id) => `${id}: ${e.type}`))(e.id, e);
+    shout(e.id, e.type);
     if (text == null) continue;
     eventLog.unshift({ step: turn.step ?? game.steps, text: Array.isArray(e.at) && e.type !== 'struck' ? `${text} at (${e.at.join(',')})` : text, type: e.type });
   }
@@ -1823,7 +1820,7 @@ function logEvents(turn) {
 
 // Brief red flash over the board when Jev loses a life (restarts the CSS animation).
 let coinGlowAt = -1e9; // when the knight last picked up a coin (drives the golden glow)
-const COIN_GLOW_MS = 700;
+let COIN_GLOW_MS = 700;
 
 function flashHit() {
   const wrap = $('board-wrap');
@@ -2056,7 +2053,25 @@ async function reload() {
   resume();
 }
 
+// Timing constants and bubble lines from the central config (ui.* in central-config.yaml), served at api/ui. Defaults above
+// and in thoughts.js stand if the call fails. Visual only.
+async function loadUi() {
+  try {
+    const r = await fetch('api/ui');
+    if (!r.ok) return;
+    const ui = await r.json();
+    const c = ui.constants ?? {};
+    const num = (v, cur) => (Number.isFinite(v) ? v : cur);
+    CAM_MS = num(c.camMs, CAM_MS); LOG_MAX = num(c.logMax, LOG_MAX); FADE_MS = num(c.fadeMs, FADE_MS); TWEEN_MS = num(c.tweenMs, TWEEN_MS);
+    BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS);
+    REVEAL_ALPHA = num(c.revealAlpha, REVEAL_ALPHA); BUBBLE_IN = num(c.bubbleIn, BUBBLE_IN); BUBBLE_OUT = num(c.bubbleOut, BUBBLE_OUT);
+    BLINK_MS = num(c.blinkMs, BLINK_MS); COIN_GLOW_MS = num(c.coinGlowMs, COIN_GLOW_MS);
+    for (const [pool, target] of [['approach', THOUGHTS], ['mood', MOOD_THOUGHTS], ['troll', TROLL_THOUGHTS]]) Object.assign(target, ui.thoughts?.[pool] ?? {});
+  } catch { /* keep the defaults */ }
+}
+
 async function init() {
+  await loadUi();
   let res = await api('GET', '/api/state');
   // A ?testbed URL always builds its arena; otherwise keep the server's game. No auto-start: page load costs no Jev calls.
   if (res.ok && (!res.data.game || TESTBED)) res = await api('POST', '/api/new');

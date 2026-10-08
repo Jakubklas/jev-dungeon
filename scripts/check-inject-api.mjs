@@ -153,7 +153,7 @@ rmSync(tmp, { recursive: true, force: true });
 // node:http, because the fetch tripwire above is global.
 const dir = mkdtempSync(join(tmpdir(), 'inject-api-'));
 const port = 4100 + Math.floor(Math.random() * 800);
-const child = spawn(process.execPath, ['server.js'], { env: { ...process.env, PORT: String(port), DATA_DIR: dir, HOST: '127.0.0.1', TESTBED: 'size=9x9&numAdversaries=0&seed=2' }, stdio: ['ignore', 'ignore', 'inherit'] });
+const child = spawn(process.execPath, ['server.js'], { env: { ...process.env, JEV_CONFIG: 'none', PORT: String(port), DATA_DIR: dir, HOST: '127.0.0.1', TESTBED: 'size=9x9&numAdversaries=0&seed=2' }, stdio: ['ignore', 'ignore', 'inherit'] });
 const req = (method, path, body) => new Promise((resolve, reject) => {
   const data = body === undefined ? null : typeof body === 'string' ? body : JSON.stringify(body);
   const r = request({ host: '127.0.0.1', port, path, method, headers: { 'Content-Type': 'application/json' } }, (res) => {

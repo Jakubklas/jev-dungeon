@@ -19,6 +19,7 @@
 // the injected ask/decide, so it survives changes to the explorer's memory shape.
 
 import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { REQUEST_BYTES } from '../src/config/registry.js'; // the one definition of the request-size bounds
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,7 +34,7 @@ const LIVE = flags.live === 'true';
 const TICKS = Number(flags.ticks ?? 60);
 const REENCOUNTER_WINDOW = 8; // steps after a 'chase_over' decision
 const WHO = flags.who ?? 'explorer';
-const ADV_BUDGET = { avg: 5500, max: 8000 }; // bytes, adversary requests with smart memory on
+const ADV_BUDGET = { avg: REQUEST_BYTES.adversaryAvg, max: REQUEST_BYTES.adversaryMax }; // bytes, adversary requests with smart memory on
 
 const ARENAS = new URL('./arenas/', import.meta.url);
 const names = flags.arena ? [flags.arena] : readdirSync(ARENAS).filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -5)).sort();

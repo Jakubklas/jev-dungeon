@@ -17,7 +17,7 @@
 import { SIGHT_RANGE } from '../../dungeon.js';
 import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
 import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach } from './memory.js';
-import { askJev, shuffle } from '../../jev.js';
+import { askJev, shuffle, jevModel } from '../../jev.js';
 import { PRESETS, profileOf, traitsOf } from './character.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 
@@ -28,7 +28,7 @@ export const setKeepHuntingMin = (v) => { KEEP_HUNTING_MIN = v; };
 export let MEMORY_ON = false;
 export const setMemoryOn = (v) => { MEMORY_ON = Boolean(v); };
 const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
-const PINGPONGS = 3; // back-and-forth steps while searching before the search approach is chosen again
+let PINGPONGS = 3; // back-and-forth steps while searching before the search approach is chosen again
 
 const PRESET_STYLE = (id) => PRESETS[id].style;
 const key = ([x, y]) => `${x},${y}`;
@@ -288,7 +288,7 @@ function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
   };
 }
 
-const SKILL_NEAR = 10; // loose gate (PLAN D7): the explorer in sight within this many cells
+let SKILL_NEAR = 10; // loose gate (PLAN D7): the explorer in sight within this many cells
 
 // The `skill` options from this ghost's own view: the explorer's position only while it is in sight (view.explorer()).
 // Loose gate: a skill is ready and the explorer is in sight within SKILL_NEAR; the claw then lists one option per
@@ -375,7 +375,7 @@ export function buildRequest(view, a, tick, cfg) {
   if (hasSkill) questions.skill = skillQuestion(skillOptions, h.profile.skillPriority);
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
   const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters)), withCharacter, Boolean(cfg.characters));
-  const body = JSON.stringify({ model: 'jev-latest', state, questions });
+  const body = JSON.stringify({ model: jevModel(), state, questions });
   return { legal, state, questions, body, options, skillOptions };
 }
 
@@ -444,3 +444,11 @@ export function brainView(a) {
     last_reason: m.brain.last_reason,
   };
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen at once.
+export function configureAdversaryBrain(o) {
+  if (o.advPingpongs !== undefined) PINGPONGS = o.advPingpongs;
+  if (o.advSkillNear !== undefined) SKILL_NEAR = o.advSkillNear;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const adversaryBrainSnapshot = () => ({ advPingpongs: PINGPONGS, advSkillNear: SKILL_NEAR });

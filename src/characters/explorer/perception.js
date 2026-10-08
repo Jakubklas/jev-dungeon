@@ -53,24 +53,24 @@ export const APPROACHES = {
 export const TACTICS = Object.keys(APPROACHES).filter((id) => APPROACHES[id].tactic);
 export const isTactic = (id) => Boolean(APPROACHES[id]?.tactic);
 
-export const DEFAULT_MIN_GAP = 3; // used when no sentiment is given
+export let DEFAULT_MIN_GAP = 3; // used when no sentiment is given
 
 // Remembered sightings (see the header): a move ending within SIGHTING_NEAR steps of one gets a fact;
 // exploration targets keep clear of sightings of the last ZONE_RECENT steps: ZONE_STEPS steps around
 // the frozen cell, ZONE_NEAR_STEPS while it is younger than ZONE_FRESH steps (the adversary has had
 // less time to leave, and it was heading toward the explorer), and, for a chasing one, the part of the
 // known map that lies closer to the sighting than the explorer does (its "sector": the way back).
-const SIGHTING_NEAR = 8;
-const ZONE_STEPS = 6;
-const ZONE_NEAR_STEPS = 10;
-const ZONE_FRESH = 10;
-const ZONE_RECENT = 15;
-const SECTOR_SLACK = 2; // a cell is "behind" a sighting when the route to it via the sighting is at most this much longer
-const COIN_NEAR = 8; // a seen pile this many known-path steps away or less gets a toward fact on each move that closes in
-const FACT_SIGHTINGS = 3; // at most this many (the most recent) get a BFS per describeMoves call
+let SIGHTING_NEAR = 8;
+let ZONE_STEPS = 6;
+let ZONE_NEAR_STEPS = 10;
+let ZONE_FRESH = 10;
+let ZONE_RECENT = 15;
+let SECTOR_SLACK = 2; // a cell is "behind" a sighting when the route to it via the sighting is at most this much longer
+let COIN_NEAR = 8; // a seen pile this many known-path steps away or less gets a toward fact on each move that closes in
+let FACT_SIGHTINGS = 3; // at most this many (the most recent) get a BFS per describeMoves call
 
 // How far (in cells, each way) unexplored_by_direction looks. Fixed, so it never depends on the map size.
-const SURVEY_REACH = 12;
+let SURVEY_REACH = 12;
 
 // The portal position is only ever read through KnownWorld.seenTreasure (null until lit).
 export function exitSeen(world) {
@@ -309,7 +309,7 @@ function hereKind(world) {
 // `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
-const HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
+let HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
 export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
@@ -367,7 +367,7 @@ function rememberedView(world, dist, remembered) {
 
 // Seen coin piles (lit cells only, via KnownWorld.seenCoins), nearest first, at most COIN_PILES of them:
 // { coins: [{ direction, distance, count }] }, or {} when none is seen (the key is then left out).
-const COIN_PILES = 3;
+let COIN_PILES = 3;
 function coinView(world, dist) {
   const piles = new Map();
   for (const c of world.seenCoins()) {
@@ -678,3 +678,21 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
   }
   return out;
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.
+export function configureExplorerPerception(o) {
+  if (o.percSightingNear !== undefined) SIGHTING_NEAR = o.percSightingNear;
+  if (o.percZoneSteps !== undefined) ZONE_STEPS = o.percZoneSteps;
+  if (o.percZoneNearSteps !== undefined) ZONE_NEAR_STEPS = o.percZoneNearSteps;
+  if (o.percZoneFresh !== undefined) ZONE_FRESH = o.percZoneFresh;
+  if (o.percZoneRecent !== undefined) ZONE_RECENT = o.percZoneRecent;
+  if (o.percSectorSlack !== undefined) SECTOR_SLACK = o.percSectorSlack;
+  if (o.percCoinNear !== undefined) COIN_NEAR = o.percCoinNear;
+  if (o.percFactSightings !== undefined) FACT_SIGHTINGS = o.percFactSightings;
+  if (o.percSurveyReach !== undefined) SURVEY_REACH = o.percSurveyReach;
+  if (o.percHeartRunGap !== undefined) HEART_RUN_GAP = o.percHeartRunGap;
+  if (o.percCoinPiles !== undefined) COIN_PILES = o.percCoinPiles;
+  if (o.percDefaultMinGap !== undefined) DEFAULT_MIN_GAP = o.percDefaultMinGap;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const explorerPerceptionSnapshot = () => ({ percSightingNear: SIGHTING_NEAR, percZoneSteps: ZONE_STEPS, percZoneNearSteps: ZONE_NEAR_STEPS, percZoneFresh: ZONE_FRESH, percZoneRecent: ZONE_RECENT, percSectorSlack: SECTOR_SLACK, percCoinNear: COIN_NEAR, percFactSightings: FACT_SIGHTINGS, percSurveyReach: SURVEY_REACH, percHeartRunGap: HEART_RUN_GAP, percCoinPiles: COIN_PILES, percDefaultMinGap: DEFAULT_MIN_GAP });
