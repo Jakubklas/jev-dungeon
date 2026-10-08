@@ -23,9 +23,9 @@ for (let m = 1; m <= 9; m++) {
 
 // 2. clamp after a hit
 ok(apply(at(95), 'hit', 1, 2).value === 45, 'hit from 95 on the last life clamps to 45');
-ok(apply(at(50), 'hit', 2, 3).value === 35, 'hit from 50: 35');
-ok(apply(at(50), 'hit', 1, 2).value === 35, 'hit from 50 on last life: 35 (under the cap)');
-ok(apply(at(10), 'hit', 1, 2).value === 0, 'hit never goes below 0');
+ok(apply(at(50), 'hit', 2, 3).value === 43, 'hit from 50: 43');
+ok(apply(at(50), 'hit', 1, 2).value === 43, 'hit from 50 on last life: 43 (under the cap)');
+ok(apply(at(5), 'hit', 1, 2).value === 0, 'hit never goes below 0');
 ok(apply(at(100), 'dispelled', 2, 2).value === 100, 'never above 100');
 ok(apply(at(95), 'struck', 1, 2).value === 45, 'cap applies after a gain too');
 
@@ -34,7 +34,7 @@ let s = at(64);
 for (let i = 0; i < 5; i++) { s = apply(s, 'evaded', 2, 2); s = apply(s, 'blocked', 2, 2); }
 ok(s.value === 65, `evaded/blocked stop at 65, got ${s.value}`);
 ok(apply(at(78), 'evaded', 2, 2).value === 78 && apply(at(78), 'blocked', 2, 2).value === 78, 'above 65 evaded/blocked leave C alone');
-ok(apply(at(50), 'evaded', 2, 2).value === 54 && apply(at(50), 'blocked', 2, 2).value === 53, 'evaded +4, blocked +3');
+ok(apply(at(50), 'evaded', 2, 2).value === 52 && apply(at(50), 'blocked', 2, 2).value === 53, 'evaded +2, blocked +3');
 
 // 4. (calm drift removed: PLAN-moods regen is section 13)
 s = at(35);
@@ -43,7 +43,7 @@ s = at(35);
 const B = [[0, 'shaken'], [29.9, 'shaken'], [30, 'unsure'], [39.9, 'unsure'], [40, 'even'], [64.9, 'even'], [65, 'sure'], [79.9, 'sure'], [80, 'dominant'], [100, 'dominant']];
 for (const [v, b] of B) ok(band(v) === b, `band(${v}) = ${band(v)}, want ${b}`);
 
-// 7. a quiet game (no hit, no kill) stays within 42..65
+// 7. a quiet game (no hit, no kill) stays within 40..65 (evaded is +2 now, so pressed encounters recover more slowly)
 let seed = 7;
 const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 let quietBad = 0;
@@ -52,11 +52,11 @@ for (let g = 0; g < 200; g++) {
   for (let t = 0; t < 300; t++) {
     const r = rnd();
     q = apply(q, r < 0.4 ? 'regen' : r < 0.6 ? 'pressed' : r < 0.8 ? 'evaded' : 'blocked', 2, 2);
-    if (q.value < 42 || q.value > 65) quietBad++;
+    if (q.value < 40 || q.value > 65) quietBad++;
     if (rnd() < 0.05) q = { ...q, enc: { chased: false, hurt: false, killed: false, pressed: 0 } }; // a new encounter
   }
 }
-ok(quietBad === 0, `quiet games left 42..65 ${quietBad} times`);
+ok(quietBad === 0, `quiet games left 40..65 ${quietBad} times`);
 s = createConfidence();
 for (let i = 0; i < 10; i++) s = apply(s, 'pressed', 2, 2);
 ok(s.value === 42, `pressed capped at -8 per encounter: ${s.value}`);
@@ -79,16 +79,16 @@ const ch = [{ id: 'a1', distance: 5, mode: 'chase' }];
 const ctx = { lives: 2, maxLives: 2 };
 const struck = { id: 'a1', type: 'struck', hp: 1 };
 let t = applyTurn(createConfidence(), { skill_events: [struck], events: [struck] }, { ...ctx, visible: ch });
-ok(t.value === 56, `struck turn counted once: ${t.value}`);
+ok(t.value === 55, `struck turn counted once: ${t.value}`);
 t = applyTurn(createConfidence(), { skill_events: [{ id: 'a1', type: 'dispelled' }], events: [{ id: 'a1', type: 'dispelled' }] }, { ...ctx, visible: [] });
-ok(t.value === 62 && t.enc.killed, `dispelled turn: ${t.value}`);
+ok(t.value === 58 && t.enc.killed, `dispelled turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'hit', at: [1, 1], health: 1 }] }, { lives: 1, maxLives: 2, visible: ch });
-ok(t.value === 35 && t.enc.hurt, `hit turn: ${t.value}`);
+ok(t.value === 43 && t.enc.hurt, `hit turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'blocked' }] }, { ...ctx, visible: ch });
 ok(t.value === 53, `blocked turn: ${t.value}`);
 t = applyTurn(createConfidence(), {}, { ...ctx, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
-ok(t.counts.evaded === 1 && t.value === 54, `evaded: ${t.value}`);
+ok(t.counts.evaded === 1 && t.value === 52, `evaded: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ type: 'hit' }] }, { lives: 1, maxLives: 2, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { lives: 1, maxLives: 2, visible: [] });
 ok(t.counts.evaded === 0 && !t.enc.hurt, 'hurt encounter is not evaded; encounter closed');
@@ -104,7 +104,7 @@ ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).va
 
 // 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
 ok(JSON.stringify(Object.keys(createConfidence())) === '["value","idle","counts","enc"]', 'default state has no w / model keys');
-ok(apply(createConfidence(), 'hit', 2, 3).value === 35, 'default weights: hit -15');
+ok(apply(createConfidence(), 'hit', 2, 3).value === 43, 'default weights: hit -7');
 let wv = createConfidence({ weights: { hit: -25 } });
 ok(wv.w.hit === -25 && wv.w.struck === WEIGHTS.struck, 'weights merge over the defaults');
 ok(apply(wv, 'hit', 2, 3).value === 25 && apply(apply(wv, 'hit', 2, 3), 'regen', 2, 3).value === 25, 'custom hit weight (regen waits)');
@@ -213,14 +213,14 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
 
 // 13. PLAN-moods: regen (0.25 toward 50, only after REGEN_WAIT quiet ticks), tiers, panic
 {
-  let r = apply(at(20), 'hit', 2, 2); // 5, idle 0
-  ok(r.value === 5 && r.idle === 0, 'a change restarts the wait');
+  let r = apply(at(20), 'hit', 2, 2); // 13, idle 0
+  ok(r.value === 13 && r.idle === 0, 'a change restarts the wait');
   for (let i = 0; i < REGEN_WAIT; i++) r = apply(r, 'regen', 2, 2);
-  ok(r.value === 5 && r.idle === REGEN_WAIT, `no regen during the first ${REGEN_WAIT} ticks`);
+  ok(r.value === 13 && r.idle === REGEN_WAIT, `no regen during the first ${REGEN_WAIT} ticks`);
   r = apply(r, 'regen', 2, 2);
-  ok(r.value === 5.25, 'regen +0.25 from below once the wait is over');
+  ok(r.value === 13.25, 'regen +0.25 from below once the wait is over');
   r = apply(r, 'struck', 2, 2);
-  ok(r.value === 11.25 && r.idle === 0, 'an event restarts the wait');
+  ok(r.value === 18.25 && r.idle === 0, 'an event restarts the wait');
   let hi = { ...at(95), idle: REGEN_WAIT };
   hi = apply(hi, 'regen', 2, 2);
   ok(hi.value === 94.75, 'regen -0.25 from above');

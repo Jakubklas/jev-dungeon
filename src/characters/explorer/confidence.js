@@ -8,11 +8,11 @@
 //   (pressed = points lost so far this encounter, for the per-encounter cap).
 //
 // Event vocabulary (apply(state, event, lives, maxLives); `event` is a string or { type }):
-//   hit       a life was lost to a strike: -15, then the lives cap; marks the encounter hurt
-//   struck    own strike landed, ghost survived: +6
-//   dispelled own strike dispelled a ghost (it emits `dispelled`, not `struck`): +12; marks the encounter killed
+//   hit       a life was lost to a strike: -7, then the lives cap; marks the encounter hurt
+//   struck    own strike landed, ghost survived: +5
+//   dispelled own strike dispelled a ghost (it emits `dispelled`, not `struck`): +8; marks the encounter killed
 //   blocked   own shield stopped a claw: +3, only up to BLOCK_CEILING (never lowers a higher C)
-//   evaded    an encounter with a chasing sighting ended with no hit and no dispel: +4, only up to
+//   evaded    an encounter with a chasing sighting ended with no hit and no dispel: +2, only up to
 //             EVADE_CEILING; closes the encounter
 //   pressed   a chaser within 2 steps with the sword not ready: -2 per tick, at most -8 per encounter
 //   regen     PLAN-moods: 0.25 toward 50 from either side, but only after REGEN_WAIT ticks with no change to C
@@ -20,11 +20,11 @@
 // Every change ends with C clamped to 0..100 and to the lives cap.
 
 export const START = 50;
-export const D_HIT = -15;
-export const D_STRUCK = 6;
-export const D_DISPELLED = 12;
+export const D_HIT = -7;
+export const D_STRUCK = 5;
+export const D_DISPELLED = 8;
 export const D_BLOCKED = 3;
-export const D_EVADED = 4;
+export const D_EVADED = 2;
 export const D_PRESSED = -2;
 export const PRESSED_MAX = 8; // per encounter
 export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below

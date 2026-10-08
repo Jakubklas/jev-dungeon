@@ -1,7 +1,7 @@
 // Checks for the confidence model's wiring in the brain (PLAN-confidence C2): the REAL ExplorerBrain through
 // newTestGame with the `confidence` option, stub Jev, throwing fetch tripwire (the duel harness installs it).
-// Event table: each event moves C by the documented delta (strike +6, dispel +12, hit -15 then the lives cap,
-// blocked +3 up to 65, evaded +4 up to 65 only for an encounter with a chasing sighting and no hit and no
+// Event table: each event moves C by the documented delta (strike +5, dispel +8, hit -7 then the lives cap,
+// blocked +3 up to 65, evaded +2 up to 65 only for an encounter with a chasing sighting and no hit and no
 // dispel, pressed -2 at most -8 per encounter (never for a ghost the own strike stunned), blocked events forwarded by Run, calm +0.3 only below 50), memory shape with the toggle on and
 // off, the turn's `confidence` object, and a fog twin (a hidden ghost in another room changes nothing).
 // Requests stay byte-identical with the toggle on (C2 changes no request text): scripts/check-request-hashes.mjs.
@@ -64,7 +64,7 @@ async function play(run, n, hook = null) {
 }
 const C = (run) => run.memory.progress.confidence;
 
-// 2. strike +6, dispel +12 (a 2 hp ghost: 50 -> 56 -> 68); then a hit on the last life clamps to the cap 45; blocked never lowers C.
+// 2. strike +5, dispel +8 (a 2 hp ghost: 50 -> 55 -> 63); then a hit on the last life clamps to the cap 45; blocked never lowers C.
 {
   const run = build({ map: withGhost(ROOM, 10, 3), seed: 2, explorerSkills: ['sword_strike'], ghostHp: 2 }, { ask: stub({ mood: 'bold', tactic: 'engage', skill: true }) });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
@@ -74,19 +74,21 @@ const C = (run) => run.memory.progress.confidence;
   await play(run, 40, (turn) => trace.push({ v: turn.confidence.history, d: (() => { const d = Math.round((turn.confidence.history - prevH) * 100) / 100; prevH = turn.confidence.history; return d; })(), why: turn.confidence.reason, ev: turn.events.map((e) => e.type) }));
   const struck = trace.find((x) => x.ev.includes('struck'));
   const dispelled = trace.find((x) => x.ev.includes('dispelled'));
-  ok(struck && struck.d === 6 && struck.v === 56 && struck.why === 'struck', `strike tick: +6 to 56, got ${JSON.stringify(struck)}`);
-  ok(dispelled && dispelled.d === 12 && dispelled.v === 68 && dispelled.why === 'dispelled', `dispel tick: +12 to 68, got ${JSON.stringify(dispelled)}`);
+  ok(struck && struck.d === 5 && struck.v === 55 && struck.why === 'struck', `strike tick: +5 to 55, got ${JSON.stringify(struck)}`);
+  ok(dispelled && dispelled.d === 8 && dispelled.v === 63 && dispelled.why === 'dispelled', `dispel tick: +8 to 63, got ${JSON.stringify(dispelled)}`);
   ok(trace.every((x) => x.ev.includes('struck') || x.ev.includes('dispelled') || x.d === 0), 'no other tick moved C (no pressed under the engage hold or with the sword ready)');
-  ok(C(run).counts.strikes === 2 && C(run).value === 68, `after the duel: ${JSON.stringify(C(run))}`);
+  ok(C(run).counts.strikes === 2 && C(run).value === 63, `after the duel: ${JSON.stringify(C(run))}`);
   await run.explorer.noteBlocked();
-  ok(C(run).value === 68 && C(run).counts.blocked === 1, 'blocked above 65 leaves C alone (counted)');
+  ok(C(run).value === 65 && C(run).counts.blocked === 1, 'blocked from 63 rises to the 65 ceiling and counts');
+  await run.explorer.noteBlocked();
+  ok(C(run).value === 65 && C(run).counts.blocked === 2, 'blocked at the ceiling leaves C alone (counted)');
   run.game.health = 1; run.game.maxHealth = 2; // the hit just took the first of 2 lives
   await run.explorer.noteHit('a1');
-  ok(C(run).value === 45, `hit from 68 on the last life of 2: min(53, cap 45) = 45, got ${C(run).value}`);
+  ok(C(run).value === 45, `hit from 65 on the last life of 2: min(58, cap 45) = 45, got ${C(run).value}`);
 }
 
-// 3. hit from 50 -15 (lives cap table), blocked +3 up to the 65 ceiling, the cap after a gain.
-for (const [maxLives, lives, want] of [[2, 1, 35], [3, 2, 35], [3, 1, 35], [9, 8, 35]]) {
+// 3. hit from 50 -7 (lives cap table), blocked +3 up to the 65 ceiling, the cap after a gain.
+for (const [maxLives, lives, want] of [[2, 1, 43], [3, 2, 43], [3, 1, 43], [9, 8, 43]]) {
   const run = build({ map: ROOM, seed: 3, numAdversaries: 0 }, { ask: stub() });
   run.game.maxHealth = maxLives; run.game.health = lives;
   await run.explorer.noteHit('a1');
@@ -113,7 +115,7 @@ for (const [maxLives, lives, want] of [[2, 1, 35], [3, 2, 35], [3, 1, 35], [9, 8
   run.game.maxHealth = 3; run.game.health = 2;
   await run.explorer.noteHit('a1');
   const turns = await play(run, 20);
-  ok(Math.abs(C(run).value - 37.5) < 1e-9, `35, ten quiet ticks of waiting, then 10 regen steps of 0.25 = 37.5, got ${C(run).value}`);
+  ok(Math.abs(C(run).value - 45.5) < 1e-9, `43, ten quiet ticks of waiting, then 10 regen steps of 0.25 = 45.5, got ${C(run).value}`);
   ok(turns[0].confidence.reason === 'hit' && turns[1].confidence.reason === null, `the first report names the hit, quiet ticks name nothing: ${JSON.stringify(turns.slice(0, 2).map((t) => t.confidence.reason))}`);
   const quiet = build({ map: ROOM, seed: 4, numAdversaries: 0 }, { ask: stub() });
   await play(quiet, 30);
@@ -149,10 +151,10 @@ async function encounter({ hit = false } = {}) {
 }
 {
   const { run, over } = await encounter();
-  ok(over && over.evaded === 1 && over.v === 54 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +4 to 54, got ${JSON.stringify(over)}`);
+  ok(over && over.evaded === 1 && over.v === 52 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +2 to 52, got ${JSON.stringify(over)}`);
   const hurt = await encounter({ hit: true });
   ok(hurt.over && hurt.over.evaded === 0 && !/evaded/.test(hurt.over.why ?? ''), `a hit in the encounter cancels evaded: ${JSON.stringify(hurt.over)}`);
-  ok(hurt.over.v < 40, `... and C is still low at chase_over, got ${hurt.over.v}`);
+  ok(hurt.over.v < 44, `... and C is still low at chase_over, got ${hurt.over.v}`);
   // Patrolling ghost only (never chasing): no evaded.
   const p = build({ map: withGhost(ROOM, 10, 3), seed: 5, ghostSkills: 'none' }, { ask: stub({ mood: 'steady', tactic: 'carry_on' }) });
   let seenPatrol = false;
