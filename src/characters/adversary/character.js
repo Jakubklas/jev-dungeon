@@ -52,7 +52,7 @@ const HORIZON_LINE = [
   '',
   'Predict where it will go and plan ahead.',
 ];
-export const PRIORITY_MAX = 300;
+export let PRIORITY_MAX = 300;
 
 const at = (arr, level) => arr[level - 1];
 let HOME_RADIUS = [14, 24, null]; // path-step radius of the home zone per roaming level; null = the whole map
@@ -210,6 +210,7 @@ export function configureTraits(o) {
   }
   if (Array.isArray(o.trait_homeRadius) && o.trait_homeRadius.length === 3) HOME_RADIUS = [...o.trait_homeRadius];
   if (typeof o.lonerHearing === 'number') LONER_HEARING = o.lonerHearing;
+  if (typeof o.limPriorityLine === 'number') PRIORITY_MAX = o.limPriorityLine;
 }
 // The built-in tables, for the config check: { knob: [l1, l2, l3], homeRadius: [...], lonerHearing }. Fresh until configureTraits runs.
-export const traitDefaults = () => ({ ...Object.fromEntries(Object.entries(TABLE).map(([k, [, v]]) => [`trait_${k}`, [...v]])), trait_homeRadius: [...HOME_RADIUS], lonerHearing: LONER_HEARING });
+export const traitDefaults = () => ({ ...Object.fromEntries(Object.entries(TABLE).map(([k, [, v]]) => [`trait_${k}`, [...v]])), trait_homeRadius: [...HOME_RADIUS], lonerHearing: LONER_HEARING, limPriorityLine: PRIORITY_MAX });

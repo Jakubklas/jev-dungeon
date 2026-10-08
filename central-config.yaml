@@ -344,6 +344,40 @@ player:
   steps: 20 # Steps a directive stays live
   cooldownS: 10 # Seconds between two directives
 
+# Memory and prompt-size limits.
+limits:
+  explorer:
+    approach: 240 # Longest approach text
+    triedApproaches: 5 # Tried approaches remembered
+    thought: 60 # Longest thought bubble text
+    sentimentHistory: 5 # Mood picks remembered
+    events: 6 # Events remembered (oldest dropped)
+    eventText: 200 # Longest event text
+    landmarks: 8 # Landmarks remembered (the portal is never evicted)
+    landmarkNote: 120 # Longest landmark note
+    recentMoves: 6 # Recent moves remembered
+    skills: 4 # Skills mirrored into memory
+    skillText: 120 # Longest skill text
+    directive: 140 # Longest player directive (must hold the directive length setting)
+    recentCells: 8 # Recent cells remembered (moves + 2)
+  monster:
+    objective: 200 # Longest objective text
+    approach: 240 # Longest approach text
+    triedApproaches: 5 # Tried search approaches remembered
+    events: 5 # Events remembered
+    event: 200 # Longest event text
+    reason: 200 # Longest reason text
+    trend: 160 # Longest trend text
+    sightings: 5 # Sightings remembered
+    landmarks: 8 # Landmarks remembered
+    landmarkNote: 120 # Longest landmark note
+    moves: 6 # Recent moves remembered
+    cells: 8 # Recent cells remembered
+    skills: 4 # Skills mirrored into memory
+    skillText: 120 # Longest skill text
+  skillFactMax: 160 # Longest skill option text sent to Jev
+  priorityLine: 300 # Longest character priority line sent to Jev
+
 # Defaults of the small test arenas (gyms).
 testbed:
   size:

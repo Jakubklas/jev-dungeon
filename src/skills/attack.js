@@ -3,7 +3,7 @@
 import { DIRS } from '../dungeon.js';
 import { Skill } from './skill.js';
 
-const FACT_MAX = 160;
+let FACT_MAX = 160;
 const SIDE = { up: 'above you', down: 'below you', left: 'to your left', right: 'to your right' };
 const clip = (s) => (s.length <= FACT_MAX ? s : `${s.slice(0, FACT_MAX - 3)}...`);
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
@@ -60,3 +60,7 @@ export class AttackSkill extends Skill {
     return `is knocked back${stun ? ` and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}`;
   }
 }
+
+// Central config hook (src/config/runtime.js).
+export function configureAttack(o) { if (o.limSkillFact !== undefined) FACT_MAX = o.limSkillFact; }
+export const attackSnapshot = () => ({ limSkillFact: FACT_MAX });

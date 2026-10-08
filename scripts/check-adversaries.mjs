@@ -6,6 +6,7 @@
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { DIRS, EXPLORER_LIVES, SIGHT_RANGE, Game, floorDistances, generateDungeon, hasLineOfSight, isFloor, rng } from '../src/dungeon.js';
+import { REQUEST_BYTES } from '../src/config/registry.js'; // the one definition of the request-size bounds
 import {
   Adversary, ADVERSARY_SPEED, ALERT_STEPS, CHASE_RANGE, GRACE_TICKS, MAX_SEARCH_TICKS, adversaryView, graceLeft, seesExplorer, spawnAdversaries, startsChase, stepAdversaries, visibleAdversaries,
 } from '../src/characters/adversary/adversary.js';
@@ -1145,7 +1146,7 @@ for (const policy of ['random', 'fresh', 'flee']) {
       check(st.recent.path && Array.isArray(st.recent.path.moves) && st.recent.lifetime.hunts === 1, 'recent.path and recent.lifetime in state');
       check(Array.isArray(st.team) && st.team.every((t) => t.id || t.others), 'team entries');
       check(!/chest|treasure/i.test(JSON.stringify({ ...st, game: null })), 'no chest or treasure in smart state');
-      check(Buffer.byteLength(a.lastRequestBody) <= 8000, `smart request ${Buffer.byteLength(a.lastRequestBody)} bytes over the 8 KB budget`);
+      check(Buffer.byteLength(a.lastRequestBody) <= REQUEST_BYTES.adversaryMax, `smart request ${Buffer.byteLength(a.lastRequestBody)} bytes over the 8 KB budget`);
       validateMemory(a.memory);
       // A packmate's report reaches a ghost that can hear it.
       const call = stub.calls.filter((c) => c.id === 'a2').at(-1);

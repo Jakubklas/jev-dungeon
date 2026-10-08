@@ -33,6 +33,9 @@ const AB = await import('../src/characters/adversary/brain.js');
 const AP = await import('../src/characters/adversary/perception.js');
 const AM = await import('../src/characters/adversary/memory.js');
 const AV = await import('../src/characters/adversary/adversary-view.js');
+const EM = await import('../src/characters/explorer/memory.js');
+const AT = await import('../src/skills/attack.js');
+const { REQUEST_BYTES } = R;
 const { eq } = L;
 const { generateDungeon } = D;
 
@@ -115,6 +118,8 @@ const LIT = {
   ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot(),
   // P4
   ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot(),
+  // P5
+  ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
@@ -141,7 +146,7 @@ explorer: { lives: 3 }
 monsters: { global: { speed: 0.8 } }
 instances:
   arena: { explorer: { lives: 4 } }
-  arena/a1: { explorer: { lives: 5 }, limits: {} }
+  arena/a1: { explorer: { lives: 5 }, nonsense: {} }
 `);
 let p = L.parseConfig(layered, []);
 check(p.values.lives === 3 && p.values.speed === 0.8, 'file layer');
@@ -149,7 +154,7 @@ p = L.parseConfig(layered, ['arena']);
 check(p.values.lives === 4 && p.values.speed === 0.8, 'kind layer overrides the file');
 p = L.parseConfig(layered, ['arena', 'arena/a1']);
 check(p.values.lives === 5, 'named instance overrides the kind');
-check(p.warnings.some((w) => w.startsWith('limits')), 'an unknown section is reported');
+check(p.warnings.some((w) => w.startsWith('nonsense')), 'an unknown section is reported');
 
 // 4. bad entries warn with their path and are skipped
 p = L.parseConfig(YAML.parse('explorer: { lives: 99, graceTicks: "x" }\nworld: { nonsense: 1 }\nmonsters: { kinds: { ghost: { weight: -1 } } }'));
@@ -300,6 +305,25 @@ await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 const backP4 = { ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot() };
 check(sortedEntries(backP4) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in backP4))), 'removing the keys restores every P4 default');
+
+// 6f. P5: limits apply from the next game; cross-rules keep memory valid
+writeFileSync(cfg, 'limits: { explorer: { events: 9, directive: 200 }, monster: { events: 7 }, skillFactMax: 100, priorityLine: 120 }\nplayer: { maxChars: 140 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(EM.LIMITS.events === 6 && AM.LIMITS.events === 5, 'limits wait for the next game (memory is validated against them)');
+await S.applyNextGame();
+check(EM.LIMITS.events === 9 && EM.LIMITS.directive === 200 && AM.LIMITS.events === 7 && AT.attackSnapshot().limSkillFact === 100 && C.PRIORITY_MAX === 120, 'limits follow the file from the next game');
+const crossLim = L.crossProblems({ ...L.defaults(), limExplorer_directive: 100 });
+check(crossLim.some((w) => w.includes('directive')), 'a directive limit below the directive length setting is refused');
+check(L.crossProblems({ ...L.defaults(), limMonster_moves: 4 }).some((w) => w.includes('recent-moves')), 'a monster memory limit below a character trait level is refused');
+check(L.crossProblems({ ...L.defaults(), limExplorer_recentCells: 7 }).some((w) => w.includes('recentCells')), 'recentCells below recentMoves + 2 is refused');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+await S.applyNextGame();
+const backP5 = { ...EM.explorerMemorySnapshot(), ...AM.adversaryLimitsSnapshot(), ...AT.attackSnapshot(), limPriorityLine: C.PRIORITY_MAX };
+check(sortedEntries(backP5) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in backP5))), 'removing the keys restores every P5 default');
+check(REQUEST_BYTES.explorerChasing === 9500 && REQUEST_BYTES.explorerPatrolling === 10500 && REQUEST_BYTES.adversaryMax === 8000, 'the request-size bounds the checks use are the documented ones');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

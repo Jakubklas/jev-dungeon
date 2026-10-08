@@ -228,3 +228,9 @@ export function configureAdversaryMemory(o) {
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
 export const adversaryMemorySnapshot = () => ({ advSightingSpacing: SIGHTING_SPACING });
+
+// Central config hook (src/config/runtime.js): limits apply from a new game, because memory is validated against them.
+export function configureAdversaryLimits(o) {
+  for (const k of Object.keys(LIMITS)) if (o[`limMonster_${k}`] !== undefined) LIMITS[k] = o[`limMonster_${k}`];
+}
+export const adversaryLimitsSnapshot = () => Object.fromEntries(Object.keys(LIMITS).map((k) => [`limMonster_${k}`, LIMITS[k]]));

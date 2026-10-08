@@ -14,6 +14,7 @@ export const CATEGORIES = {
   skills: { userSetting: false, doc: 'Sword, shield and the stun they cause.' },
   monsters: { userSetting: false, doc: 'Ghosts and trolls: speed, packs, spawn, stats, characters.' },
   player: { userSetting: true, doc: 'Directives the player may whisper to the explorer.' },
+  limits: { userSetting: false, doc: 'Memory and prompt-size limits.' },
   testbed: { userSetting: false, doc: 'Defaults of the small test arenas (gyms).' },
 };
 
@@ -238,7 +239,43 @@ const P4_ROWS = [
   { key: 'advSightingSpacing', path: 'monsters.memory.sightingSpacing', group: 'Monsters', label: 'monsters.memory.sightingSpacing', hint: "A new sighting is stored only after the explorer moved this far", doc: "A new sighting is stored only after the explorer moved this far", type: 'range', min: 1, max: 20, step: 1, def: 3, when: 'live', page: false },
   { key: 'advHeardSteps', path: 'monsters.pack.heardSteps', group: 'Monsters', label: 'monsters.pack.heardSteps', hint: "Path steps around a called cell that a monster copies from the caller's map", doc: "Path steps around a called cell that a monster copies from the caller's map", type: 'range', min: 1, max: 30, step: 1, def: 6, when: 'live', page: false },
 ];
-export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS];
+// ---- P5: memory and prompt-size limits. File-only, applied from the next game (memory is validated against them). ----
+const P5_ROWS = [
+  { key: 'limExplorer_approach', path: 'limits.explorer.approach', group: 'Limits', label: 'limits.explorer.approach', hint: "Longest approach text", doc: "Longest approach text", type: 'range', min: 20, max: 1000, step: 1, def: 240, when: 'next', page: false },
+  { key: 'limExplorer_triedApproaches', path: 'limits.explorer.triedApproaches', group: 'Limits', label: 'limits.explorer.triedApproaches', hint: "Tried approaches remembered", doc: "Tried approaches remembered", type: 'range', min: 1, max: 20, step: 1, def: 5, when: 'next', page: false },
+  { key: 'limExplorer_thought', path: 'limits.explorer.thought', group: 'Limits', label: 'limits.explorer.thought', hint: "Longest thought bubble text", doc: "Longest thought bubble text", type: 'range', min: 20, max: 200, step: 1, def: 60, when: 'next', page: false },
+  { key: 'limExplorer_sentimentHistory', path: 'limits.explorer.sentimentHistory', group: 'Limits', label: 'limits.explorer.sentimentHistory', hint: "Mood picks remembered", doc: "Mood picks remembered", type: 'range', min: 1, max: 20, step: 1, def: 5, when: 'next', page: false },
+  { key: 'limExplorer_events', path: 'limits.explorer.events', group: 'Limits', label: 'limits.explorer.events', hint: "Events remembered (oldest dropped)", doc: "Events remembered (oldest dropped)", type: 'range', min: 1, max: 30, step: 1, def: 6, when: 'next', page: false },
+  { key: 'limExplorer_eventText', path: 'limits.explorer.eventText', group: 'Limits', label: 'limits.explorer.eventText', hint: "Longest event text", doc: "Longest event text", type: 'range', min: 20, max: 600, step: 1, def: 200, when: 'next', page: false },
+  { key: 'limExplorer_landmarks', path: 'limits.explorer.landmarks', group: 'Limits', label: 'limits.explorer.landmarks', hint: "Landmarks remembered (the portal is never evicted)", doc: "Landmarks remembered (the portal is never evicted)", type: 'range', min: 1, max: 30, step: 1, def: 8, when: 'next', page: false },
+  { key: 'limExplorer_landmarkNote', path: 'limits.explorer.landmarkNote', group: 'Limits', label: 'limits.explorer.landmarkNote', hint: "Longest landmark note", doc: "Longest landmark note", type: 'range', min: 20, max: 400, step: 1, def: 120, when: 'next', page: false },
+  { key: 'limExplorer_recentMoves', path: 'limits.explorer.recentMoves', group: 'Limits', label: 'limits.explorer.recentMoves', hint: "Recent moves remembered", doc: "Recent moves remembered", type: 'range', min: 3, max: 20, step: 1, def: 6, when: 'next', page: false },
+  { key: 'limExplorer_skills', path: 'limits.explorer.skills', group: 'Limits', label: 'limits.explorer.skills', hint: "Skills mirrored into memory", doc: "Skills mirrored into memory", type: 'range', min: 1, max: 4, step: 1, def: 4, when: 'next', page: false },
+  { key: 'limExplorer_skillText', path: 'limits.explorer.skillText', group: 'Limits', label: 'limits.explorer.skillText', hint: "Longest skill text", doc: "Longest skill text", type: 'range', min: 20, max: 400, step: 1, def: 120, when: 'next', page: false },
+  { key: 'limExplorer_directive', path: 'limits.explorer.directive', group: 'Limits', label: 'limits.explorer.directive', hint: "Longest player directive (must hold the directive length setting)", doc: "Longest player directive (must hold the directive length setting)", type: 'range', min: 20, max: 600, step: 1, def: 140, when: 'next', page: false },
+  { key: 'limExplorer_recentCells', path: 'limits.explorer.recentCells', group: 'Limits', label: 'limits.explorer.recentCells', hint: "Recent cells remembered (moves + 2)", doc: "Recent cells remembered (moves + 2)", type: 'range', min: 5, max: 24, step: 1, def: 8, when: 'next', page: false },
+  { key: 'limMonster_objective', path: 'limits.monster.objective', group: 'Limits', label: 'limits.monster.objective', hint: "Longest objective text", doc: "Longest objective text", type: 'range', min: 20, max: 600, step: 1, def: 200, when: 'next', page: false },
+  { key: 'limMonster_approach', path: 'limits.monster.approach', group: 'Limits', label: 'limits.monster.approach', hint: "Longest approach text", doc: "Longest approach text", type: 'range', min: 20, max: 1000, step: 1, def: 240, when: 'next', page: false },
+  { key: 'limMonster_triedApproaches', path: 'limits.monster.triedApproaches', group: 'Limits', label: 'limits.monster.triedApproaches', hint: "Tried search approaches remembered", doc: "Tried search approaches remembered", type: 'range', min: 1, max: 20, step: 1, def: 5, when: 'next', page: false },
+  { key: 'limMonster_events', path: 'limits.monster.events', group: 'Limits', label: 'limits.monster.events', hint: "Events remembered", doc: "Events remembered", type: 'range', min: 1, max: 30, step: 1, def: 5, when: 'next', page: false },
+  { key: 'limMonster_event', path: 'limits.monster.event', group: 'Limits', label: 'limits.monster.event', hint: "Longest event text", doc: "Longest event text", type: 'range', min: 20, max: 600, step: 1, def: 200, when: 'next', page: false },
+  { key: 'limMonster_reason', path: 'limits.monster.reason', group: 'Limits', label: 'limits.monster.reason', hint: "Longest reason text", doc: "Longest reason text", type: 'range', min: 20, max: 600, step: 1, def: 200, when: 'next', page: false },
+  { key: 'limMonster_trend', path: 'limits.monster.trend', group: 'Limits', label: 'limits.monster.trend', hint: "Longest trend text", doc: "Longest trend text", type: 'range', min: 20, max: 600, step: 1, def: 160, when: 'next', page: false },
+  { key: 'limMonster_sightings', path: 'limits.monster.sightings', group: 'Limits', label: 'limits.monster.sightings', hint: "Sightings remembered", doc: "Sightings remembered", type: 'range', min: 1, max: 20, step: 1, def: 5, when: 'next', page: false },
+  { key: 'limMonster_landmarks', path: 'limits.monster.landmarks', group: 'Limits', label: 'limits.monster.landmarks', hint: "Landmarks remembered", doc: "Landmarks remembered", type: 'range', min: 1, max: 30, step: 1, def: 8, when: 'next', page: false },
+  { key: 'limMonster_landmarkNote', path: 'limits.monster.landmarkNote', group: 'Limits', label: 'limits.monster.landmarkNote', hint: "Longest landmark note", doc: "Longest landmark note", type: 'range', min: 20, max: 400, step: 1, def: 120, when: 'next', page: false },
+  { key: 'limMonster_moves', path: 'limits.monster.moves', group: 'Limits', label: 'limits.monster.moves', hint: "Recent moves remembered", doc: "Recent moves remembered", type: 'range', min: 3, max: 20, step: 1, def: 6, when: 'next', page: false },
+  { key: 'limMonster_cells', path: 'limits.monster.cells', group: 'Limits', label: 'limits.monster.cells', hint: "Recent cells remembered", doc: "Recent cells remembered", type: 'range', min: 3, max: 30, step: 1, def: 8, when: 'next', page: false },
+  { key: 'limMonster_skills', path: 'limits.monster.skills', group: 'Limits', label: 'limits.monster.skills', hint: "Skills mirrored into memory", doc: "Skills mirrored into memory", type: 'range', min: 1, max: 4, step: 1, def: 4, when: 'next', page: false },
+  { key: 'limMonster_skillText', path: 'limits.monster.skillText', group: 'Limits', label: 'limits.monster.skillText', hint: "Longest skill text", doc: "Longest skill text", type: 'range', min: 20, max: 400, step: 1, def: 120, when: 'next', page: false },
+  { key: 'limSkillFact', path: 'limits.skillFactMax', group: 'Limits', label: 'limits.skillFactMax', hint: "Longest skill option text sent to Jev", doc: "Longest skill option text sent to Jev", type: 'range', min: 40, max: 600, step: 1, def: 160, when: 'next', page: false },
+  { key: 'limPriorityLine', path: 'limits.priorityLine', group: 'Limits', label: 'limits.priorityLine', hint: "Longest character priority line sent to Jev", doc: "Longest character priority line sent to Jev", type: 'range', min: 60, max: 800, step: 1, def: 300, when: 'next', page: false },
+];
+export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS, ...P5_ROWS];
+
+// What the request-size checks assert (bytes). Not game settings: the game enforces nothing, the checks measure.
+// Raise one on purpose only with a note in AGENTS.md (Open questions: request size).
+export const REQUEST_BYTES = { explorerChasing: 9500, explorerPatrolling: 10500, adversaryMax: 8000, adversaryAvg: 5500 };
 
 // Kind spawn weights are file-only (relative); trollShare = troll / (ghost + troll) is derived from them.
 export const KIND_WEIGHTS = [

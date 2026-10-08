@@ -57,6 +57,13 @@ export function crossProblems(values) {
   if (values.roomMax !== undefined && values.minSize !== undefined && values.roomMax + 2 > values.minSize) out.push('Largest room side must fit the smallest map (room side + 2 <= Min map side)');
   if (values.torchMin > values.torchMax) out.push('Fewest torches cannot be more than the most');
   if (values.clusterSizeMin > values.clusterSizeMax) out.push('Smallest cluster cannot be larger than the largest');
+  if (values.injectMaxChars > values.limExplorer_directive) out.push('The directive length setting cannot exceed the directive memory limit (limits.explorer.directive)');
+  if (values.limExplorer_recentCells < values.limExplorer_recentMoves + 2) out.push('limits.explorer.recentCells must be at least recentMoves + 2');
+  const tmax = (k) => (Array.isArray(values[k]) ? Math.max(...values[k]) : 0);
+  if (tmax('trait_recentMoves') > values.limMonster_moves) out.push('A character recent-moves level exceeds limits.monster.moves');
+  if (tmax('trait_recentCells') > values.limMonster_cells) out.push('A character recent-cells level exceeds limits.monster.cells');
+  if (tmax('trait_sightingsKept') > values.limMonster_sightings) out.push('A character sightings level exceeds limits.monster.sightings');
+  if (tmax('trait_landmarksCap') > values.limMonster_landmarks) out.push('A character landmarks level exceeds limits.monster.landmarks');
   if (values.advCutMin > values.advCutMax) out.push('Nearest cut-off candidate cannot be farther than the farthest');
   if (values.confPanicExit < values.confPanicEnter) out.push('Panic must end at or above the confidence where it starts');
   if (values.confTierLowMax >= values.confTierHighMin) out.push('The low tier must end below the confidence where the high tier starts');

@@ -22,6 +22,9 @@ import { configureExplorerBrain } from '../characters/explorer/brain.js';
 import { configureExplorerPerception } from '../characters/explorer/perception.js';
 import { configureExplorerEncounter } from '../characters/explorer/encounter.js';
 import { configureConfidence } from '../characters/explorer/confidence.js';
+import { configureExplorerMemory } from '../characters/explorer/memory.js';
+import { configureAdversaryLimits } from '../characters/adversary/memory.js';
+import { configureAttack } from '../skills/attack.js';
 import { configureAdversaryBrain } from '../characters/adversary/brain.js';
 import { configureAdversaryPerception } from '../characters/adversary/perception.js';
 import { configureAdversaryMemory } from '../characters/adversary/memory.js';
@@ -72,6 +75,9 @@ function push() {
   configureAdversaryPerception(applied);
   configureAdversaryMemory(applied);
   configureAdversaryView(applied);
+  configureExplorerMemory(applied);
+  configureAdversaryLimits(applied);
+  configureAttack(applied);
   configureCoins(applied);
   configureHearts(applied);
 }
