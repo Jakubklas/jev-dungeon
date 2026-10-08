@@ -48,6 +48,11 @@ export class KnownWorld {
     return this.#game.coinPiles.filter((c) => this.#game.isKnown(c)).map((c) => [...c]);
   }
 
+  // Hearts on lit cells only (a heart on a dark cell must never leak).
+  seenHearts() {
+    return this.#game.heartPiles.filter((c) => this.#game.isKnown(c)).map((c) => [...c]);
+  }
+
   // The explorer's own step.
   move(dir) { return this.#game.applyMove(dir); }
 

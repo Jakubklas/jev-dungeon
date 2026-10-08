@@ -3,6 +3,7 @@
 // builds the browser view. The server uses only this module.
 import { Game, generateDungeon } from './dungeon.js';
 import { spawnCoins } from './coins.js';
+import { spawnHearts } from './hearts.js';
 import { brainView, graceLeft, seesExplorer, spawnAdversaries, stepAdversaries } from './characters/adversary/adversary.js';
 import { saveMemories } from './characters/adversary/memory.js';
 import { buildArena, explorerSkillSetOf } from './testbed.js';
@@ -151,14 +152,15 @@ export class Run {
       over: game.won || game.lost,
       directive: this.directive, // the live player directive { text, from_step, until_step, steps_left } or null
       testbed: !!game.dungeon.testbed,
-      heart_cells: game.heartPiles.map((c) => [...c]), // floating hearts (testbed, display only)
+      heart_cells: game.heartPiles.map((c) => [...c]), // floating hearts (restore a life)
     };
   }
 }
 
 export function newGame(seed, opts = {}) {
   const base = generateDungeon(seed ?? undefined);
-  const dungeon = { ...base, coins: spawnCoins(base) }; // own PRNG stream: the layout and spawns never change
+  const withCoins = { ...base, coins: spawnCoins(base) }; // own PRNG stream: the layout and spawns never change
+  const dungeon = { ...withCoins, hearts: spawnHearts(withCoins) }; // rare hearts, own stream too
   return new Run(dungeon, spawnAdversaries(dungeon), opts);
 }
 
