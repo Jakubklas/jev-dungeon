@@ -55,6 +55,8 @@ const HORIZON_LINE = [
 export const PRIORITY_MAX = 300;
 
 const at = (arr, level) => arr[level - 1];
+let HOME_RADIUS = [14, 24, null]; // path-step radius of the home zone per roaming level; null = the whole map
+let LONER_HEARING = 10; // a loner answers a call only when the explorer is this close
 
 // Levels 1/2/3 -> number. Standard (2) is today's value.
 const TABLE = {
@@ -99,11 +101,11 @@ export function profileOf(traitsIn) {
   for (const [knob, [trait, values]] of Object.entries(TABLE)) p[knob] = at(values, traits[trait]);
   // Loners ignore calls unless the explorer is close; loners make none either.
   p.answersCalls = traits.pack > 1;
-  p.answersCallsWithin = traits.pack === 1 ? 10 : null;
+  p.answersCallsWithin = traits.pack === 1 ? LONER_HEARING : null;
   p.makesCalls = traits.pack > 1;
   p.teamSight = traits.pack > 1;
   // roaming: path-step radius of the home zone; null = the whole map.
-  p.homeRadius = [14, 24, null][traits.roaming - 1];
+  p.homeRadius = HOME_RADIUS[traits.roaming - 1];
   p.preferredSearch = ['sweep_last_seen', null, 'cut_off'][traits.horizon - 1];
   p.priority = priorityLine(traits);
   p.skillPriority = at(STRIKE_LINE, traits.aggression);
@@ -199,3 +201,15 @@ export function assignSpawnCharacters(seed, count) {
     return WEIGHTS.findLast(([, w]) => w > 0)[0];
   });
 }
+
+// Central config: the trait-level tables (flat keys trait_<knob>, a list of 3 numbers each), the home radius and the loner hearing.
+export function configureTraits(o) {
+  for (const knob of Object.keys(TABLE)) {
+    const v = o[`trait_${knob}`];
+    if (Array.isArray(v) && v.length === 3) TABLE[knob][1] = [...v];
+  }
+  if (Array.isArray(o.trait_homeRadius) && o.trait_homeRadius.length === 3) HOME_RADIUS = [...o.trait_homeRadius];
+  if (typeof o.lonerHearing === 'number') LONER_HEARING = o.lonerHearing;
+}
+// The built-in tables, for the config check: { knob: [l1, l2, l3], homeRadius: [...], lonerHearing }. Fresh until configureTraits runs.
+export const traitDefaults = () => ({ ...Object.fromEntries(Object.entries(TABLE).map(([k, [, v]]) => [`trait_${k}`, [...v]])), trait_homeRadius: [...HOME_RADIUS], lonerHearing: LONER_HEARING });

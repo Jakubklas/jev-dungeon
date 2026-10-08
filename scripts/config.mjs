@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import YAML from 'yaml';
 import { KNOBS, isUserSetting } from '../src/config/registry.js';
-import { parseConfig, templateYaml, defaults } from '../src/config/load.js';
+import { parseConfig, templateYaml, defaults, eq } from '../src/config/load.js';
 import { configFile } from '../src/config/runtime.js';
 
 const [cmd, ...rest] = process.argv.slice(2);
@@ -64,7 +64,7 @@ if (!cmd || cmd === 'help') {
   const text = read();
   const { values } = parseConfig(text ? YAML.parse(text) : null);
   const d = defaults();
-  for (const row of KNOBS) if (row.key in values && values[row.key] !== d[row.key]) console.log(`${(row.path ?? row.key).padEnd(40)} ${fmt(d[row.key])} -> ${fmt(values[row.key])}`);
+  for (const row of KNOBS) if (row.key in values && !eq(values[row.key], d[row.key])) console.log(`${(row.path ?? row.key).padEnd(40)} ${fmt(d[row.key])} -> ${fmt(values[row.key])}`);
 } else if (cmd === 'user') {
   for (const row of KNOBS.filter(isUserSetting)) console.log(`${(row.path ?? row.key).padEnd(28)} ${row.label}`);
 } else if (cmd === 'docs') {

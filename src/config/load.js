@@ -12,7 +12,29 @@ const BY_KEY = new Map(KNOBS.map((s) => [s.key, s]));
 export const defaults = () => Object.fromEntries(KNOBS.map((s) => [s.key, s.def]));
 
 // Checks one value against its knob. Returns the cleaned value or throws a message.
+export const eq = (a, b) => (Array.isArray(a) || Array.isArray(b) ? JSON.stringify(a) === JSON.stringify(b) : a === b);
+const step1 = (def, v) => {
+  const dp = (String(def.step).split('.')[1] ?? '').length;
+  return Number((Math.round(v / def.step) * def.step).toFixed(dp));
+};
 export function clean(def, v) {
+  if (v === null && def.nullable) return null;
+  if (def.type === 'list') {
+    if (!Array.isArray(v)) throw new Error(`${def.label} must be a list`);
+    if (v.length > def.maxLen) throw new Error(`${def.label} holds at most ${def.maxLen} entries`);
+    if (new Set(v).size !== v.length) throw new Error(`${def.label} cannot repeat an entry`);
+    for (const x of v) if (!def.options.includes(x)) throw new Error(`${def.label}: '${x}' is not one of ${def.options.join(', ')}`);
+    return [...v];
+  }
+  if (def.type === 'tuple') {
+    if (!Array.isArray(v) || v.length !== def.len) throw new Error(`${def.label} must be a list of ${def.len} numbers`);
+    return v.map((x) => {
+      if (x === null && def.nullableElements) return null;
+      if (typeof x !== 'number' || !Number.isFinite(x)) throw new Error(`${def.label} entries must be numbers${def.nullableElements ? ' or null' : ''}`);
+      if (x < def.min || x > def.max) throw new Error(`${def.label} entries must be between ${def.min} and ${def.max}`);
+      return step1(def, x);
+    });
+  }
   if (def.type === 'choice') {
     if (!def.options.includes(v)) throw new Error(`${def.label} must be one of ${def.options.join(', ')}`);
     return v;
@@ -23,8 +45,7 @@ export function clean(def, v) {
   }
   if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${def.label} must be a number`);
   if (v < def.min || v > def.max) throw new Error(`${def.label} must be between ${def.min} and ${def.max}`);
-  const dp = (String(def.step).split('.')[1] ?? '').length;
-  return Number((Math.round(v / def.step) * def.step).toFixed(dp));
+  return step1(def, v);
 }
 
 // Cross-field rules on a full flat settings object. Returns a list of problems (empty = fine).
@@ -112,7 +133,7 @@ export function parseConfig(raw, names = []) {
 }
 
 // ---------- the commented YAML template ----------
-const scalar = (v) => YAML.stringify(v, { lineWidth: 0 }).trim();
+const scalar = (v) => YAML.stringify(v, { lineWidth: 0, collectionStyle: 'flow' }).trim();
 const COL = 34; // comments start in this column when the line is shorter
 
 const TRAIT_DOC = {

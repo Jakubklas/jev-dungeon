@@ -99,7 +99,41 @@ const P1_ROWS = [
   { ...num('testbedMinGap', 'testbed.minAdversaryGap', 4, 1, 30, 1, 'Default least path distance of a random monster from the start'), group: 'Testbed' },
   { key: 'testbedProps', path: 'testbed.props', group: 'Testbed', label: 'testbed.props', hint: 'Default prop preset', doc: 'Default prop preset: none, few or many', type: 'choice', options: ['none', 'few', 'many'], def: 'none', when: 'next', page: false },
 ];
-export const KNOBS = [...PAGE_ROWS, ...P1_ROWS];
+// ---- P2: skills, kinds, characters. File-only. Lists and tuples are compared by value (load.js eq). ----
+const LOADOUT_IDS = ['sword_strike', 'shield_block', 'claw_strike'];
+const list = (key, path, def, doc) => ({ key, path, group: 'Skills', label: path, hint: doc, doc, type: 'list', options: LOADOUT_IDS, maxLen: 4, def, when: 'next', page: false });
+const TRAIT_TABLE = [ // [knob, def (levels 1/2/3), min, max, step, doc]; max = the default's largest where a memory limit caps it
+  ['chaseRange', [5, 7, 7], 1, 20, 1, 'Cells within which a seen explorer starts a hunt'],
+  ['restTicks', [6, 3, 0], 0, 30, 1, 'Ticks a monster rests after giving up'],
+  ['maxSearchTicks', [10, 18, 32], 1, 120, 1, 'Ticks without sight before it gives up'],
+  ['keepHuntingMin', [0.65, 0.5, 0.3], 0, 1, 0.05, 'Keep-hunting answer below this ends the hunt'],
+  ['sweepRadius', [6, 10, 14], 1, 40, 1, 'How far a sweep search reaches, cells'],
+  ['cutMax', [12, 24, 36], 1, 100, 1, 'Longest cut-off route it will plan, steps'],
+  ['alertSteps', [8, 24, 40], 1, 120, 1, 'Path steps within which it hears a call'],
+  ['sightingsKept', [1, 3, 5], 1, 5, 1, 'Sightings of the explorer it remembers'],
+  ['sightingTtl', [12, 30, 60], 1, 300, 1, 'Ticks before a sighting is forgotten'],
+  ['landmarksCap', [3, 5, 8], 1, 8, 1, 'Landmarks it remembers'],
+  ['landmarkTtl', [40, 120, 300], 1, 1000, 1, 'Ticks before a landmark is forgotten'],
+  ['eventTtl', [40, 120, 300], 1, 1000, 1, 'Ticks before a memory event is forgotten'],
+  ['recentMoves', [4, 6, 6], 1, 6, 1, 'Own recent moves it remembers'],
+  ['recentCells', [6, 8, 8], 1, 8, 1, 'Own recent cells it remembers'],
+  ['seenTtl', [40, 120, 300], 1, 1000, 1, 'Limited map: ticks before a seen cell is forgotten'],
+  ['seenCap', [120, 300, 600], 10, 2000, 1, 'Limited map: most seen cells it keeps'],
+  ['keepDistance', [0, 0, 2], 0, 10, 1, 'Cells kept from an explorer whose sword is ready (0 = off)'],
+];
+const P2_ROWS = [
+  list('explorerSkills', 'explorer.skills', ['sword_strike', 'shield_block'], 'Skills the explorer starts with (at most 4; empty = none)'),
+  list('ghostSkills', 'monsters.kinds.ghost.skills', ['claw_strike'], 'Skills a ghost has (at most 4; empty = none)'),
+  list('trollSkills', 'monsters.kinds.troll.skills', ['claw_strike'], 'Skills a troll has (at most 4; empty = none)'),
+  { ...num('ghostSpeed', 'monsters.kinds.ghost.speed', 1, 0.2, 1, 0.05, 'Share of the global monster speed (1 = full)'), group: 'Skills' },
+  { ...num('ghostClawCooldown', 'monsters.kinds.ghost.clawCooldown', null, 0, 6, 1, 'Ghost claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
+  { ...num('trollClawCooldown', 'monsters.kinds.troll.clawCooldown', null, 0, 6, 1, 'Troll claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
+  { ...num('skillMin', 'skills.minProbability', 0.5, 0.1, 1, 0.05, 'Jev must be at least this sure to use a skill'), group: 'Skills' },
+  ...TRAIT_TABLE.map(([knob, def, min, max, step, doc]) => ({ ...num(`trait_${knob}`, `monsters.characters.traits.${knob}`, def, min, max, step, `${doc} (levels 1/2/3)`), group: 'Characters', type: 'tuple', len: 3 })),
+  { ...num('trait_homeRadius', 'monsters.characters.traits.homeRadius', [14, 24, null], 1, 200, 1, 'Home zone radius in path steps (levels 1/2/3; null = the whole map)'), group: 'Characters', type: 'tuple', len: 3, nullableElements: true },
+  { ...num('lonerHearing', 'monsters.characters.lonerHearing', 10, 1, 60, 1, 'A loner answers a call only when the explorer is this close, steps'), group: 'Characters' },
+];
+export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS];
 
 // Kind spawn weights are file-only (relative); trollShare = troll / (ghost + troll) is derived from them.
 export const KIND_WEIGHTS = [

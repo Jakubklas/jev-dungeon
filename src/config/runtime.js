@@ -16,13 +16,14 @@ import { configureAdversaries } from '../characters/adversary/adversary.js';
 import { configureSkills } from '../skills/config.js';
 import { configureCoins } from '../coins.js';
 import { configureHearts } from '../hearts.js';
-import { configureCharacters, configureDistribution } from '../characters/adversary/character.js';
+import { configureCharacters, configureDistribution, configureTraits } from '../characters/adversary/character.js';
+import { configureQuestion } from '../skills/question.js';
 import { KNOBS, isUserSetting } from './registry.js';
-import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml } from './load.js';
+import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml, eq } from './load.js';
 
 export { SCHEMA, defaults, validate };
 
-const BY_KEY = new Map(SCHEMA.map((s) => [s.key, s]));
+const BY_KEY = new Map(KNOBS.map((s) => [s.key, s]));
 
 // Resolved when called, not at import, so a script can set JEV_CONFIG first. null = no file.
 export function configFile() {
@@ -53,6 +54,8 @@ function push() {
   configureTestbed(applied);
   configureAdversaries(applied);
   configureSkills(applied);
+  configureQuestion(applied);
+  configureTraits(applied);
   configureCoins(applied);
   configureHearts(applied);
 }
@@ -107,7 +110,7 @@ export async function loadSettings(path) {
       if (!def) continue;
       try {
         const val = clean(def, v);
-        if (!legacy || val !== def.def) own[k] = val;
+        if (!legacy || !eq(val, def.def)) own[k] = val;
       } catch { /* skip the bad value */ }
     }
   } catch { /* no file yet */ }
@@ -120,7 +123,7 @@ export async function loadSettings(path) {
 // Picks up an edit of the file: live knobs apply now, the rest wait for applyNextGame().
 export async function refresh() {
   if (!(await readCentral())) return false;
-  for (const s of SCHEMA) if (s.when === 'live') applied[s.key] = saved[s.key];
+  for (const s of KNOBS) if (s.when === 'live') applied[s.key] = saved[s.key];
   push();
   return true;
 }
@@ -130,11 +133,11 @@ export async function refresh() {
 export async function saveSettings(input) {
   await readCentral();
   const next = validate(input, saved);
-  const overrides = Object.fromEntries(SCHEMA.filter((s) => next[s.key] !== base[s.key]).map((s) => [s.key, next[s.key]]));
+  const overrides = Object.fromEntries(KNOBS.filter((s) => !eq(next[s.key], base[s.key])).map((s) => [s.key, next[s.key]]));
   await writeFile(file, JSON.stringify({ _sparse: true, ...overrides }, null, 2) + '\n');
   own = overrides;
   saved = next;
-  for (const s of SCHEMA) if (s.when === 'live') applied[s.key] = saved[s.key];
+  for (const s of KNOBS) if (s.when === 'live') applied[s.key] = saved[s.key];
   push();
   return view();
 }
@@ -150,7 +153,7 @@ export const view = () => ({
   schema: SCHEMA,
   values: saved,
   defaults: defaults(),
-  pending: SCHEMA.filter((s) => s.when === 'next' && applied[s.key] !== saved[s.key]).map((s) => s.key),
+  pending: KNOBS.filter((s) => s.when === 'next' && !eq(applied[s.key], saved[s.key])).map((s) => s.key),
   central: { file: central.path, warnings: central.warnings },
 });
 

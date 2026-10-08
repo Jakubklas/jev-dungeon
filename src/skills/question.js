@@ -2,7 +2,8 @@
 // (Jev leans toward the first option: for ghosts that bias is wanted; the explorer's neutral wording
 // and its mood's skill line decide when it strikes).
 
-export const SKILL_MIN = 0.5; // a skill is used only when its probability reaches this
+export let SKILL_MIN = 0.5; // a skill is used only when its probability reaches this (skills.minProbability)
+export function configureQuestion(o) { if (typeof o.skillMin === 'number') SKILL_MIN = o.skillMin; }
 
 // options: { key: { fact } } from SkillSet.options. null when empty (nothing is asked).
 // neutral: the explorer's wording, which states the choice without steering toward `none` (its mood's

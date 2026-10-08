@@ -22,6 +22,10 @@ const D = await import('../src/dungeon.js');
 const CAT = await import('../src/props/catalog.js');
 const ADV = await import('../src/characters/adversary/adversary.js');
 const TB = await import('../src/testbed.js');
+const LD = await import('../src/skills/loadouts.js');
+const KD = await import('../src/characters/adversary/kinds.js');
+const QS = await import('../src/skills/question.js');
+const { eq } = L;
 const { generateDungeon } = D;
 
 // The 39 knobs as they were in src/settings.js before the registry (key, default, when): frozen on purpose.
@@ -95,10 +99,16 @@ const LIT = {
   testbedSizeW: TB.DEFAULTS.size[0], testbedSizeH: TB.DEFAULTS.size[1], testbedSeed: TB.DEFAULTS.seed, testbedNumAdversaries: TB.DEFAULTS.numAdversaries,
   testbedMinGap: TB.DEFAULTS.minAdversaryGap, testbedProps: TB.DEFAULTS.props,
   ...Object.fromEntries(Object.keys(CAT.KINDS).filter((id) => id !== 'torch').map((id) => [`propWeight_${id}`, CAT.KINDS[id].weight])),
+  // P2
+  explorerSkills: [...LD.DEFAULT_SETS.explorer], ghostSkills: [...LD.DEFAULT_SETS.ghost], trollSkills: [...KD.KINDS.troll.skills],
+  ghostSpeed: KD.KINDS.ghost.speed(), ghostClawCooldown: null, trollClawCooldown: null, skillMin: QS.SKILL_MIN,
+  ...C.traitDefaults(),
 };
+check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
+check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
 check(D.SPAWN_STEPS === ADV.MIN_SPAWN_STEPS, 'dungeon.js and adversary.js agree on the spawn distance');
 const allByKey = new Map(R.KNOBS.map((k) => [k.key, k]));
-for (const [key, lit] of Object.entries(LIT)) check(allByKey.get(key)?.def === lit, `${key}: registry default ${allByKey.get(key)?.def} != module literal ${lit}`);
+for (const [key, lit] of Object.entries(LIT)) check(eq(allByKey.get(key)?.def, lit), `${key}: registry default ${allByKey.get(key)?.def} != module literal ${lit}`);
 check(R.KNOBS.filter((k) => k.page === false).length === Object.keys(LIT).length, 'every file-only knob has a literal check');
 check(L.SCHEMA.every((s) => R.KNOBS.find((k) => k.key === s.key).page !== false), 'file-only knobs are not on the settings page');
 const sig = (seed) => { const d = generateDungeon(seed); return JSON.stringify([d.width, d.height, d.start, d.treasure, d.tiles.join(''), d.props.length, d.decor.length]); };
@@ -109,7 +119,7 @@ const tpl = L.templateYaml();
 const t = L.parseConfig(YAML.parse(tpl));
 check(t.warnings.length === 0, 'template has no warnings: ' + t.warnings.join('; '));
 const d = L.defaults();
-for (const k of Object.keys(d)) check(t.values[k] === d[k], `template value ${k}: ${t.values[k]} != ${d[k]}`);
+for (const k of Object.keys(d)) check(eq(t.values[k], d[k]), `template value ${k}: ${t.values[k]} != ${d[k]}`);
 check(Object.keys(t.presets).length === C.SPECIAL_IDS.length && t.mix === 'mixed', 'template carries every character preset and the mix');
 check(/ min: 25 +# /.test(tpl), 'template has inline comments');
 
@@ -201,6 +211,33 @@ await S.refresh();
 await S.applyNextGame();
 check(D.ROOM_MIN === 4 && CAT.CLUSTER_MAX === 3 && CAT.KINDS.fountain.weight === 1 && TB.DEFAULTS.props === 'none' && D.SPAWN_STEPS === 20, 'removing the keys restores every default');
 check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'and the dungeons are the baseline again');
+
+// 6c. P2: skills, kinds and character tables follow the file; bad lists are refused
+writeFileSync(cfg, `explorer: { skills: [claw_strike] }
+monsters:
+  kinds:
+    ghost: { speed: 0.5, clawCooldown: 4 }
+    troll: { clawCooldown: 0, skills: [claw_strike, sword_strike] }
+  characters: { traits: { chaseRange: [3, 9, 9], homeRadius: [10, 20, null] }, lonerHearing: 5 }
+skills: { minProbability: 0.7 }
+`);
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+await S.applyNextGame();
+check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['claw_strike']), 'explorer.skills changes the explorer set');
+check(KD.KINDS.ghost.speed() === 0.5 && KD.KINDS.ghost.tuning().claw_strike.cooldown === 4, 'ghost speed and claw cooldown follow the file');
+check(KD.KINDS.troll.tuning().claw_strike.cooldown === 0 && KD.KINDS.troll.tuning().claw_strike.damage === 2, 'troll claw cooldown 0 is honoured (not treated as unset) and its damage stays');
+check(eq(KD.KINDS.troll.skills, ['claw_strike', 'sword_strike']), 'troll skills follow the file');
+check(C.profileOf(C.traitsOf('aggressive')).chaseRange === 9 && C.profileOf(C.traitsOf('timid')).chaseRange === 3, 'trait table chaseRange follows the file');
+check(C.profileOf(C.traitsOf('timid')).answersCallsWithin === 5 && C.profileOf(C.traitsOf('rover')).homeRadius === null && C.profileOf(C.traitsOf('ambusher')).homeRadius === 10, 'home radius and loner hearing follow the file');
+check(QS.SKILL_MIN === 0.7, 'skills.minProbability reaches the skill question');
+p = L.parseConfig(YAML.parse('explorer: { skills: [sword_strike, sword_strike] }\nmonsters: { kinds: { troll: { skills: [fireball] } , ghost: { skills: [claw_strike, claw_strike, sword_strike, shield_block, sword_strike] } }, characters: { traits: { chaseRange: [1, 2] } } }'));
+check(p.warnings.length === 4 && !('explorerSkills' in p.values) && !('trollSkills' in p.values) && !('trait_chaseRange' in p.values), 'duplicate, unknown, too long and wrong-length lists are refused: ' + p.warnings.join(' | '));
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+await S.applyNextGame();
+check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

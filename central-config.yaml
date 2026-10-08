@@ -89,6 +89,7 @@ world:
 explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
   lives: 2 # Lives the explorer starts with
+  skills: [ sword_strike, shield_block ] # Skills the explorer starts with (at most 4; empty = none)
 
 # Sword, shield and the stun they cause.
 skills:
@@ -99,6 +100,7 @@ skills:
     effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
     cooldown: 2 # Steps before the shield can be raised again
   stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
+  minProbability: 0.5 # Jev must be at least this sure to use a skill
 
 # Ghosts and trolls: speed, packs, spawn, stats, characters.
 monsters:
@@ -111,6 +113,26 @@ monsters:
     clawCooldown: 2 # Steps before a monster can claw again
   characters:
     enabled: false # true = each monster gets a personality (see characters); false = all standard
+    traits:
+      chaseRange: [ 5, 7, 7 ] # Cells within which a seen explorer starts a hunt (levels 1/2/3)
+      restTicks: [ 6, 3, 0 ] # Ticks a monster rests after giving up (levels 1/2/3)
+      maxSearchTicks: [ 10, 18, 32 ] # Ticks without sight before it gives up (levels 1/2/3)
+      keepHuntingMin: [ 0.65, 0.5, 0.3 ] # Keep-hunting answer below this ends the hunt (levels 1/2/3)
+      sweepRadius: [ 6, 10, 14 ] # How far a sweep search reaches, cells (levels 1/2/3)
+      cutMax: [ 12, 24, 36 ] # Longest cut-off route it will plan, steps (levels 1/2/3)
+      alertSteps: [ 8, 24, 40 ] # Path steps within which it hears a call (levels 1/2/3)
+      sightingsKept: [ 1, 3, 5 ] # Sightings of the explorer it remembers (levels 1/2/3)
+      sightingTtl: [ 12, 30, 60 ] # Ticks before a sighting is forgotten (levels 1/2/3)
+      landmarksCap: [ 3, 5, 8 ] # Landmarks it remembers (levels 1/2/3)
+      landmarkTtl: [ 40, 120, 300 ] # Ticks before a landmark is forgotten (levels 1/2/3)
+      eventTtl: [ 40, 120, 300 ] # Ticks before a memory event is forgotten (levels 1/2/3)
+      recentMoves: [ 4, 6, 6 ] # Own recent moves it remembers (levels 1/2/3)
+      recentCells: [ 6, 8, 8 ] # Own recent cells it remembers (levels 1/2/3)
+      seenTtl: [ 40, 120, 300 ] # Limited map: ticks before a seen cell is forgotten (levels 1/2/3)
+      seenCap: [ 120, 300, 600 ] # Limited map: most seen cells it keeps (levels 1/2/3)
+      keepDistance: [ 0, 0, 2 ] # Cells kept from an explorer whose sword is ready (0 = off) (levels 1/2/3)
+      homeRadius: [ 14, 24, null ] # Home zone radius in path steps (levels 1/2/3; null = the whole map)
+    lonerHearing: 10 # A loner answers a call only when the explorer is this close, steps
     mix: mixed # 'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }
     presets:
       aggressive:
@@ -147,14 +169,14 @@ monsters:
         horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
         roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
         pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
-        style: Searches close, forgets quickly, gives up soon. # One line Jev reads as its personality
+        style: "Searches close, forgets quickly, gives up soon." # One line Jev reads as its personality
       timid:
         aggression: 1 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
         persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
         horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
         roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
         pack: 1 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
-        style: Only chases what is right next to it, quits quickly, never calls for help. # One line Jev reads as its personality
+        style: "Only chases what is right next to it, quits quickly, never calls for help." # One line Jev reads as its personality
       territorial:
         aggression: 3 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
         persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
@@ -181,11 +203,16 @@ monsters:
     ghost:
       clawDamage: 1 # Lives a ghost claw strike takes.
       hp: 2 # Hits a ghost takes before it is dispelled.
+      skills: [ claw_strike ] # Skills a ghost has (at most 4; empty = none)
+      speed: 1 # Share of the global monster speed (1 = full)
+      clawCooldown: null # Ghost claw cooldown, steps (null = the global clawCooldown)
       weight: 0.75 # Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls)
     troll:
       hp: 4 # Hits a troll takes before it is dispelled (a ghost has Ghost hit points).
       clawDamage: 2 # Lives a troll claw strike takes.
       speed: 0.65 # A troll moves at this share of the ghost speed.
+      skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
+      clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
       weight: 0.25 # Spawn weight, relative to the other kinds
 
 # Directives the player may whisper to the explorer.
