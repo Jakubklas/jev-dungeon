@@ -2,7 +2,7 @@
 
 **Bottom line.** Replace the 40 knobs in `src/settings.js` plus roughly 200 hard-coded constants with one YAML file, `central-config.yaml`, backed by a single typed registry in `src/config/`. Every module reads its numbers through that registry (or through the existing `configureX` hooks), so the file controls the world, props, skills, kinds, characters, moods, thresholds, prompt limits, and the Jev client. Do it in 8 phases; each phase leaves every check green and the default request hashes byte-identical. Recommended format: YAML through the one `yaml` npm package, because it keeps comments when the settings page writes back, which JSON cannot.
 
-Status: **P0 is built** (registry with the 39 existing knobs, YAML loader and layers, `userSetting` flag and `/api/config?scope=user`, `scripts/config.mjs`, `scripts/check-config.mjs`, migration of the earlier JSON file). P1 to P7 are not started. It replaced the JSON layer (`central-settings.json`).
+Status: **P0 is built** (registry with the 39 existing knobs, YAML loader and layers, `userSetting` flag and `/api/config?scope=user`, `scripts/config.mjs`, `scripts/check-config.mjs`, migration of the earlier JSON file). **P1 is built** (world, props, spawn distance, testbed defaults; 50 file-only knobs). P2 to P7 are not started. It replaced the JSON layer (`central-settings.json`).
 
 ## 1. Decisions (settled)
 

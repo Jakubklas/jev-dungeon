@@ -3,6 +3,7 @@
 //   path    where the knob lives in central-config.yaml (null = not a file key; trollShare is derived from the kind weights)
 //   group, label, hint   the settings page; doc is the one-line comment written next to it in the YAML
 //   when    'live' applies the moment it is saved, 'next' from the next game
+//   page    false = not on the settings page (only in the YAML, the CLI and the API); default true
 //   userSetting  may a player-facing UI list it? Inherited from the category (CATEGORIES) unless the knob says so; default false.
 // Adding a knob = adding a row here (and wiring its key in the module it tunes).
 
@@ -13,9 +14,10 @@ export const CATEGORIES = {
   skills: { userSetting: false, doc: 'Sword, shield and the stun they cause.' },
   monsters: { userSetting: false, doc: 'Ghosts and trolls: speed, packs, spawn, stats, characters.' },
   player: { userSetting: true, doc: 'Directives the player may whisper to the explorer.' },
+  testbed: { userSetting: false, doc: 'Defaults of the small test arenas (gyms).' },
 };
 
-export const KNOBS = [
+const PAGE_ROWS = [
   { key: 'speed', path: 'monsters.global.speed', group: 'Adversaries', label: 'Speed', hint: 'Fraction of the explorer\'s speed (1 = as fast).', doc: 'Monster speed as a share of the explorer (1 = same speed)', type: 'range', min: 0.1, max: 1, step: 0.05, def: 0.6, when: 'live' },
   { key: 'chaseRange', path: 'monsters.global.chaseRange', group: 'Adversaries', label: 'Chase range', hint: 'Cells within which a seen explorer starts a hunt.', doc: 'Cells within which a seen explorer starts a hunt', type: 'range', min: 1, max: 12, step: 1, def: 7, when: 'live' },
   { key: 'sightRange', path: 'world.sightRange', group: 'Adversaries', label: 'Sight range', hint: 'How far anyone sees along a clear line (both sides).', doc: 'How far anyone sees along a clear line (explorer and monsters)', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'live' },
@@ -56,6 +58,48 @@ export const KNOBS = [
   { key: 'maxSize', path: 'world.size.max', group: 'Map', label: 'Max map side', hint: 'Largest width or height.', doc: 'Largest map side', type: 'range', min: 25, max: 90, step: 1, def: 90, when: 'next' },
   { key: 'roomArea', path: 'world.roomArea', group: 'Map', label: 'Cells per room', hint: 'Fewer cells = more, closer rooms.', doc: 'Floor cells per room: lower = more, closer rooms', type: 'range', min: 120, max: 800, step: 10, def: 290, when: 'next' },
 ];
+
+// ---- P1: world, props, testbed. File-only (page: false); each default is the literal the module used to hold. ----
+const num = (key, path, def, min, max, step, doc) => ({ key, path, group: 'World', label: path, hint: doc, doc, type: 'range', min, max, step, def, when: 'next', page: false });
+const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner'];
+const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2 };
+const P1_ROWS = [
+  num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
+  num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),
+  num('minRooms', 'world.rooms.minCount', 4, 1, 20, 1, 'Fewest rooms a map gets'),
+  num('loopShare', 'world.corridors.loopShare', 0.25, 0, 1, 0.05, 'Extra loop corridors as a share of the rooms'),
+  num('loopMin', 'world.corridors.loopMin', 2, 0, 10, 1, 'Fewest loop corridors'),
+  num('treasureShare', 'world.treasureShare', 0.6, 0, 1, 0.05, 'The portal sits at least this share of the farthest path distance away'),
+  num('torchMin', 'world.props.torches.min', 1, 0, 6, 1, 'Fewest wall torches per room'),
+  num('torchMax', 'world.props.torches.max', 3, 1, 8, 1, 'Most wall torches per room'),
+  num('torchGap', 'world.props.torches.gap', 3, 1, 8, 1, 'Preferred spacing between wall items, cells'),
+  num('corridorTorchPerRoom', 'world.props.corridorTorches.perRoom', 0.4, 0, 2, 0.05, 'Expected corridor torches per room'),
+  num('corridorTorchGap', 'world.props.corridorTorches.gap', 5, 1, 12, 1, 'Spacing between corridor torches, cells'),
+  num('bigMinRun', 'world.props.big.minRun', 6, 3, 20, 1, 'Wall run needed for a fireplace, arch or gate, cells'),
+  num('bigChance', 'world.props.big.chance', 0.5, 0, 1, 0.05, 'Chance a long enough room gets a big wall piece'),
+  num('clusterSizeMin', 'world.props.clusters.sizeMin', 1, 1, 6, 1, 'Smallest solid prop cluster, cells'),
+  num('clusterSizeMax', 'world.props.clusters.sizeMax', 4, 1, 8, 1, 'Largest solid prop cluster, cells'),
+  num('clusterPerCells', 'world.props.clusters.perCells', 30, 5, 200, 1, 'About one cluster per this many inner room cells'),
+  num('clusterMax', 'world.props.clusters.max', 3, 0, 10, 1, 'Most clusters per room'),
+  num('clusterGap', 'world.props.clusters.gap', 2, 1, 5, 1, 'Cells kept between different clusters'),
+  num('clusterTries', 'world.props.clusters.tries', 25, 1, 200, 1, 'Placement attempts per room'),
+  num('minExits', 'world.props.minExits', 2, 1, 4, 1, 'Floor neighbours each solid prop leaves open'),
+  num('forgeRoomChance', 'world.props.forge.roomChance', 0.12, 0, 1, 0.01, 'Chance a big enough room gets a forge'),
+  num('forgeMinInner', 'world.props.forge.minInner', 4, 3, 10, 1, 'Room cells inside the edge ring, each way, a forge needs'),
+  num('forgeMinArea', 'world.props.forge.minArea', 20, 9, 100, 1, 'Inner room cells a forge needs'),
+  num('smallPerCells', 'world.props.small.perCells', 25, 5, 200, 1, 'About one small prop per this many room cells'),
+  num('smallMax', 'world.props.small.max', 3, 0, 12, 1, 'Most small props per room'),
+  num('corridorSmallPerCells', 'world.props.small.corridorPerCells', 150, 20, 600, 1, 'About one small prop per this many corridor cells'),
+  ...PROP_KINDS.map((id) => num(`propWeight_${id}`, `world.props.kinds.${id}.weight`, PROP_WEIGHT_DEF[id], 0, 10, 1, `How often ${id} is picked, relative to its class (0 = never picked at random)`)),
+  num('spawnMinSteps', 'monsters.spawn.minSteps', 20, 1, 60, 1, 'Path steps a monster spawns away from the explorer start'),
+  { ...num('testbedSizeW', 'testbed.size.w', 11, 3, 60, 1, 'Default arena width, floor cells'), group: 'Testbed' },
+  { ...num('testbedSizeH', 'testbed.size.h', 11, 3, 60, 1, 'Default arena height, floor cells'), group: 'Testbed' },
+  { ...num('testbedSeed', 'testbed.seed', 1, 0, 4294967295, 1, 'Default arena seed'), group: 'Testbed' },
+  { ...num('testbedNumAdversaries', 'testbed.numAdversaries', 1, 0, 8, 1, 'Default monsters per arena'), group: 'Testbed' },
+  { ...num('testbedMinGap', 'testbed.minAdversaryGap', 4, 1, 30, 1, 'Default least path distance of a random monster from the start'), group: 'Testbed' },
+  { key: 'testbedProps', path: 'testbed.props', group: 'Testbed', label: 'testbed.props', hint: 'Default prop preset', doc: 'Default prop preset: none, few or many', type: 'choice', options: ['none', 'few', 'many'], def: 'none', when: 'next', page: false },
+];
+export const KNOBS = [...PAGE_ROWS, ...P1_ROWS];
 
 // Kind spawn weights are file-only (relative); trollShare = troll / (ghost + troll) is derived from them.
 export const KIND_WEIGHTS = [

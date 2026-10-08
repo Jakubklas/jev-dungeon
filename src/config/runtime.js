@@ -10,6 +10,8 @@ import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { configureWorld } from '../dungeon.js';
+import { configureProps } from '../props/catalog.js';
+import { configureTestbed } from '../testbed.js';
 import { configureAdversaries } from '../characters/adversary/adversary.js';
 import { configureSkills } from '../skills/config.js';
 import { configureCoins } from '../coins.js';
@@ -46,7 +48,9 @@ let own = {}; // keys this server's settings.json overrides
 let central = { path: null, mtimeMs: null, warnings: [] };
 
 function push() {
-  configureWorld({ lightRadius: applied.lightRadius, sightRange: applied.sightRange, minSize: applied.minSize, maxSize: applied.maxSize, lives: applied.lives, roomArea: applied.roomArea });
+  configureWorld(applied);
+  configureProps(applied);
+  configureTestbed(applied);
   configureAdversaries(applied);
   configureSkills(applied);
   configureCoins(applied);

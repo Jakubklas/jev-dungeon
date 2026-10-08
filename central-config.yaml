@@ -18,6 +18,72 @@ world:
     min: 25 # Smallest map side
     max: 90 # Largest map side
   roomArea: 290 # Floor cells per room: lower = more, closer rooms
+  rooms:
+    min: 4 # Smallest room side, cells
+    max: 15 # Largest room side, cells
+    minCount: 4 # Fewest rooms a map gets
+  corridors:
+    loopShare: 0.25 # Extra loop corridors as a share of the rooms
+    loopMin: 2 # Fewest loop corridors
+  treasureShare: 0.6 # The portal sits at least this share of the farthest path distance away
+  props:
+    torches:
+      min: 1 # Fewest wall torches per room
+      max: 3 # Most wall torches per room
+      gap: 3 # Preferred spacing between wall items, cells
+    corridorTorches:
+      perRoom: 0.4 # Expected corridor torches per room
+      gap: 5 # Spacing between corridor torches, cells
+    big:
+      minRun: 6 # Wall run needed for a fireplace, arch or gate, cells
+      chance: 0.5 # Chance a long enough room gets a big wall piece
+    clusters:
+      sizeMin: 1 # Smallest solid prop cluster, cells
+      sizeMax: 4 # Largest solid prop cluster, cells
+      perCells: 30 # About one cluster per this many inner room cells
+      max: 3 # Most clusters per room
+      gap: 2 # Cells kept between different clusters
+      tries: 25 # Placement attempts per room
+    minExits: 2 # Floor neighbours each solid prop leaves open
+    forge:
+      roomChance: 0.12 # Chance a big enough room gets a forge
+      minInner: 4 # Room cells inside the edge ring, each way, a forge needs
+      minArea: 20 # Inner room cells a forge needs
+    small:
+      perCells: 25 # About one small prop per this many room cells
+      max: 3 # Most small props per room
+      corridorPerCells: 150 # About one small prop per this many corridor cells
+    kinds:
+      shelf:
+        weight: 3 # How often shelf is picked, relative to its class (0 = never picked at random)
+      crates:
+        weight: 3 # How often crates is picked, relative to its class (0 = never picked at random)
+      storage_chest:
+        weight: 2 # How often storage_chest is picked, relative to its class (0 = never picked at random)
+      fountain:
+        weight: 1 # How often fountain is picked, relative to its class (0 = never picked at random)
+      forge:
+        weight: 1 # How often forge is picked, relative to its class (0 = never picked at random)
+      pots:
+        weight: 3 # How often pots is picked, relative to its class (0 = never picked at random)
+      skull:
+        weight: 2 # How often skull is picked, relative to its class (0 = never picked at random)
+      tools:
+        weight: 2 # How often tools is picked, relative to its class (0 = never picked at random)
+      sword:
+        weight: 1 # How often sword is picked, relative to its class (0 = never picked at random)
+      anvil:
+        weight: 1 # How often anvil is picked, relative to its class (0 = never picked at random)
+      goblet:
+        weight: 1 # How often goblet is picked, relative to its class (0 = never picked at random)
+      fireplace:
+        weight: 3 # How often fireplace is picked, relative to its class (0 = never picked at random)
+      arch:
+        weight: 2 # How often arch is picked, relative to its class (0 = never picked at random)
+      gate:
+        weight: 2 # How often gate is picked, relative to its class (0 = never picked at random)
+      banner:
+        weight: 2 # How often banner is picked, relative to its class (0 = never picked at random)
 
 # The knight: lives and protection after a hit.
 explorer:
@@ -110,6 +176,7 @@ monsters:
   spawn:
     floorPerMonster: 150 # Floor cells per monster: lower = more monsters
     max: 12 # Cap on monsters per map (0 = none)
+    minSteps: 20 # Path steps a monster spawns away from the explorer start
   kinds:
     ghost:
       clawDamage: 1 # Lives a ghost claw strike takes.
@@ -127,6 +194,16 @@ player:
   maxChars: 140 # Longest directive in characters
   steps: 20 # Steps a directive stays live
   cooldownS: 10 # Seconds between two directives
+
+# Defaults of the small test arenas (gyms).
+testbed:
+  size:
+    w: 11 # Default arena width, floor cells
+    h: 11 # Default arena height, floor cells
+  seed: 1 # Default arena seed
+  numAdversaries: 1 # Default monsters per arena
+  minAdversaryGap: 4 # Default least path distance of a random monster from the start
+  props: none # Default prop preset: none, few or many
 
 # Per-instance overrides, same shape as everything above. Names: arena, gym (every instance of that kind),
 # arena/main, gym/main, arena/a1, ... Example:  arena/main: { explorer: { lives: 4 } }

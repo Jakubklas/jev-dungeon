@@ -18,6 +18,11 @@ const R = await import('../src/config/registry.js');
 const L = await import('../src/config/load.js');
 const S = await import('../src/config/runtime.js');
 const C = await import('../src/characters/adversary/character.js');
+const D = await import('../src/dungeon.js');
+const CAT = await import('../src/props/catalog.js');
+const ADV = await import('../src/characters/adversary/adversary.js');
+const TB = await import('../src/testbed.js');
+const { generateDungeon } = D;
 
 // The 39 knobs as they were in src/settings.js before the registry (key, default, when): frozen on purpose.
 const OLD = [
@@ -77,6 +82,27 @@ for (const k of R.KNOBS) {
   check(typeof k.doc === 'string' && k.doc.length > 0 && k.doc.length <= 100, `${k.key} has a short doc`);
   if (k.type === 'range') check(k.def >= k.min && k.def <= k.max, `${k.key} default inside its range`);
 }
+
+// 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
+const LIT = {
+  roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
+  torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
+  bigMinRun: CAT.BIG_MIN_RUN, bigChance: CAT.BIG_CHANCE, clusterSizeMin: CAT.CLUSTER_SIZE_MIN, clusterSizeMax: CAT.CLUSTER_SIZE_MAX, clusterPerCells: CAT.CLUSTER_PER_CELLS,
+  clusterMax: CAT.CLUSTER_MAX, clusterGap: CAT.CLUSTER_GAP, clusterTries: CAT.CLUSTER_TRIES, minExits: CAT.MIN_EXITS,
+  forgeRoomChance: CAT.FORGE_ROOM_CHANCE, forgeMinInner: CAT.FORGE_MIN_INNER, forgeMinArea: CAT.FORGE_MIN_AREA,
+  smallPerCells: CAT.SMALL_PER_CELLS, smallMax: CAT.SMALL_MAX, corridorSmallPerCells: CAT.CORRIDOR_SMALL_PER_CELLS,
+  spawnMinSteps: ADV.MIN_SPAWN_STEPS,
+  testbedSizeW: TB.DEFAULTS.size[0], testbedSizeH: TB.DEFAULTS.size[1], testbedSeed: TB.DEFAULTS.seed, testbedNumAdversaries: TB.DEFAULTS.numAdversaries,
+  testbedMinGap: TB.DEFAULTS.minAdversaryGap, testbedProps: TB.DEFAULTS.props,
+  ...Object.fromEntries(Object.keys(CAT.KINDS).filter((id) => id !== 'torch').map((id) => [`propWeight_${id}`, CAT.KINDS[id].weight])),
+};
+check(D.SPAWN_STEPS === ADV.MIN_SPAWN_STEPS, 'dungeon.js and adversary.js agree on the spawn distance');
+const allByKey = new Map(R.KNOBS.map((k) => [k.key, k]));
+for (const [key, lit] of Object.entries(LIT)) check(allByKey.get(key)?.def === lit, `${key}: registry default ${allByKey.get(key)?.def} != module literal ${lit}`);
+check(R.KNOBS.filter((k) => k.page === false).length === Object.keys(LIT).length, 'every file-only knob has a literal check');
+check(L.SCHEMA.every((s) => R.KNOBS.find((k) => k.key === s.key).page !== false), 'file-only knobs are not on the settings page');
+const sig = (seed) => { const d = generateDungeon(seed); return JSON.stringify([d.width, d.height, d.start, d.treasure, d.tiles.join(''), d.props.length, d.decor.length]); };
+const baseline = [11, 12, 13, 14].map(sig);
 
 // 2. the template parses back to the defaults, with no warning
 const tpl = L.templateYaml();
@@ -152,6 +178,29 @@ writeFileSync(cfg, 'world: { size: { min: 80, max: 30 } }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 check(S.view().values.minSize <= S.view().values.maxSize, 'an inconsistent file is ignored, not applied');
+
+// 6b. P1 knobs change the world as asked, and defaults change nothing
+check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'applying the defaults leaves every generated dungeon identical');
+writeFileSync(cfg, 'world: { rooms: { min: 6, max: 9, minCount: 4 }, props: { clusters: { max: 0 }, kinds: { fountain: { weight: 0 } } } }\nmonsters: { spawn: { minSteps: 12 } }\ntestbed: { size: { w: 7, h: 9 }, numAdversaries: 2, props: few }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+await S.applyNextGame();
+check(D.ROOM_MIN === 6 && D.ROOM_MAX === 9 && D.SPAWN_STEPS === 12 && ADV.MIN_SPAWN_STEPS === 12, 'world and spawn knobs reach dungeon.js and adversary.js');
+check(CAT.CLUSTER_MAX === 0 && CAT.KINDS.fountain.weight === 0, 'prop knobs reach the catalog');
+const roomsOk = [21, 22, 23, 24, 25].every((seed) => generateDungeon(seed).rooms.every((r) => r.w >= 6 && r.w <= 9 && r.h >= 6 && r.h <= 9));
+check(roomsOk, 'room sizes follow world.rooms.min/max');
+check([21, 22, 23].every((seed) => !generateDungeon(seed).props.some((p) => p.solid)), 'clusters.max 0 gives no solid props');
+check(JSON.stringify(TB.DEFAULTS.size) === '[7,9]' && TB.DEFAULTS.numAdversaries === 2 && TB.DEFAULTS.props === 'few', 'testbed defaults follow testbed.*');
+writeFileSync(cfg, 'world: { props: { kinds: { shelf: { weight: 0 }, crates: { weight: 0 }, storage_chest: { weight: 0 } } } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(S.view().central.warnings.some((w) => w.includes('solid prop')) && CAT.KINDS.shelf.weight === 3, 'a file that zeroes every solid prop kind is ignored with a warning');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+await S.applyNextGame();
+check(D.ROOM_MIN === 4 && CAT.CLUSTER_MAX === 3 && CAT.KINDS.fountain.weight === 1 && TB.DEFAULTS.props === 'none' && D.SPAWN_STEPS === 20, 'removing the keys restores every default');
+check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'and the dungeons are the baseline again');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

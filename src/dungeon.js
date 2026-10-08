@@ -10,8 +10,12 @@ export let LIGHT_RADIUS = 7;
 export let SIGHT_RANGE = 7;
 export let MIN_SIZE = 25;
 export let MAX_SIZE = 90;
-export const ROOM_MIN = 4; // room width and height are each ROOM_MIN..ROOM_MAX
-export const ROOM_MAX = 15;
+export let ROOM_MIN = 4; // room width and height are each ROOM_MIN..ROOM_MAX
+export let ROOM_MAX = 15;
+export let MIN_ROOMS = 4; // fewest rooms a map gets (a layout with fewer is redrawn)
+export let LOOP_SHARE = 0.25; // extra loop corridors as a share of the rooms ...
+export let LOOP_MIN = 2; // ... and at least this many
+export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
 export let EXPLORER_LIVES = 2; // lives the explorer starts with
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 
@@ -24,8 +28,15 @@ export function configureWorld(o) {
   if (o.maxSize !== undefined) MAX_SIZE = o.maxSize;
   if (o.lives !== undefined) EXPLORER_LIVES = o.lives;
   if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
+  if (o.roomMin !== undefined) ROOM_MIN = o.roomMin;
+  if (o.roomMax !== undefined) ROOM_MAX = o.roomMax;
+  if (o.minRooms !== undefined) MIN_ROOMS = o.minRooms;
+  if (o.loopShare !== undefined) LOOP_SHARE = o.loopShare;
+  if (o.loopMin !== undefined) LOOP_MIN = o.loopMin;
+  if (o.treasureShare !== undefined) TREASURE_SHARE = o.treasureShare;
+  if (o.spawnMinSteps !== undefined) SPAWN_STEPS = o.spawnMinSteps;
 }
-const SPAWN_STEPS = 20; // mirrors MIN_SPAWN_STEPS in characters/adversary/adversary.js
+export let SPAWN_STEPS = 20; // mirrors MIN_SPAWN_STEPS in characters/adversary/adversary.js (both set from spawnMinSteps)
 
 export const DIRS = {
   up: [0, -1],
@@ -97,7 +108,7 @@ function carve(rand, width, height) {
   const area = width * height;
   // Rooms are 4-15 a side, so each takes ~110 cells with its wall margin: one room per
   // ~ROOM_AREA cells keeps a similar packing density to the old 3-9 x 3-7 rooms.
-  const targetRooms = Math.max(4, Math.round(area / ROOM_AREA));
+  const targetRooms = Math.max(MIN_ROOMS, Math.round(area / ROOM_AREA));
   const rooms = [];
   for (let tries = 0; tries < targetRooms * 25 && rooms.length < targetRooms; tries++) {
     const w = int(ROOM_MIN, ROOM_MAX), h = int(ROOM_MIN, ROOM_MAX);
@@ -146,7 +157,7 @@ function carve(rand, width, height) {
     }
   }
   // Loops: link random rooms to one of their 2nd-4th nearest rooms, about n/4 times (at least 2).
-  const loops = Math.max(2, Math.round(n / 4));
+  const loops = Math.max(LOOP_MIN, Math.round(n * LOOP_SHARE));
   for (let i = 0, made = 0; i < loops * 4 && made < loops && n > 3; i++) {
     const a = int(0, n - 1);
     const near = rooms.map((r, j) => [gap(rooms[a], r), j]).filter(([, j]) => j !== a).sort((p, q) => p[0] - q[0] || p[1] - q[1]);
@@ -168,7 +179,7 @@ export function generateDungeon(seed = randomSeed()) {
   // Retry on the same PRNG stream in the rare case a layout comes out unusable.
   for (;;) {
     const { grid, rooms, center } = carve(rand, width, height);
-    if (rooms.length < 4) continue;
+    if (rooms.length < MIN_ROOMS) continue;
     const start = center(rooms[Math.floor(rand() * rooms.length)]);
     const { dist } = bfs(width, height, (i) => grid[(i / width) | 0][i % width] === '.', start[1] * width + start[0]);
     let maxD = 0;
@@ -180,7 +191,7 @@ export function generateDungeon(seed = randomSeed()) {
       for (let y = r.y; y < r.y + r.h; y++) {
         for (let x = r.x; x < r.x + r.w; x++) {
           const d = dist[y * width + x];
-          if (d > 0 && d >= 0.6 * maxD) pool.push([x, y]);
+          if (d > 0 && d >= TREASURE_SHARE * maxD) pool.push([x, y]);
           if (!spawnable && d >= SPAWN_STEPS && !(Math.hypot(x - start[0], y - start[1]) <= SIGHT_RANGE &&
             hasLineOfSight({ width, height, tiles: grid }, start, [x, y]))) spawnable = true;
         }

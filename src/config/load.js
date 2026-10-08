@@ -5,13 +5,18 @@ import YAML from 'yaml';
 import { KNOBS, KIND_WEIGHTS, CATEGORIES } from './registry.js';
 import { TRAITS, SPECIAL_IDS, defaultPresets } from '../characters/adversary/character.js';
 
-// The settings page's rows (the shape settings.html has always read).
-export const SCHEMA = KNOBS.map(({ key, group, label, hint, type, min, max, step, def, when }) => ({ key, group, label, hint, type, ...(type === 'range' ? { min, max, step } : {}), def, when }));
-const BY_KEY = new Map(SCHEMA.map((s) => [s.key, s]));
-export const defaults = () => Object.fromEntries(SCHEMA.map((s) => [s.key, s.def]));
+// The settings page's rows (the shape settings.html has always read). File-only knobs (page: false) are not on it.
+export const SCHEMA = KNOBS.filter((k) => k.page !== false).map(({ key, group, label, hint, type, min, max, step, def, when }) => ({ key, group, label, hint, type, ...(type === 'range' ? { min, max, step } : {}), def, when }));
+// Every knob, page or not: validation, defaults and the flat key space cover all of them.
+const BY_KEY = new Map(KNOBS.map((s) => [s.key, s]));
+export const defaults = () => Object.fromEntries(KNOBS.map((s) => [s.key, s.def]));
 
 // Checks one value against its knob. Returns the cleaned value or throws a message.
 export function clean(def, v) {
+  if (def.type === 'choice') {
+    if (!def.options.includes(v)) throw new Error(`${def.label} must be one of ${def.options.join(', ')}`);
+    return v;
+  }
   if (def.type === 'toggle') {
     if (typeof v !== 'boolean') throw new Error(`${def.label} must be on or off`);
     return v;
@@ -26,6 +31,13 @@ export function clean(def, v) {
 export function crossProblems(values) {
   const out = [];
   if (values.minSize > values.maxSize) out.push('Min map side cannot be larger than Max map side');
+  if (values.roomMin > values.roomMax) out.push('Smallest room side cannot be larger than the largest');
+  if (values.roomMax !== undefined && values.minSize !== undefined && values.roomMax + 2 > values.minSize) out.push('Largest room side must fit the smallest map (room side + 2 <= Min map side)');
+  if (values.torchMin > values.torchMax) out.push('Fewest torches cannot be more than the most');
+  if (values.clusterSizeMin > values.clusterSizeMax) out.push('Smallest cluster cannot be larger than the largest');
+  for (const [name, ids] of Object.entries({ 'solid prop': ['shelf', 'crates', 'storage_chest'], 'small prop': ['pots', 'skull', 'tools', 'sword', 'anvil', 'goblet'], 'big wall piece': ['fireplace', 'arch', 'gate', 'banner'] })) {
+    if (ids.every((id) => values[`propWeight_${id}`] === 0)) out.push(`At least one ${name} kind needs a weight above 0 (${ids.join(', ')})`);
+  }
   return out;
 }
 
