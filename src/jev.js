@@ -1,7 +1,9 @@
-// Talks to Jev. Every request is hedged (HEDGE identical copies, first answer wins,
-// the rest are aborted) and each copy retries rate limits and network errors with backoff.
+// Talks to Jev. Every request is hedged: copy 0 goes at once, each further copy (HEDGE in all) only if no answer has
+// come after HEDGE_DELAY_MS, so a normal call costs one request and only a slow one gets a second; the first answer wins, the rest are aborted and each copy retries rate limits and network errors with backoff.
 const API = 'https://api.typesafe.ai/v1/systemone';
 const HEDGE = 2;
+const HEDGE_DELAY_MS = 800; // measured: a call takes ~250 ms, the slow tail is 1-4 s; a second copy only pays for the tail
+const RETRY_STATUS = new Set([429, 502, 503, 504, 529]); // rate limit, and an upstream that is briefly down (503 'no healthy upstream')
 const RETRIES = 3;
 const TIMEOUT_MS = 20_000;
 
@@ -27,7 +29,7 @@ async function sendCopy(body, abort, copy) {
       }
       throw new Error(`Couldn't reach the TypeSafe API: ${err.cause?.code || err.message}`);
     }
-    if ((res.status === 429 || res.status === 529) && attempt < RETRIES) {
+    if (RETRY_STATUS.has(res.status) && attempt < RETRIES) {
       await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
       continue;
     }
@@ -41,7 +43,16 @@ export async function askJev(state, questions, body = JSON.stringify({ model: 'j
   const controllers = Array.from({ length: HEDGE }, () => new AbortController());
   let winner;
   try {
-    winner = await Promise.any(controllers.map((c, copy) => sendCopy(body, c.signal, copy)));
+    // Copy i starts after i * HEDGE_DELAY_MS unless some copy has answered by then (an abort cancels the wait).
+    winner = await Promise.any(controllers.map(async (c, copy) => {
+      if (copy > 0) {
+        await new Promise((resolve) => {
+          const t = setTimeout(resolve, copy * HEDGE_DELAY_MS);
+          c.signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
+        });
+      }
+      return sendCopy(body, c.signal, copy);
+    }));
   } catch (err) {
     throw err.errors?.[0] ?? err; // every copy failed; report the first reason
   }
