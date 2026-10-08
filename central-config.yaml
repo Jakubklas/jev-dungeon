@@ -90,6 +90,116 @@ explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
   lives: 2 # Lives the explorer starts with
   skills: [ sword_strike, shield_block ] # Skills the explorer starts with (at most 4; empty = none)
+  brain:
+    reviewEvery: 8 # Steps between approach reviews
+    approachFailing: 0.5 # approach_working below this switches the approach
+    redecideCooldown: 3 # Least ticks between decisions for a failing tactic
+    rememberSteps: 30 # Steps a remembered sighting lasts
+    skillNear: 10 # A skill is offered when an enemy is within this many cells
+    skillRememberSteps: 10 # A sighting this young still opens the skill gate, steps
+    threatSteps: 2 # A chaser within this many steps offers the block
+    ghostsCanAttack: true # Offer the block skill against attackers
+    holdMax: 5 # Ticks the engage hold waits for an enemy to come
+    holdAdjacentMax: 2 # Ticks beside an enemy without striking before the hold ends
+    pingpongFails: 3 # Back-and-forth moves that make a tactic fail
+    healNear: 12 # A heart this many steps away starts a heal when hurt above half
+    coinNear: 8 # A new coin pile this close can start a coin decision, steps
+    coinEvery: 10 # Least steps between coin decisions
+    coinSwitch: 0.5 # Probability the coin pick needs to switch approach
+    directiveDone: 0.5 # directive_done above this ends the player directive
+    directiveAskEvery: 5 # Steps between directive_done questions
+    leaveNow: 0.5 # leave_now above this switches to go_to_exit
+  perception:
+    sightingNear: 8 # A move within this many steps of a sighting counts as toward it
+    zoneSteps: 6 # Avoid-zone radius around an older sighting, steps
+    zoneNearSteps: 10 # Avoid-zone radius around a fresh sighting, steps
+    zoneFresh: 10 # A sighting younger than this is fresh, steps
+    zoneRecent: 15 # A sighting younger than this still shapes the avoid zone, steps
+    sectorSlack: 2 # Extra route length that still counts as behind a sighting
+    coinNear: 8 # A pile this close gets a toward fact on moves that close in, steps
+    factSightings: 3 # Most recent sightings that get path facts
+    surveyReach: 12 # Window for the unexplored-by-direction survey, cells
+    heartRunGap: 2 # A run to a heart keeps this many steps from every enemy
+    coinPiles: 3 # Nearest coin piles listed to Jev
+    defaultMinGap: 3 # Minimum enemy gap when no mood is set
+  encounter:
+    maxGap: 6 # Route survey looks for closest approaches up to this gap
+    hideMaxSteps: 10 # A hiding cell farther than this is not ducking, steps
+    areaCap: 600 # Flood-fill cap for the open area around the explorer, cells
+    pastCos: 0.5 # Cosine limit for a slip-past goal bearing
+    escapeFrontier: 20 # Escape-spot score for the edge of the known map
+    escapeThroughExit: 12 # Escape-spot score for cells beyond a room exit
+    escapeKeepGap: 2 # A kept escape goal stays good while a route keeps this gap
+    escapeTravel: 4 # Least steps to a new escape spot
+    holdGap: 2 # Steps the engage hold waits from an enemy
+  confidence:
+    history:
+      start: 50 # Neutral history score that regen returns to
+      hit: -7 # History change when the explorer is hit
+      struck: 5 # History change when a sword strike lands
+      dispelled: 8 # History change when an enemy is dispelled
+      blocked: 3 # History change when the shield stops a claw
+      evaded: 2 # History change when a chase is escaped
+      pressed: -1 # History change per tick under a chasing enemy
+      pressedMax: 8 # Most pressure loss per encounter
+      blockCeiling: 65 # A block lifts confidence only up to this
+      evadeCeiling: 65 # An escape lifts confidence only up to this
+    regen:
+      rate: 0.25 # Points per tick that history moves back toward neutral
+      wait: 10 # Quiet ticks before regen starts
+    tiers:
+      lowMax: 35 # Confidence up to this is the low tier
+      highMin: 70 # Confidence from this is the high tier
+      hysteresis: 5 # A tier is kept this far past its edge
+    panic:
+      enter: 20 # Panic starts below this confidence
+      exit: 25 # Panic ends at or above this confidence
+    cap:
+      lastLife: 45 # Highest confidence on the last life
+      floor: 0.3 # Share of the cap kept at one life of many
+      pressedRange: 2 # Steps within which a chaser presses, for replay
+    capability:
+      perExtraEnemy: 0.35 # Expected lives lost per extra enemy, per claw point
+      histSpan: 30 # History shifts capability by at most this; sightings fade over it
+      max: 70 # Capability never exceeds this
+      noSwordMax: 20 # Capability without an attack skill never exceeds this
+      hpBase: 0.75 # Enemy weight base
+      hpSlope: 0.125 # Enemy weight added per strike needed
+      hpStrikesMax: 5 # Strikes counted per enemy at most
+    bands:
+      dominant: 80 # Confidence from this reads dominant
+      sure: 65 # Confidence from this reads sure
+      even: 40 # Confidence from this reads even
+      unsure: 30 # Confidence from this reads unsure (below is shaken)
+  moods:
+    panic:
+      minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 8 # Ticks with no enemy in sight before an encounter is over
+    wary:
+      minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 5 # Ticks with no enemy in sight before an encounter is over
+    guarded:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+    cautious:
+      minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+    steady:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 4 # Ticks with no enemy in sight before an encounter is over
+    greedy:
+      minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 2 # Ticks with no enemy in sight before an encounter is over
+    bold:
+      minGap: 2 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+    fearless:
+      minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
+      endTicks: 1 # Ticks with no enemy in sight before an encounter is over
+    tiers:
+      low: [ wary, guarded ] # Moods the low tier offers, in question order (panic is never offered)
+      mid: [ cautious, steady, greedy, bold ] # Moods the mid tier offers, in question order (panic is never offered)
+      high: [ bold, fearless ] # Moods the high tier offers, in question order (panic is never offered)
 
 # Sword, shield and the stun they cause.
 skills:

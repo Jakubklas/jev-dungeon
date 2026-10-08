@@ -19,28 +19,28 @@
 //             (any other event that moves C restarts the wait); the caller sends one per tick
 // Every change ends with C clamped to 0..100 and to the lives cap.
 
-export const START = 50;
-export const D_HIT = -7;
-export const D_STRUCK = 5;
-export const D_DISPELLED = 8;
-export const D_BLOCKED = 3;
-export const D_EVADED = 2;
-export const D_PRESSED = -1;
-export const PRESSED_MAX = 8; // per encounter
-export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
-export const REGEN_WAIT = 10; // ticks since C last changed before regen starts
-export const TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..69, high >= 70
-export const TIER_HIGH_MIN = 70; // the start C (70) is already high: Jev begins confident and takes on enemies unless it has a reason not to
-export const TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 65)
-export const PANIC_ENTER = 20; // panic starts below this
-export const PANIC_EXIT = 25; // and ends only at or above this
-export const BLOCK_CEILING = 65;
-export const EVADE_CEILING = 65;
-export const LAST_LIFE_CAP = 45;
-export const CAP_FLOOR = 0.3; // cap = 100 * (CAP_FLOOR + (1 - CAP_FLOOR) * lives / maxLives)
+export let START = 50;
+export let D_HIT = -7;
+export let D_STRUCK = 5;
+export let D_DISPELLED = 8;
+export let D_BLOCKED = 3;
+export let D_EVADED = 2;
+export let D_PRESSED = -1;
+export let PRESSED_MAX = 8; // per encounter
+export let REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
+export let REGEN_WAIT = 10; // ticks since C last changed before regen starts
+export let TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..69, high >= 70
+export let TIER_HIGH_MIN = 70; // the start C (70) is already high: Jev begins confident and takes on enemies unless it has a reason not to
+export let TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 65)
+export let PANIC_ENTER = 20; // panic starts below this
+export let PANIC_EXIT = 25; // and ends only at or above this
+export let BLOCK_CEILING = 65;
+export let EVADE_CEILING = 65;
+export let LAST_LIFE_CAP = 45;
+export let CAP_FLOOR = 0.3; // cap = 100 * (CAP_FLOOR + (1 - CAP_FLOOR) * lives / maxLives)
 // Band lower bounds: <30 shaken, 30-39 unsure, 40-64 even, 65-79 sure, 80+ dominant.
 export const BANDS = [[80, 'dominant'], [65, 'sure'], [40, 'even'], [30, 'unsure'], [0, 'shaken']];
-export const PRESSED_RANGE = 2; // steps, for applyTurn
+export let PRESSED_RANGE = 2; // steps, for applyTurn
 
 // The default event weights as one object, so C4's sweep can swap them (createConfidence({ weights })).
 export const WEIGHTS = { hit: D_HIT, struck: D_STRUCK, dispelled: D_DISPELLED, blocked: D_BLOCKED, evaded: D_EVADED, pressed: D_PRESSED };
@@ -170,14 +170,14 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
 // Expected lives lost per extra ghost beyond the first, per point of claw damage. 0.35 is the owner's default (a bolder
 // explorer: three 2-hp ghosts at 2 lives read 'even', 43); 0.5 is the measured worst case (a walk-in Jev, PLAN-confidence-mood
 // table 3) and stays exported so tests and the later measurement can compare the two.
-export const W_PER_EXTRA = 0.35;
+export let W_PER_EXTRA = 0.35;
 export const W_PER_EXTRA_SAFE = 0.5;
-export const HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
-export const CAPABILITY_MAX = 70; // capability never exceeds this: the start is 70, not a lives-dependent 80+
-export const NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
-const HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
-const HP_SLOPE = 0.125;
-const HP_STRIKES_MAX = 5;
+export let HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
+export let CAPABILITY_MAX = 70; // capability never exceeds this: the start is 70, not a lives-dependent 80+
+export let NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
+let HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
+let HP_SLOPE = 0.125;
+let HP_STRIKES_MAX = 5;
 
 // Weight of a remembered sighting `ageSteps` old: 1 when fresh, 0 from HIST_SPAN on (a visible ghost has weight 1).
 export function sightWeight(ageSteps) {
@@ -226,3 +226,45 @@ export function allowedMoods(C, { lastLife = false, swordDown = false, current =
 export function defaultMood(list) {
   return ['steady', 'guarded', 'bold'].find((id) => list.includes(id)) ?? list[0];
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.
+export function configureConfidence(o) {
+  if (o.confStart !== undefined) START = o.confStart;
+  if (o.confHit !== undefined) D_HIT = o.confHit;
+  if (o.confStruck !== undefined) D_STRUCK = o.confStruck;
+  if (o.confDispelled !== undefined) D_DISPELLED = o.confDispelled;
+  if (o.confBlocked !== undefined) D_BLOCKED = o.confBlocked;
+  if (o.confEvaded !== undefined) D_EVADED = o.confEvaded;
+  if (o.confPressed !== undefined) D_PRESSED = o.confPressed;
+  if (o.confPressedMax !== undefined) PRESSED_MAX = o.confPressedMax;
+  if (o.confBlockCeiling !== undefined) BLOCK_CEILING = o.confBlockCeiling;
+  if (o.confEvadeCeiling !== undefined) EVADE_CEILING = o.confEvadeCeiling;
+  if (o.confRegen !== undefined) REGEN = o.confRegen;
+  if (o.confRegenWait !== undefined) REGEN_WAIT = o.confRegenWait;
+  if (o.confTierLowMax !== undefined) TIER_LOW_MAX = o.confTierLowMax;
+  if (o.confTierHighMin !== undefined) TIER_HIGH_MIN = o.confTierHighMin;
+  if (o.confTierHyst !== undefined) TIER_HYST = o.confTierHyst;
+  if (o.confPanicEnter !== undefined) PANIC_ENTER = o.confPanicEnter;
+  if (o.confPanicExit !== undefined) PANIC_EXIT = o.confPanicExit;
+  if (o.confLastLifeCap !== undefined) LAST_LIFE_CAP = o.confLastLifeCap;
+  if (o.confCapFloor !== undefined) CAP_FLOOR = o.confCapFloor;
+  if (o.confPressedRange !== undefined) PRESSED_RANGE = o.confPressedRange;
+  if (o.confWPerExtra !== undefined) W_PER_EXTRA = o.confWPerExtra;
+  if (o.confHistSpan !== undefined) HIST_SPAN = o.confHistSpan;
+  if (o.confCapabilityMax !== undefined) CAPABILITY_MAX = o.confCapabilityMax;
+  if (o.confNoSwordMax !== undefined) NO_SWORD_MAX = o.confNoSwordMax;
+  if (o.confHpBase !== undefined) HP_BASE = o.confHpBase;
+  if (o.confHpSlope !== undefined) HP_SLOPE = o.confHpSlope;
+  if (o.confHpStrikesMax !== undefined) HP_STRIKES_MAX = o.confHpStrikesMax;
+  WEIGHTS.hit = D_HIT; WEIGHTS.struck = D_STRUCK; WEIGHTS.dispelled = D_DISPELLED; WEIGHTS.blocked = D_BLOCKED; WEIGHTS.evaded = D_EVADED; WEIGHTS.pressed = D_PRESSED;
+  if (o.confBandDominant !== undefined) BANDS[0][0] = o.confBandDominant;
+  if (o.confBandSure !== undefined) BANDS[1][0] = o.confBandSure;
+  if (o.confBandEven !== undefined) BANDS[2][0] = o.confBandEven;
+  if (o.confBandUnsure !== undefined) BANDS[3][0] = o.confBandUnsure;
+  for (const t of ['low', 'mid', 'high']) {
+    const v = o[`tierMoods_${t}`];
+    if (Array.isArray(v)) TIER_MOODS[t] = [...v];
+  }
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const confidenceSnapshot = () => ({ confStart: START, confHit: D_HIT, confStruck: D_STRUCK, confDispelled: D_DISPELLED, confBlocked: D_BLOCKED, confEvaded: D_EVADED, confPressed: D_PRESSED, confPressedMax: PRESSED_MAX, confBlockCeiling: BLOCK_CEILING, confEvadeCeiling: EVADE_CEILING, confRegen: REGEN, confRegenWait: REGEN_WAIT, confTierLowMax: TIER_LOW_MAX, confTierHighMin: TIER_HIGH_MIN, confTierHyst: TIER_HYST, confPanicEnter: PANIC_ENTER, confPanicExit: PANIC_EXIT, confLastLifeCap: LAST_LIFE_CAP, confCapFloor: CAP_FLOOR, confPressedRange: PRESSED_RANGE, confWPerExtra: W_PER_EXTRA, confHistSpan: HIST_SPAN, confCapabilityMax: CAPABILITY_MAX, confNoSwordMax: NO_SWORD_MAX, confHpBase: HP_BASE, confHpSlope: HP_SLOPE, confHpStrikesMax: HP_STRIKES_MAX, confBandDominant: BANDS[0][0], confBandSure: BANDS[1][0], confBandEven: BANDS[2][0], confBandUnsure: BANDS[3][0], tierMoods_low: [...TIER_MOODS.low], tierMoods_mid: [...TIER_MOODS.mid], tierMoods_high: [...TIER_MOODS.high] });

@@ -25,6 +25,10 @@ const TB = await import('../src/testbed.js');
 const LD = await import('../src/skills/loadouts.js');
 const KD = await import('../src/characters/adversary/kinds.js');
 const QS = await import('../src/skills/question.js');
+const BR = await import('../src/characters/explorer/brain.js');
+const PE = await import('../src/characters/explorer/perception.js');
+const EN = await import('../src/characters/explorer/encounter.js');
+const CF = await import('../src/characters/explorer/confidence.js');
 const { eq } = L;
 const { generateDungeon } = D;
 
@@ -103,6 +107,8 @@ const LIT = {
   explorerSkills: [...LD.DEFAULT_SETS.explorer], ghostSkills: [...LD.DEFAULT_SETS.ghost], trollSkills: [...KD.KINDS.troll.skills],
   ghostSpeed: KD.KINDS.ghost.speed(), ghostClawCooldown: null, trollClawCooldown: null, skillMin: QS.SKILL_MIN,
   ...C.traitDefaults(),
+  // P3
+  ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot(),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
@@ -238,6 +244,41 @@ await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();
 check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
+
+// 6d. P3: the explorer's thresholds, confidence model and moods follow the file; inconsistent ones are refused
+writeFileSync(cfg, `explorer:
+  brain: { holdMax: 7, reviewEvery: 12, ghostsCanAttack: false }
+  perception: { zoneRecent: 25 }
+  encounter: { holdGap: 3 }
+  confidence:
+    history: { hit: -12, dispelled: 10 }
+    panic: { enter: 15, exit: 30 }
+    bands: { dominant: 90 }
+  moods:
+    wary: { minGap: 5, endTicks: 7 }
+    tiers: { low: [guarded, wary] }
+`);
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(BR.explorerBrainSnapshot().brainHoldMax === 7 && BR.explorerBrainSnapshot().brainReviewEvery === 12 && BR.explorerBrainSnapshot().brainGhostsCanAttack === false, 'brain thresholds follow the file (live: no new game needed)');
+check(PE.explorerPerceptionSnapshot().percZoneRecent === 25 && EN.explorerEncounterSnapshot().encHoldGap === 3, 'perception and encounter thresholds follow the file');
+check(CF.WEIGHTS.hit === -12 && CF.WEIGHTS.dispelled === 10 && CF.D_HIT === -12, 'confidence event weights follow the file');
+check(CF.createConfidence() && CF.band(85) === 'sure' && CF.band(90) === 'dominant', 'confidence bands follow the file');
+check(CF.panicNext(17, false) === false && CF.panicNext(12, false) === true && CF.panicNext(28, true) === true && CF.panicNext(31, true) === false, 'panic enter/exit follow the file');
+check(BR.profileOf({ sentiment: { id: 'wary' } }).min_gap === 5 && BR.profileOf({ sentiment: { id: 'wary' } }).end_ticks === 7, 'mood min_gap and end_ticks follow the file');
+check(eq(CF.TIER_MOODS.low, ['guarded', 'wary']) && eq(CF.allowedMoods(10), ['guarded', 'wary']), 'tier mood lists (and their order) follow the file');
+p = L.parseConfig(YAML.parse('explorer: { confidence: { panic: { enter: 30, exit: 20 }, tiers: { lowMax: 80, highMin: 70 }, bands: { dominant: 50 } }, moods: { tiers: { mid: [] } } }'));
+check(p.warnings.length === 1 && p.warnings[0].includes('explorer.moods.tiers.mid'), 'an empty tier is refused by name: ' + p.warnings.join(' | '));
+writeFileSync(cfg, 'explorer: { confidence: { panic: { enter: 30, exit: 20 } } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(S.view().central.warnings.some((w) => w.includes('Panic')) && CF.confidenceSnapshot().confPanicEnter === 20, 'a file with panic exit below enter is ignored with a warning');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+const sortedEntries = (o) => JSON.stringify(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
+const nowP3 = { ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot() };
+check(sortedEntries(nowP3) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in nowP3))), 'removing the keys restores every P3 default');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

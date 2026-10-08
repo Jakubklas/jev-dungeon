@@ -34,19 +34,19 @@ import {
 } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
-const REVIEW_EVERY = 8; // steps between approach reviews
-const APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
-const REDECIDE_COOLDOWN = 3; // min ticks between decision steps for a failing tactic
-const REMEMBER_STEPS = 30; // a remembered sighting expires after this many steps
-const SKILL_NEAR = 10; // loose gate (PLAN D7): an opponent visible, or remembered fresh, within this many cells
-const SKILL_REMEMBER_STEPS = 10; // a sighting this young still opens the gate
-const THREAT_STEPS = 2; // a visible chaser within this many path steps offers the block
+let REVIEW_EVERY = 8; // steps between approach reviews
+let APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
+let REDECIDE_COOLDOWN = 3; // min ticks between decision steps for a failing tactic
+let REMEMBER_STEPS = 30; // a remembered sighting expires after this many steps
+let SKILL_NEAR = 10; // loose gate (PLAN D7): an opponent visible, or remembered fresh, within this many cells
+let SKILL_REMEMBER_STEPS = 10; // a sighting this young still opens the gate
+let THREAT_STEPS = 2; // a visible chaser within this many path steps offers the block
 // Ghosts get their claw attack in a later phase (PLAN S4). Until then a block has nothing to stop; the
 // plan wants it left out, but this phase offers it anyway. Flip to false to hide the block option.
-const GHOSTS_CAN_ATTACK = true;
-const HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps off a hunting ghost before the normal question returns
-const HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
-const PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
+let GHOSTS_CAN_ATTACK = true;
+let HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps off a hunting ghost before the normal question returns
+let HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
+let PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
 // The real Jev call; a Run or a check passes `ask` to replace it.
@@ -206,13 +206,13 @@ function combatRule({ name, damage, cooldown, stun, coinChance, clawCooldown, sh
 
 // Encounter sentences that repeat a tactic option's own fact (dropped when the tactic question is asked).
 const TACTIC_FACT_KEYS = ['slip_past', 'hide', 'run_away', 'exit'];
-const HEAL_NEAR = 12; // when hurt but above half the lives, a seen heart this many known-path steps away or less starts `heal`
-const COIN_NEAR = 8; // a newly seen pile this many known-path steps away or less can start a coin decision
-const COIN_EVERY = 10; // min steps between coin decisions
-const COIN_SWITCH = 0.5; // the coin decision's next_approach pick must reach this probability to switch
-const DIRECTIVE_DONE = 0.5; // directive_done.noul above this ends the player's directive early (PLAN-inject I4)
-const DIRECTIVE_ASK_EVERY = 5; // steps between two directive_done questions
-const LEAVE_NOW = 0.5; // leave_now.noul above this switches the approach to go_to_exit
+let HEAL_NEAR = 12; // when hurt but above half the lives, a seen heart this many known-path steps away or less starts `heal`
+let COIN_NEAR = 8; // a newly seen pile this many known-path steps away or less can start a coin decision
+let COIN_EVERY = 10; // min steps between coin decisions
+let COIN_SWITCH = 0.5; // the coin decision's next_approach pick must reach this probability to switch
+let DIRECTIVE_DONE = 0.5; // directive_done.noul above this ends the player's directive early (PLAN-inject I4)
+let DIRECTIVE_ASK_EVERY = 5; // steps between two directive_done questions
+let LEAVE_NOW = 0.5; // leave_now.noul above this switches the approach to go_to_exit
 const withoutKeys = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
 // self.skills as Jev reads it: id -> 'ready' | 'ready in N' (the id names the skill; the rules sentence and
@@ -1416,3 +1416,31 @@ export class ExplorerBrain {
     return { from, to: 'go_to_exit', reason };
   }
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.
+export function configureExplorerBrain(o) {
+  if (o.brainReviewEvery !== undefined) REVIEW_EVERY = o.brainReviewEvery;
+  if (o.brainApproachFailing !== undefined) APPROACH_FAILING = o.brainApproachFailing;
+  if (o.brainRedecideCooldown !== undefined) REDECIDE_COOLDOWN = o.brainRedecideCooldown;
+  if (o.brainRememberSteps !== undefined) REMEMBER_STEPS = o.brainRememberSteps;
+  if (o.brainSkillNear !== undefined) SKILL_NEAR = o.brainSkillNear;
+  if (o.brainSkillRememberSteps !== undefined) SKILL_REMEMBER_STEPS = o.brainSkillRememberSteps;
+  if (o.brainThreatSteps !== undefined) THREAT_STEPS = o.brainThreatSteps;
+  if (o.brainGhostsCanAttack !== undefined) GHOSTS_CAN_ATTACK = o.brainGhostsCanAttack;
+  if (o.brainHoldMax !== undefined) HOLD_MAX = o.brainHoldMax;
+  if (o.brainHoldAdjacentMax !== undefined) HOLD_ADJACENT_MAX = o.brainHoldAdjacentMax;
+  if (o.brainPingpongFails !== undefined) PINGPONG_FAILS = o.brainPingpongFails;
+  if (o.brainHealNear !== undefined) HEAL_NEAR = o.brainHealNear;
+  if (o.brainCoinNear !== undefined) COIN_NEAR = o.brainCoinNear;
+  if (o.brainCoinEvery !== undefined) COIN_EVERY = o.brainCoinEvery;
+  if (o.brainCoinSwitch !== undefined) COIN_SWITCH = o.brainCoinSwitch;
+  if (o.brainDirectiveDone !== undefined) DIRECTIVE_DONE = o.brainDirectiveDone;
+  if (o.brainDirectiveAskEvery !== undefined) DIRECTIVE_ASK_EVERY = o.brainDirectiveAskEvery;
+  if (o.brainLeaveNow !== undefined) LEAVE_NOW = o.brainLeaveNow;
+  for (const id of Object.keys(SENTIMENTS)) {
+    if (o[`mood_${id}_minGap`] !== undefined) SENTIMENTS[id].min_gap = o[`mood_${id}_minGap`];
+    if (o[`mood_${id}_endTicks`] !== undefined) SENTIMENTS[id].end_ticks = o[`mood_${id}_endTicks`];
+  }
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });

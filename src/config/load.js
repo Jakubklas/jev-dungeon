@@ -22,6 +22,7 @@ export function clean(def, v) {
   if (def.type === 'list') {
     if (!Array.isArray(v)) throw new Error(`${def.label} must be a list`);
     if (v.length > def.maxLen) throw new Error(`${def.label} holds at most ${def.maxLen} entries`);
+    if (def.minLen && v.length < def.minLen) throw new Error(`${def.label} needs at least ${def.minLen} entr${def.minLen === 1 ? 'y' : 'ies'}`);
     if (new Set(v).size !== v.length) throw new Error(`${def.label} cannot repeat an entry`);
     for (const x of v) if (!def.options.includes(x)) throw new Error(`${def.label}: '${x}' is not one of ${def.options.join(', ')}`);
     return [...v];
@@ -56,6 +57,9 @@ export function crossProblems(values) {
   if (values.roomMax !== undefined && values.minSize !== undefined && values.roomMax + 2 > values.minSize) out.push('Largest room side must fit the smallest map (room side + 2 <= Min map side)');
   if (values.torchMin > values.torchMax) out.push('Fewest torches cannot be more than the most');
   if (values.clusterSizeMin > values.clusterSizeMax) out.push('Smallest cluster cannot be larger than the largest');
+  if (values.confPanicExit < values.confPanicEnter) out.push('Panic must end at or above the confidence where it starts');
+  if (values.confTierLowMax >= values.confTierHighMin) out.push('The low tier must end below the confidence where the high tier starts');
+  if (!(values.confBandDominant > values.confBandSure && values.confBandSure > values.confBandEven && values.confBandEven > values.confBandUnsure && values.confBandUnsure >= 0)) out.push('Confidence bands must fall: dominant > sure > even > unsure');
   for (const [name, ids] of Object.entries({ 'solid prop': ['shelf', 'crates', 'storage_chest'], 'small prop': ['pots', 'skull', 'tools', 'sword', 'anvil', 'goblet'], 'big wall piece': ['fireplace', 'arch', 'gate', 'banner'] })) {
     if (ids.every((id) => values[`propWeight_${id}`] === 0)) out.push(`At least one ${name} kind needs a weight above 0 (${ids.join(', ')})`);
   }

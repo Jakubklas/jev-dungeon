@@ -9,9 +9,9 @@
 import { ADVERSARY_SPEED } from '../adversary/adversary.js';
 import { compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, sameCell, step } from './known-map.js';
 
-const MAX_GAP = 6; // the route survey looks for closest approaches up to this many steps
-const HIDE_MAX_STEPS = 10; // a hiding cell farther than this is not "ducking"
-const AREA_CAP = 600; // flood-fill cap for the open area around the explorer
+let MAX_GAP = 6; // the route survey looks for closest approaches up to this many steps
+let HIDE_MAX_STEPS = 10; // a hiding cell farther than this is not "ducking"
+let AREA_CAP = 600; // flood-fill cap for the open area around the explorer
 
 // Most steps an adversary can have taken by the time the explorer has taken `i` (rounded up: conservative).
 const advSteps = (i) => Math.ceil(i * ADVERSARY_SPEED - 1e-9);
@@ -101,7 +101,7 @@ function nearestThreat(world, threats) {
 
 // A goal lies "past" the adversary when it is beyond it as seen from the explorer: within 60
 // degrees of the adversary's bearing and at least as far away as the adversary is.
-const PAST_COS = 0.5;
+let PAST_COS = 0.5;
 function isPast(world, th, cell) {
   const [px, py] = world.pos;
   const dot = (th.pos[0] - px) * (cell[0] - px) + (th.pos[1] - py) * (cell[1] - py);
@@ -146,10 +146,10 @@ const gapWords = (g) => (g >= MAX_GAP ? `${MAX_GAP} or more steps` : plural(g, '
 
 // Bonuses that make an escape lead OUT of a room instead of into its far corner: a cell on the edge of
 // the known map (the run continues into new space) or in a corridor/junction (past a room's exit).
-const ESCAPE_FRONTIER = 20;
-const ESCAPE_THROUGH_EXIT = 12;
-const ESCAPE_KEEP_GAP = 2; // a kept goal stays good while a route to it keeps this gap
-const ESCAPE_TRAVEL = 4; // the first steps toward a new escape spot cost nothing: it is picked by distance from the adversary, so no hopping to the next cell and back
+let ESCAPE_FRONTIER = 20;
+let ESCAPE_THROUGH_EXIT = 12;
+let ESCAPE_KEEP_GAP = 2; // a kept goal stays good while a route to it keeps this gap
+let ESCAPE_TRAVEL = 4; // the first steps toward a new escape spot cost nothing: it is picked by distance from the adversary, so no hopping to the next cell and back
 
 // A reachable known floor cell that keeps the most distance between the explorer and the
 // nearest visible adversary (their distance minus ours), preferring cells with more than one
@@ -260,7 +260,7 @@ export const hpText = (th) => `${th.hp} of ${th.maxHp} hp`;
 // next to it); any other is met HOLD_GAP known-path steps off (target: the nearest such cell, or the
 // explorer's own cell when it is already there). Already next to one: the own cell (strike now). The
 // cheapest target wins (the weaker adversary on a tie). No minimum gap: closing in is the point.
-const HOLD_GAP = 2;
+let HOLD_GAP = 2;
 // The fight in numbers, from the health bar in sight and the sword's damage only. "At most one claw" is claimed
 // for up to 2 strikes, one adversary in sight and `fight.steady` (the stun outlasts the sword's cooldown): in stubbed
 // duels (check-skills section 12) holding the 2-step gap took no claw and walking in at most one, always before the
@@ -359,3 +359,18 @@ export function encounterFacts(world, threats) {
   }
   return { facts, survey, area, threats };
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen by every importer.
+export function configureExplorerEncounter(o) {
+  if (o.encMaxGap !== undefined) MAX_GAP = o.encMaxGap;
+  if (o.encHideMaxSteps !== undefined) HIDE_MAX_STEPS = o.encHideMaxSteps;
+  if (o.encAreaCap !== undefined) AREA_CAP = o.encAreaCap;
+  if (o.encPastCos !== undefined) PAST_COS = o.encPastCos;
+  if (o.encEscapeFrontier !== undefined) ESCAPE_FRONTIER = o.encEscapeFrontier;
+  if (o.encEscapeThroughExit !== undefined) ESCAPE_THROUGH_EXIT = o.encEscapeThroughExit;
+  if (o.encEscapeKeepGap !== undefined) ESCAPE_KEEP_GAP = o.encEscapeKeepGap;
+  if (o.encEscapeTravel !== undefined) ESCAPE_TRAVEL = o.encEscapeTravel;
+  if (o.encHoldGap !== undefined) HOLD_GAP = o.encHoldGap;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const explorerEncounterSnapshot = () => ({ encMaxGap: MAX_GAP, encHideMaxSteps: HIDE_MAX_STEPS, encAreaCap: AREA_CAP, encPastCos: PAST_COS, encEscapeFrontier: ESCAPE_FRONTIER, encEscapeThroughExit: ESCAPE_THROUGH_EXIT, encEscapeKeepGap: ESCAPE_KEEP_GAP, encEscapeTravel: ESCAPE_TRAVEL, encHoldGap: HOLD_GAP });

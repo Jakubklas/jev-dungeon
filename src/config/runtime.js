@@ -18,6 +18,10 @@ import { configureCoins } from '../coins.js';
 import { configureHearts } from '../hearts.js';
 import { configureCharacters, configureDistribution, configureTraits } from '../characters/adversary/character.js';
 import { configureQuestion } from '../skills/question.js';
+import { configureExplorerBrain } from '../characters/explorer/brain.js';
+import { configureExplorerPerception } from '../characters/explorer/perception.js';
+import { configureExplorerEncounter } from '../characters/explorer/encounter.js';
+import { configureConfidence } from '../characters/explorer/confidence.js';
 import { KNOBS, isUserSetting } from './registry.js';
 import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml, eq } from './load.js';
 
@@ -56,6 +60,10 @@ function push() {
   configureSkills(applied);
   configureQuestion(applied);
   configureTraits(applied);
+  configureExplorerBrain(applied);
+  configureExplorerPerception(applied);
+  configureExplorerEncounter(applied);
+  configureConfidence(applied);
   configureCoins(applied);
   configureHearts(applied);
 }
