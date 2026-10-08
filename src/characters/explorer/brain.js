@@ -371,7 +371,7 @@ export class ExplorerBrain {
     const delta = Math.round((value - this.#csLast) * 100) / 100;
     this.#csLast = value;
     this.#csWhy = [];
-    return { value, band: confidenceBand(value), delta, reason, capability: cap.R, history: cap.H };
+    return { value, band: confidenceBand(value), delta, reason, capability: cap.R, history: cap.H, tier: tierOf(value, tierOfMood(this.#memory.sentiment?.id)), panic: this.#memory.sentiment?.id === 'panic' };
   }
 
   // Own shield stopped a claw (called by turn.js from the 'blocked' event) and saves.

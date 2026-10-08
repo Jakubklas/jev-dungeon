@@ -1165,8 +1165,8 @@ const thoughts = new Map(); // id -> { key, text, t0, ms, el }
 
 const bubbleMs = (text) => Math.min(9000, Math.max(3500, 1200 + text.length * 50));
 
-// tag: the explorer's sentiment id (v4). A new sentiment on the same approach re-shows the
-// bubble too; both changing on one tick still shows it once.
+// tag: the explorer's sentiment id (v4), shown as a chip on the bubble. The bubble shows only when the approach changes
+// (PLAN-moods): a new mood on the same approach does not re-show it.
 function think(id, key, text, kind, tag = null) {
   let t = thoughts.get(id);
   if (!t) {
@@ -1175,7 +1175,7 @@ function think(id, key, text, kind, tag = null) {
     t = { key: null, tag: null, el: node };
     thoughts.set(id, t);
   }
-  if (t.key === key && t.tag === tag) return;
+  if (t.key === key) return;
   t.key = key;
   t.tag = tag;
   if (typeof text === 'function') text = text();
@@ -1210,9 +1210,20 @@ const THOUGHTS = {
   cut_off: ['You will come this way.', 'I will block your path!', 'Cutting you off!', 'Wait for it...'],
   sweep_last_seen: ['Where did you go?', 'It was right here...', 'Come out, come out!', 'Just checking the corners.'],
 };
+// Mood lines for the explorer (PLAN-moods): shown when the approach changes, picked at random like THOUGHTS.
+const MOOD_THOUGHTS = {
+  panic: ['Out! Out! Out!', 'Just get away from here!', 'Nothing matters but the way out!'],
+  wary: ["Something's wrong. Keep my distance.", "I don't like this. Back off.", 'Find cover first, think later.'],
+  guarded: ['Stay sharp, keep moving.', 'Eyes open, away from trouble.', 'No detours. Careful progress.'],
+  cautious: ['Slow down, check the corners.', 'Stay clear and slip past.', "Fight only if I'm cornered."],
+  steady: ['Stick to the plan.', 'One room at a time.', 'If one shows up, I can handle it.'],
+  greedy: ['I smell coins nearby.', 'Worth a detour.', "Let's see what else is in here."],
+  bold: ['Come at me.', 'I can take this one.', 'Press on, no backing down.'],
+  fearless: ['Bring them all.', "I'm cutting through.", 'Nothing here stops me.'],
+};
 const lastPick = new Map(); // character id -> last line shown
-function thoughtFor(charId, approachId, fallback) {
-  const pool = THOUGHTS[approachId];
+function thoughtFor(charId, approachId, fallback, moodId = null) {
+  const pool = (moodId && MOOD_THOUGHTS[moodId]) || THOUGHTS[approachId];
   if (!pool) return fallback;
   const prev = lastPick.get(charId);
   const options = pool.filter((t) => t !== prev);
@@ -1227,7 +1238,7 @@ function currentApproaches() {
   if (memory?.approach) {
     const a = memory.approach;
     // v4: the first-person thought, tagged with the sentiment; older backends only have `current`.
-    out.push({ id: '@', key: `${a.id}@${a.since_step}`, text: () => thoughtFor('@', a.id, a.thought || a.current), kind: 'explorer', tag: memory.sentiment?.id ?? null });
+    out.push({ id: '@', key: `${a.id}@${a.since_step}`, text: () => thoughtFor('@', a.id, a.thought || a.current, memory.sentiment?.id), kind: 'explorer', tag: memory.sentiment?.id ?? null });
   }
   for (const ad of game?.adversaries ?? []) {
     const br = ad.brain;
@@ -1406,7 +1417,11 @@ const SENTIMENT_NOTES = {
   wary: 'Wary: gets away first, keeps its distance and avoids dead ends.',
   steady: 'Steady: sticks to the plan, explores and takes coins on the way.',
   greedy: 'Greedy: after coins and unexplored rooms; detours are fine.',
-  bold: 'Bold: takes the fight, engaging lone or weak adversaries.',
+  bold: 'Bold: takes the fight, single monster or several.',
+  panic: 'Panic: gets away at any cost; only the way out matters.',
+  guarded: 'Guarded: explores away from enemies; no detours, no fights.',
+  cautious: 'Cautious: keeps its distance and slips past; fights only a hurt monster or when cornered.',
+  fearless: 'Fearless: hunts enemies down, even several at once.',
 };
 
 // Landmarks (fog-safe: they are known cells). One colour and glyph per kind.
@@ -1540,6 +1555,7 @@ function renderConfidence() {
   $('confidence-fill').style.width = `${v}%`;
   $('confidence-fill').dataset.band = c.band;
   $('confidence-band').textContent = `${Math.floor(v)} ${c.band}`;
+  $('confidence-band').title = c.panic ? 'panic' : c.tier ? `${c.tier} tier` : '';
   stat.title = `Confidence ${v.toFixed(1)}/100 (${c.band})${c.delta ? `, ${c.delta > 0 ? '+' : ''}${c.delta}${c.reason ? ` from ${c.reason}` : ''}` : ''}`;
 }
 
