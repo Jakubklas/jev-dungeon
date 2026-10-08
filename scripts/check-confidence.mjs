@@ -182,13 +182,13 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(JSON.stringify(ORDER) === '["panic","wary","guarded","cautious","steady","greedy","bold","fearless"]', `SENTIMENTS order ${ORDER}`);
   for (let C = 0; C <= 100; C++) {
     const l = allowedMoods(C, {});
-    ok(l.join() === (C <= 35 ? LOW : C <= 75 ? MID : HIGH), `allowedMoods(${C}) = ${l}`);
+    ok(l.join() === (C <= 35 ? LOW : C <= 69 ? MID : HIGH), `allowedMoods(${C}) = ${l}`);
     ok(!l.includes('panic'), `panic is never offered (${C})`);
     ok(allowedMoods(C).join() === l.join(), `ctx is optional (${C})`);
     // hysteresis: the tier of the current mood is kept 5 points past its edge
-    ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 75 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
+    ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 69 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
     ok(allowedMoods(C, { current: 'panic' }).join() === allowedMoods(C, { current: 'wary' }).join(), `panic holds the low tier like wary (${C})`);
-    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C <= 75 ? MID : HIGH), `bold belongs to the mid tier too, no hysteresis (C ${C})`);
+    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C <= 69 ? MID : HIGH), `bold belongs to the mid tier too, no hysteresis (C ${C})`);
     ok(allowedMoods(C, { current: 'steady' }).join() === l.join(), `a mid mood adds no hysteresis (${C})`);
     for (const ex of ['lastLife', 'swordDown']) ok(allowedMoods(C, { [ex]: true }).join() === LOW, `${ex} forces the low tier at ${C}`);
   }
@@ -235,11 +235,11 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(n === 40, `15 to 25 takes 40 regen ticks after the wait: ${n}`);
   ok(JSON.stringify(JSON.parse(JSON.stringify(r))) === JSON.stringify(r), 'regen state round-trips through JSON');
   ok(apply(createConfidence({ model: 'beta' }), 'regen', 2, 2).value === 50, 'beta ignores regen');
-  // tiers: low <= 35, mid 36..75, high > 75, with 5 points of hysteresis
-  ok(tierOf(35) === 'low' && tierOf(36) === 'mid' && tierOf(75) === 'mid' && tierOf(76) === 'high', 'tier edges 35/36 and 75/76');
+  // tiers: low <= 35, mid 36..69, high >= 70, with 5 points of hysteresis
+  ok(tierOf(35) === 'low' && tierOf(36) === 'mid' && tierOf(69) === 'mid' && tierOf(70) === 'high', 'tier edges 35/36 and 69/70');
   ok(tierOf(40, 'low') === 'low' && tierOf(41, 'low') === 'mid', 'low tier kept up to 40');
-  ok(tierOf(71, 'high') === 'high' && tierOf(70, 'high') === 'mid', 'high tier kept down to 71');
-  ok(tierOf(40, 'mid') === 'mid' && tierOf(71, 'mid') === 'mid', 'hysteresis only holds the tier already in');
+  ok(tierOf(65, 'high') === 'high' && tierOf(64, 'high') === 'mid', 'high tier kept down to 65');
+  ok(tierOf(40, 'mid') === 'mid' && tierOf(65, 'mid') === 'mid', 'hysteresis only holds the tier already in');
   // panic: enter below 20, leave at 25
   ok(!panicNext(20, false) && panicNext(19.75, false), 'panic enters below 20');
   ok(panicNext(24.75, true) && !panicNext(25, true), 'panic ends only at 25 or more');

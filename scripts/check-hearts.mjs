@@ -99,5 +99,20 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
   g.pos = [2, 2]; g.applyMove('left');
   ok(g.heartPiles.length === 1 && g.health === 2, 'at full lives a heart stays on the floor');
 }
+// ---- 3. run_away heads for a heart in the low tier / panic (tacticFeasibility heartRun), only while hurt and when the route stays clear
+{
+  const { tacticFeasibility } = await import('../src/characters/explorer/perception.js');
+  const { KnownWorld } = await import('../src/characters/explorer/known-world.js');
+  const mk = (extra = {}) => newTestGame({ map: [WALL, FL, '#@' + '.'.repeat(18) + '#', FL, WALL], numAdversaries: 0, adversaries: [[7, 2]], hearts: [[1, 3]], treasure: null, ...extra }, { ask: stub().ask, decide: clawDecide, dir, memoryDir: dir });
+  const run = mk();
+  const world = new KnownWorld(run.game);
+  run.game.health = 1;
+  const plain = tacticFeasibility(world, 3, { heartRun: false });
+  const heart = tacticFeasibility(world, 3, { heartRun: true });
+  ok(plain.run_away && !/heart/.test(plain.run_away.fact), 'without heartRun run_away is the usual escape');
+  ok(heart.run_away && /seen heart/.test(heart.run_away.fact) && heart.run_away.target.cell.join() === '1,3', `with heartRun run_away targets the heart (${heart.run_away?.fact})`);
+  run.game.health = run.game.maxHealth;
+  ok(!/heart/.test(tacticFeasibility(world, 3, { heartRun: true }).run_away.fact), 'at full lives no heart run');
+}
 console.log(fails ? `${fails} FAIL(S)` : 'check-hearts: ok');
 process.exit(fails ? 1 : 0);

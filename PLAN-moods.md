@@ -11,10 +11,10 @@ Status: proposal approved by the owner in chat; revised after the implementation
 | Low (<= 35) | `panic` (code-entered below 20, exit at 25; no sentiment call) | ignored | 8 | Get away at any cost. Lives, coins and enemies do not matter; only the clear path does. Attacks only an enemy that blocks the way. | Blocking enemy only |
 | | `wary` | 4 | 5 | Run and hide; the portal if leaving is already worth it. | Never |
 | | `guarded` | 3 | 4 | Explore away from known enemies, skip loot. | Never |
-| Mid (36..75) | `cautious` | 4 | 4 | Keep distance, slip past, explore with a cushion. | A hurt monster, or when cornered |
+| Mid (36..69) | `cautious` | 4 | 4 | Keep distance, slip past, explore with a cushion. | A hurt monster, or when cornered |
 | | `steady` | 3 | 4 | Follow the plan, coins on the way. | Single or hurt monster |
 | | `greedy` | 3 | 2 | Coins and unexplored rooms; detours only with no enemy in sight. | Single or hurt monster if on the way |
-| High (> 75) | `bold` | 2 | 1 | Take the fight and press on. | Engages regardless of group size (no area skills exist yet) |
+| High (>= 70) | `bold` | 2 | 1 | Take the fight and press on. | Engages regardless of group size (no area skills exist yet) |
 | | `fearless` | 1 | 1 | Hunt enemies down; dispelling is the goal. | Anything, outnumbered included |
 
 Eight moods in total: 3 Low (`panic` included), 3 Mid, 2 High (`plunder` was dropped).
