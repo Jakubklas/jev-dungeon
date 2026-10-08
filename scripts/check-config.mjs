@@ -1,0 +1,174 @@
+// Central config (src/config/): registry defaults against the old SCHEMA, the YAML template round trip, layering,
+// cross-field rules, bad-entry warnings, a broken file, the userSetting flag and the user scope. Free, no Jev, no network.
+// Never reads the real central-config.yaml: JEV_CONFIG is set to scratch files before the modules load.
+import { mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import YAML from 'yaml';
+
+const dir = mkdtempSync(join(tmpdir(), 'jev-config-'));
+process.env.JEV_CONFIG = 'none'; // set before the dynamic imports: configFile() reads it when called
+delete process.env.DATA_DIR;
+globalThis.fetch = () => { throw new Error('fetch tripwire: config checks must not call Jev'); };
+
+let failed = 0;
+const check = (ok, msg) => { if (!ok) { failed++; console.log('FAIL: ' + msg); } };
+
+const R = await import('../src/config/registry.js');
+const L = await import('../src/config/load.js');
+const S = await import('../src/config/runtime.js');
+const C = await import('../src/characters/adversary/character.js');
+
+// The 39 knobs as they were in src/settings.js before the registry (key, default, when): frozen on purpose.
+const OLD = [
+  ['speed', 0.6, 'live'],
+  ['chaseRange', 7, 'live'],
+  ['sightRange', 7, 'live'],
+  ['maxSearchTicks', 18, 'live'],
+  ['keepHuntingMin', 0.5, 'live'],
+  ['adversaryCharacters', false, 'next'],
+  ['limitedMap', false, 'next'],
+  ['injectEnabled', true, 'live'],
+  ['injectMaxChars', 140, 'live'],
+  ['injectSteps', 20, 'live'],
+  ['injectCooldownS', 10, 'live'],
+  ['graceTicks', 4, 'live'],
+  ['packAlert', true, 'live'],
+  ['alertSteps', 24, 'live'],
+  ['teamSight', true, 'live'],
+  ['floorPerAdversary', 150, 'next'],
+  ['trollShare', 0.25, 'next'],
+  ['maxAdversaries', 12, 'next'],
+  ['floorPerCoin', 60, 'next'],
+  ['maxCoins', 30, 'next'],
+  ['swordDamage', 1, 'next'],
+  ['swordCooldown', 1, 'next'],
+  ['shieldChance', 0.6, 'next'],
+  ['shieldCooldown', 2, 'next'],
+  ['clawDamage', 1, 'next'],
+  ['clawCooldown', 2, 'next'],
+  ['ghostHp', 2, 'next'],
+  ['trollHp', 4, 'next'],
+  ['trollClawDamage', 2, 'next'],
+  ['trollSpeed', 0.65, 'next'],
+  ['roomsPerHeart', 4, 'next'],
+  ['maxHearts', 6, 'next'],
+  ['coinDropChance', 0.6, 'next'],
+  ['stunTicks', 2, 'next'],
+  ['lives', 2, 'next'],
+  ['lightRadius', 7, 'next'],
+  ['minSize', 25, 'next'],
+  ['maxSize', 90, 'next'],
+  ['roomArea', 290, 'next']
+];
+
+// 1. registry vs the old schema
+check(OLD.length === 39, `frozen list has 39 rows, got ${OLD.length}`);
+const byKey = new Map(L.SCHEMA.map((s) => [s.key, s]));
+for (const [key, def, when] of OLD) {
+  const row = byKey.get(key);
+  check(row, `registry lacks ${key}`);
+  if (row) { check(row.def === def, `${key} default ${row.def} != ${def}`); check(row.when === when, `${key} applies ${row.when} != ${when}`); }
+}
+check(L.SCHEMA.length === OLD.length, `schema has ${L.SCHEMA.length} rows, old had ${OLD.length}`);
+check(new Set(R.KNOBS.map((k) => k.path).filter(Boolean)).size === R.KNOBS.filter((k) => k.path).length, 'paths are unique');
+check(new Set(R.KNOBS.map((k) => k.key)).size === R.KNOBS.length, 'keys are unique');
+for (const k of R.KNOBS) {
+  check(typeof k.doc === 'string' && k.doc.length > 0 && k.doc.length <= 100, `${k.key} has a short doc`);
+  if (k.type === 'range') check(k.def >= k.min && k.def <= k.max, `${k.key} default inside its range`);
+}
+
+// 2. the template parses back to the defaults, with no warning
+const tpl = L.templateYaml();
+const t = L.parseConfig(YAML.parse(tpl));
+check(t.warnings.length === 0, 'template has no warnings: ' + t.warnings.join('; '));
+const d = L.defaults();
+for (const k of Object.keys(d)) check(t.values[k] === d[k], `template value ${k}: ${t.values[k]} != ${d[k]}`);
+check(Object.keys(t.presets).length === C.SPECIAL_IDS.length && t.mix === 'mixed', 'template carries every character preset and the mix');
+check(/ min: 25 +# /.test(tpl), 'template has inline comments');
+
+// 3. layers: file < instances.<kind> < instances.<kind/name>; instance blocks have the file's shape
+const layered = YAML.parse(`
+explorer: { lives: 3 }
+monsters: { global: { speed: 0.8 } }
+instances:
+  arena: { explorer: { lives: 4 } }
+  arena/a1: { explorer: { lives: 5 }, limits: {} }
+`);
+let p = L.parseConfig(layered, []);
+check(p.values.lives === 3 && p.values.speed === 0.8, 'file layer');
+p = L.parseConfig(layered, ['arena']);
+check(p.values.lives === 4 && p.values.speed === 0.8, 'kind layer overrides the file');
+p = L.parseConfig(layered, ['arena', 'arena/a1']);
+check(p.values.lives === 5, 'named instance overrides the kind');
+check(p.warnings.some((w) => w.startsWith('limits')), 'an unknown section is reported');
+
+// 4. bad entries warn with their path and are skipped
+p = L.parseConfig(YAML.parse('explorer: { lives: 99, graceTicks: "x" }\nworld: { nonsense: 1 }\nmonsters: { kinds: { ghost: { weight: -1 } } }'));
+check(!('lives' in p.values) && !('graceTicks' in p.values), 'bad values are skipped');
+check(p.warnings.some((w) => w.startsWith('explorer.lives')) && p.warnings.some((w) => w.startsWith('explorer.graceTicks')), 'bad values name their path');
+check(p.warnings.some((w) => w.startsWith('world.nonsense')), 'unknown key named');
+check(p.warnings.some((w) => w.includes('monsters.kinds.ghost.weight')), 'negative weight rejected');
+p = L.parseConfig(YAML.parse('monsters: { kinds: { ghost: { weight: 0 }, troll: { weight: 0 } } }'));
+check(p.warnings.some((w) => w.includes('cannot both be 0')) && !('trollShare' in p.values), 'both weights 0 rejected');
+p = L.parseConfig(YAML.parse('monsters: { kinds: { ghost: { weight: 1 }, troll: { weight: 3 } } }'));
+check(p.values.trollShare === 0.75, 'weights 1:3 give a troll share of 0.75');
+p = L.parseConfig(YAML.parse('monsters: { kinds: { troll: { weight: 1 } } }'));
+check(p.values.trollShare === 0.57, 'one weight uses the other default (0.75): 1 / 1.75 = 0.57, got ' + p.values.trollShare);
+check(L.parseConfig(7).warnings.length === 1, 'a non-mapping file warns');
+
+// 5. cross-field: the page's validate and the file
+let threw = false;
+try { L.validate({ minSize: 80, maxSize: 30 }, d); } catch { threw = true; }
+check(threw, 'validate rejects min > max map side');
+
+// 6. runtime: a file, a broken file, instance sparse overrides
+const cfg = join(dir, 'c.yaml');
+process.env.JEV_CONFIG = cfg;
+writeFileSync(cfg, 'explorer: { lives: 3 }\nmonsters: { characters: { presets: { timid: { aggression: 3 } } } }\n');
+const own = join(dir, 'own.json');
+await S.loadSettings(new URL('file://' + own));
+check(S.view().values.lives === 3, 'runtime loads the file');
+check(C.PRESETS.timid.traits[0] === 3, 'a character preset override reaches character.js');
+writeFileSync(cfg, 'explorer: { lives: 6 }\n');
+await new Promise((r) => setTimeout(r, 20));
+check((await S.refresh()) === true && S.view().values.lives === 6, 'an edit is picked up by mtime');
+check(C.PRESETS.timid.traits[0] === 1, 'removing a preset override restores the built-in preset');
+await new Promise((r) => setTimeout(r, 20));
+writeFileSync(cfg, 'explorer: { lives: [');
+await S.refresh();
+check(S.view().values.lives === 6 && S.view().central.warnings.length === 1, 'a broken file keeps the last good values and warns');
+await new Promise((r) => setTimeout(r, 20));
+writeFileSync(cfg, 'explorer: { lives: 3 }\n');
+await S.refresh();
+await S.saveSettings({ lightRadius: 9 });
+let own1 = JSON.parse(readFileSync(own, 'utf8'));
+check(own1._sparse === true && own1.lightRadius === 9 && !('lives' in own1), 'the instance file stores only what differs from the central layers');
+await new Promise((r) => setTimeout(r, 20));
+writeFileSync(cfg, 'explorer: { lives: 2 }\nworld: { lightRadius: 4 }\n');
+await S.refresh();
+check(S.view().values.lives === 2 && S.view().values.lightRadius === 9, 'a later file edit reaches the instance except for its own override');
+writeFileSync(cfg, 'world: { size: { min: 80, max: 30 } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(S.view().values.minSize <= S.view().values.maxSize, 'an inconsistent file is ignored, not applied');
+
+// 7. userSetting: every category has the flag, the scope shows only flagged knobs
+for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);
+for (const k of R.KNOBS) {
+  const c = k.path && R.categoryOf(k.path);
+  check(k.path === null || c !== null, `${k.key} sits in a category`);
+  check(typeof R.isUserSetting(k) === 'boolean', `${k.key} resolves userSetting`);
+}
+const userKeys = R.KNOBS.filter(R.isUserSetting).map((k) => k.path ?? k.key).sort().join(',');
+check(userKeys === 'explorer.lives,player.cooldownS,player.enabled,player.maxChars,player.steps', 'player-visible knobs: ' + userKeys);
+check(S.userView().schema.length === 5 && Object.keys(S.userView().values).length === 5, 'user view lists only flagged knobs');
+let status = null;
+try { await S.saveUserSettings({ speed: 1 }); } catch (err) { status = err.status; }
+check(status === 403, 'user scope refuses an unflagged knob with 403');
+await S.saveUserSettings({ 'player.steps': 30 });
+check(S.view().values.injectSteps === 30, 'user scope saves a flagged knob by path');
+check(JSON.parse(readFileSync(own, 'utf8')).injectSteps === 30, 'and writes it to the instance file');
+
+console.log(failed ? `${failed} check(s) failed` : 'All config checks passed.');
+process.exit(failed ? 1 : 0);

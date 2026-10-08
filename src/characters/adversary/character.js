@@ -18,6 +18,8 @@ export const PRESETS = {
   territorial: { traits: [3, 2, 2, 1, 1], style: 'Guards its own area fiercely and will not leave it far behind.' },
   rover: { traits: [2, 1, 1, 3, 2], style: 'Wanders widely; a hunt is a detour.' },
 };
+const DEFAULT_PRESETS = JSON.parse(JSON.stringify(PRESETS));
+export const defaultPresets = () => JSON.parse(JSON.stringify(DEFAULT_PRESETS)); // the built-in presets, whatever the central file says
 export const PRESET_IDS = Object.keys(PRESETS);
 export const SPECIAL_IDS = PRESET_IDS.filter((id) => id !== 'standard');
 
@@ -138,4 +140,62 @@ export function charactersFor(spec, seed, count) {
   if (Array.isArray(spec)) return Array.from({ length: count }, (_, i) => spec[i % spec.length]);
   if (spec === 'standard' || spec === 'mixed') return assignCharacters(seed, count, spec);
   return Array.from({ length: count }, () => spec);
+}
+
+// Central settings (src/settings.js): per-character trait/style overrides and the spawn distribution. Both are
+// empty by default, so nothing changes until a settings file asks. `standard` is never overridable (it follows the live settings).
+let WEIGHTS = null; // null = the shuffled deck; else [[id, weight], ...] in PRESET_IDS order
+
+// overrides: { id: { aggression: 3, ..., style: '...' } }. Resets to the built-in presets first. Returns warnings.
+export function configureCharacters(overrides = {}) {
+  const warnings = [];
+  for (const id of PRESET_IDS) PRESETS[id] = JSON.parse(JSON.stringify(DEFAULT_PRESETS[id]));
+  for (const [id, o] of Object.entries(overrides ?? {})) {
+    if (id.startsWith('_')) continue; // a comment
+    if (!Object.hasOwn(PRESETS, id) || id === 'standard') { warnings.push(`characters.${id}: not an editable character (one of ${SPECIAL_IDS.join(', ')})`); continue; }
+    if (!o || typeof o !== 'object') { warnings.push(`characters.${id}: must be an object`); continue; }
+    const next = [...PRESETS[id].traits];
+    let ok = true;
+    for (const [k, v] of Object.entries(o)) {
+      if (k.startsWith('_')) continue;
+      if (k === 'style') {
+        if (typeof v === 'string' && v.length <= 200) PRESETS[id].style = v; else { warnings.push(`characters.${id}.style must be a string of at most 200 characters`); ok = false; }
+      } else if (TRAITS.includes(k)) {
+        if ([1, 2, 3].includes(v)) next[TRAITS.indexOf(k)] = v; else { warnings.push(`characters.${id}.${k} must be 1, 2 or 3`); ok = false; }
+      } else { warnings.push(`characters.${id}.${k}: unknown (traits: ${TRAITS.join(', ')}, style)`); ok = false; }
+    }
+    if (ok) PRESETS[id].traits = next;
+    else PRESETS[id] = { ...JSON.parse(JSON.stringify(DEFAULT_PRESETS[id])) }; // all or nothing per character
+  }
+  return warnings;
+}
+
+// spec: 'mixed' (the deck), 'standard' (everyone standard) or weights { preset: number }. Returns warnings.
+export function configureDistribution(spec = 'mixed') {
+  if (spec === 'mixed' || spec == null) { WEIGHTS = null; return []; }
+  if (spec === 'standard') { WEIGHTS = [['standard', 1]]; return []; }
+  if (typeof spec !== 'object' || Array.isArray(spec)) return ['distribution.characters must be "mixed", "standard" or an object of weights'];
+  const entries = [];
+  for (const [id, w] of Object.entries(spec)) {
+    if (id.startsWith('_')) continue;
+    if (!Object.hasOwn(DEFAULT_PRESETS, id)) return [`distribution.characters.${id}: unknown character (one of ${PRESET_IDS.join(', ')})`];
+    if (typeof w !== 'number' || !Number.isFinite(w) || w < 0) return [`distribution.characters.${id} must be a number >= 0`];
+    entries.push([id, w]);
+  }
+  if (!entries.some(([, w]) => w > 0)) return ['distribution.characters needs at least one weight above 0'];
+  WEIGHTS = PRESET_IDS.map((id) => [id, spec[id] ?? 0]);
+  return [];
+}
+
+// What spawnAdversaries calls. Without weights this is the deck (unchanged); with weights each ghost is one draw on the
+// same stream, so ghost i keeps its character whatever `count` is.
+export function assignSpawnCharacters(seed, count) {
+  if (!WEIGHTS) return assignCharacters(seed, count, 'mixed');
+  const rand = rng((seed ^ 0x6a09e667) >>> 0);
+  const total = WEIGHTS.reduce((n, [, w]) => n + w, 0);
+  return Array.from({ length: count }, () => {
+    let x = rand() * total;
+    for (const [id, w] of WEIGHTS) { if (x < w) return id; x -= w; }
+    return WEIGHTS.findLast(([, w]) => w > 0)[0];
+  });
 }

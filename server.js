@@ -67,7 +67,7 @@ function send(res, status, body, type = 'application/json') {
 // `seed`: an integer for a normal dungeon (so a measurement can replay the same dungeon), else random.
 async function startNewGame(testbed = null, seed = undefined) {
   while (busy) await busy.catch(() => {});
-  settings.applyNextGame(); // saved settings that wait for a new game take effect here
+  await settings.applyNextGame(); // saved settings that wait for a new game take effect here
   run = testbed ? newTestGame(testbed, gameOpts()) : newGame(seed, gameOpts());
   await run.persist(); // fresh memory.json/md and adversaries.json now, not at the first step
   const d = run.game.dungeon;
@@ -88,14 +88,15 @@ async function step() {
 
 createServer(async (req, res) => {
   try {
-    const path = new URL(req.url, 'http://localhost').pathname;
+    const url = new URL(req.url, 'http://localhost');
+    const path = url.pathname;
 
     if (req.method === 'GET' && STATIC[path]) {
       const [file, type] = STATIC[path];
       return send(res, 200, await readFile(new URL(`public/${file}`, import.meta.url)), type);
     }
 
-    if (req.method === 'GET' && path === '/api/settings') return send(res, 200, settings.view());
+    if (req.method === 'GET' && path === '/api/settings') { await settings.refresh(); return send(res, 200, settings.view()); }
 
     if (req.method === 'POST' && path === '/api/settings') {
       let body;
@@ -104,6 +105,19 @@ createServer(async (req, res) => {
         return send(res, 200, await settings.saveSettings(body.values));
       } catch (err) {
         return send(res, 400, { error: err.message });
+      }
+    }
+
+    // The central config for tools and a future player UI. ?scope=user lists and accepts only knobs flagged userSetting
+    // (src/config/registry.js); without a scope it is the full settings view / save, like /api/settings.
+    if (path === '/api/config' && (req.method === 'GET' || req.method === 'POST')) {
+      const user = url.searchParams.get('scope') === 'user';
+      try {
+        if (req.method === 'GET') { await settings.refresh(); return send(res, 200, user ? settings.userView() : settings.view()); }
+        const body = JSON.parse((await readBody(req)) || '{}');
+        return send(res, 200, user ? await settings.saveUserSettings(body.values) : await settings.saveSettings(body.values));
+      } catch (err) {
+        return send(res, err.status ?? 400, { error: err.message });
       }
     }
 
@@ -149,6 +163,7 @@ createServer(async (req, res) => {
 
     if (req.method === 'POST' && path === '/api/step') {
       await readBody(req);
+      await settings.refresh(); // an edit of the central settings file reaches the live knobs on the next step (before the busy check: no await between it and the step)
       if (!run) return send(res, 409, { error: 'No game. Call /api/new first.' });
       if (run.game.won || run.game.lost) return send(res, 409, { error: `The game is already ${run.game.won ? 'won' : 'lost'}.` });
       if (busy) return send(res, 409, { error: 'A step is already in progress.' });

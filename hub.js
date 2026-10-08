@@ -8,7 +8,7 @@
 import { createServer, request } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
 import { spawn } from 'node:child_process';
-import { readFileSync, mkdirSync, writeFileSync, copyFileSync, existsSync, openSync, closeSync, rmSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, openSync, closeSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { validate, defaults } from './src/settings.js';
@@ -18,7 +18,7 @@ const ROOT = dirname(fileURLToPath(import.meta.url));
 const RUNS = join(ROOT, 'runs');
 const PORT = Number(process.env.PORT) || 3000;
 const WORKER_PORT_FROM = 3100;
-const LEGACY_PORT = { arena: 3000, gym: 3001 }; // the old servers' settings-<port>.json seeds each "main"
+const LEGACY_PORT = { arena: 3000, gym: 3001 }; // the valid kinds (the old settings-<port>.json seeding is gone: instances.arena/main and gym/main in central-config.yaml replace it)
 const PREFIX = { arena: 'a', gym: 'g' };
 const RESERVED = new Set(['api', 'settings', 'props']);
 const NAME_RE = /^[a-z][a-z0-9-]{0,30}$/;
@@ -73,16 +73,15 @@ async function waitReady(inst, deadline) {
   return false;
 }
 
-// Starts one server.js. `main` instances keep their settings file between hub runs.
+// Starts one server.js. `main` instances keep their settings file between hub runs; central-config.yaml (instances.arena/main) carries their tuning.
 async function startInstance({ kind, name, overrides, options, main = false }) {
   const key = `${kind}/${name}`;
   const dir = join(RUNS, kind, name);
   mkdirSync(dir, { recursive: true });
   const settingsFile = join(dir, 'settings.json');
   if (Object.keys(overrides).length || !main) {
-    writeFileSync(settingsFile, JSON.stringify(validate(overrides, defaults()), null, 2) + '\n');
-  } else if (!existsSync(settingsFile) && existsSync(join(ROOT, `settings-${LEGACY_PORT[kind]}.json`))) {
-    copyFileSync(join(ROOT, `settings-${LEGACY_PORT[kind]}.json`), settingsFile);
+    const cleaned = validate(overrides, defaults()); // throws on a bad key or value
+    writeFileSync(settingsFile, JSON.stringify({ _sparse: true, ...Object.fromEntries(Object.keys(overrides).map((k) => [k, cleaned[k]])) }, null, 2) + '\n'); // sparse: only the keys asked for, so central-config.yaml edits still reach the instance
   }
   const port = await freePort();
   const logFile = join(dir, 'server.log');

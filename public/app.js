@@ -1225,6 +1225,25 @@ function think(id, key, text, kind, tag = null) {
   }
 }
 
+// A troll roars on an event (struck, hit, ...). Shows its own text without touching the approach key, so the
+// approach line does not come back at the next view.
+function shout(id, type) {
+  const pool = TROLL_THOUGHTS[type];
+  if (!pool || game?.adversaries?.find((a) => a.id === id)?.kind !== 'troll') return;
+  let t = thoughts.get(id);
+  if (!t) {
+    t = { key: null, tag: null, el: el('div', '', 'bubble adversary') };
+    bubbleLayer.append(t.el);
+    thoughts.set(id, t);
+  }
+  const text = thoughtFor(id, type, null, null, 'troll');
+  t.text = text;
+  t.t0 = performance.now();
+  t.ms = bubbleMs(text);
+  t.el.replaceChildren(text);
+  delete t.el.dataset.sentiment;
+}
+
 // Short first-person lines per approach id (explorer and ghosts). One is picked at random each time a
 // bubble shows, never the one the same character showed last. Visual only: no server state, no rng().
 const THOUGHTS = {
@@ -1255,9 +1274,23 @@ const MOOD_THOUGHTS = {
   bold: ['Come at me.', 'I can take this one.', 'Press on, no backing down.'],
   fearless: ['Bring them all.', "I'm cutting through.", 'Nothing here stops me.'],
 };
+// Trolls do not think in sentences: grunts, roars and threats. Keyed by approach id (what the brain is doing) and
+// by event type (struck, hit, ...), see shout(). Visual only, like THOUGHTS.
+const TROLL_THOUGHTS = {
+  direct_pursuit: ['ARRRGGGH! SMASH!', 'MEAT! GRAAAAH!', 'RRRAAAGH! I WILL EAT YOUR FACE!', 'GRRRRR... CRUSH! CRUSH! CRUSH!', 'AAARGH! COME HERE, SNACK!', 'BLOOD! BLOOD! BLOOOOD!', 'HRAAAGH! I SEE YOU, TINY KNIGHT!', 'GRAAAH! YOUR BONES ARE MY BREAKFAST!'],
+  cut_off: ['GRRR... NOWHERE TO RUN, MEAT!', 'HRAAH! I WAIT. THEN I STOMP.', 'ARRGH! THIS WAY, THEN SPLAT!', 'GRRRNH... AMBUSH. THEN MURDER.', 'HEH-HEH-AARGH! TRAP FOR TINY KNIGHT!'],
+  sweep_last_seen: ['ARRRGH! WHERE IS MY SNACK?!', 'GRAAAH! COME OUT AND DIE!', 'HRRRN... SNIFF... I SMELL BLOOD...', 'RAAAGH! I WILL TEAR THE WALLS DOWN!', 'GRRR! HIDING WON\'T SAVE YOUR SKULL!', 'AAARGH! WHERE DID THE CRUNCHY ONE GO?!'],
+  struck: ['AAARGH! MY FACE!', 'GRAAAH! YOU DIE FOR THAT!', 'OWWRGH! I WILL EAT YOUR SWORD!', 'HRAAGH! NOW I AM ANGRY!', 'ARRRGH! BLOOD FOR BLOOD!'],
+  hit: ['HAAARGH! SPLAT!', 'GRAAAH! TASTES LIKE VICTORY!', 'RAAAGH! BLEED FOR ME!', 'AHAAARGH! ONE CLAW CLOSER TO DEAD!', 'HRAAH! CRUNCH!'],
+  blocked: ['GRRAAAH! CHEAP SHIELD!', 'ARRGH! I WILL SNAP THAT TOY!', 'HRRRN! HIDING BEHIND TIN, COWARD!'],
+  bump: ['OOF-AARGH! OUT OF MY WAY, MEAT!', 'GRRR! DID YOU JUST TOUCH ME?!', 'HRAAH! I WILL BITE YOUR HEAD OFF!'],
+  alerted: ['ARRRGH! I HEAR THE KILLING CALL!', 'RAAAAH! DINNER IS SERVED!', 'GRAAAH! COMING TO SMASH!'],
+  gave_up: ['GRRRR... I WILL BE BACK. WITH AN AXE.', 'ARRGH... NEXT TIME I CRUSH YOU.', 'HRRRN... COWARD. I WILL FIND YOU.'],
+  caught: ['AAAAAARGH! ROOOOAR! DEAD! DEAD! DEAD!'],
+};
 const lastPick = new Map(); // character id -> last line shown
-function thoughtFor(charId, approachId, fallback, moodId = null) {
-  const pool = (moodId && MOOD_THOUGHTS[moodId]) || THOUGHTS[approachId];
+function thoughtFor(charId, approachId, fallback, moodId = null, kind = null) {
+  const pool = (moodId && MOOD_THOUGHTS[moodId]) || (kind === 'troll' && TROLL_THOUGHTS[approachId]) || THOUGHTS[approachId];
   if (!pool) return fallback;
   const prev = lastPick.get(charId);
   const options = pool.filter((t) => t !== prev);
@@ -1277,7 +1310,7 @@ function currentApproaches() {
   for (const ad of game?.adversaries ?? []) {
     const br = ad.brain;
     // Brain off is code patrol, not a formulated approach: no bubble.
-    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? () => thoughtFor(ad.id, br.approach, br.approach_text) : null, kind: 'adversary' });
+    out.push({ id: ad.id, key: `${br?.approach}@${br?.approach_since}`, text: br?.approach ? () => thoughtFor(ad.id, br.approach, br.approach_text, null, ad.kind) : null, kind: 'adversary' });
   }
   return out;
 }
@@ -1813,6 +1846,7 @@ function logEvents(turn) {
   for (const e of turn.events ?? []) {
     if (e.type === 'dispelled') actors.delete(e.id); // snap: no tween
     const text = e.type === 'strike' ? strikeText(e, turn) : (EVENT_TEXT[e.type] ?? ((id) => `${id}: ${e.type}`))(e.id, e);
+    shout(e.id, e.type);
     if (text == null) continue;
     eventLog.unshift({ step: turn.step ?? game.steps, text: Array.isArray(e.at) && e.type !== 'struck' ? `${text} at (${e.at.join(',')})` : text, type: e.type });
   }

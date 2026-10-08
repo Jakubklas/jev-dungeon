@@ -1,0 +1,172 @@
+// Central config, pure part: the knob rows as the settings page and the modules see them (SCHEMA, keyed by the flat
+// name), value cleaning, parsing a central-config.yaml mapping into flat values, and the commented YAML template.
+// No file or game state here: runtime.js does the I/O. See PLAN-central-config.md.
+import YAML from 'yaml';
+import { KNOBS, KIND_WEIGHTS, CATEGORIES } from './registry.js';
+import { TRAITS, SPECIAL_IDS, defaultPresets } from '../characters/adversary/character.js';
+
+// The settings page's rows (the shape settings.html has always read).
+export const SCHEMA = KNOBS.map(({ key, group, label, hint, type, min, max, step, def, when }) => ({ key, group, label, hint, type, ...(type === 'range' ? { min, max, step } : {}), def, when }));
+const BY_KEY = new Map(SCHEMA.map((s) => [s.key, s]));
+export const defaults = () => Object.fromEntries(SCHEMA.map((s) => [s.key, s.def]));
+
+// Checks one value against its knob. Returns the cleaned value or throws a message.
+export function clean(def, v) {
+  if (def.type === 'toggle') {
+    if (typeof v !== 'boolean') throw new Error(`${def.label} must be on or off`);
+    return v;
+  }
+  if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${def.label} must be a number`);
+  if (v < def.min || v > def.max) throw new Error(`${def.label} must be between ${def.min} and ${def.max}`);
+  const dp = (String(def.step).split('.')[1] ?? '').length;
+  return Number((Math.round(v / def.step) * def.step).toFixed(dp));
+}
+
+// Cross-field rules on a full flat settings object. Returns a list of problems (empty = fine).
+export function crossProblems(values) {
+  const out = [];
+  if (values.minSize > values.maxSize) out.push('Min map side cannot be larger than Max map side');
+  return out;
+}
+
+// Whole-object validation: unknown keys are errors, missing keys keep their current value.
+export function validate(input, base) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('values must be an object');
+  const out = { ...base };
+  for (const [k, v] of Object.entries(input)) {
+    const def = BY_KEY.get(k);
+    if (!def) throw new Error(`Unknown setting: ${k}`);
+    out[k] = clean(def, v);
+  }
+  const bad = crossProblems(out);
+  if (bad.length) throw new Error(bad[0]);
+  return out;
+}
+
+const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+export const getPath = (o, path) => path.split('.').reduce((n, k) => (isObj(n) ? n[k] : undefined), o);
+export function deepMerge(a, b) {
+  if (!isObj(a) || !isObj(b)) return b;
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = k in a ? deepMerge(a[k], v) : v;
+  return out;
+}
+
+// Every path the file may carry, and every prefix of one (so an unknown key is reported, not silently ignored).
+const FILE_PATHS = new Set([...KNOBS.filter((k) => k.path).map((k) => k.path), ...KIND_WEIGHTS.map((k) => k.path)]);
+const PREFIXES = new Set(['monsters.characters.presets', 'monsters.characters.mix']);
+for (const p of FILE_PATHS) { const parts = p.split('.'); for (let i = 1; i < parts.length; i++) PREFIXES.add(parts.slice(0, i).join('.')); }
+
+function unknownPaths(node, prefix, warnings) {
+  for (const [k, v] of Object.entries(node)) {
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (FILE_PATHS.has(path) || path === 'monsters.characters.mix' || path.startsWith('monsters.characters.presets')) continue;
+    if (PREFIXES.has(path) && isObj(v)) unknownPaths(v, path, warnings);
+    else warnings.push(`${path}: unknown setting`);
+  }
+}
+
+// raw: the parsed YAML. names: the instance names that apply here, lowest first (['arena', 'arena/main']): each one's
+// block is merged over the file, same shape as the file itself. -> { values (flat key -> cleaned), presets, mix, warnings }
+export function parseConfig(raw, names = []) {
+  const warnings = [];
+  if (raw == null) raw = {};
+  if (!isObj(raw)) return { values: {}, presets: {}, mix: 'mixed', warnings: ['the file must be a mapping at the top level'] };
+  const { instances, ...rest } = raw;
+  if (instances != null && !isObj(instances)) warnings.push('instances: must be a mapping');
+  let merged = rest;
+  for (const n of names) if (isObj(instances?.[n])) merged = deepMerge(merged, instances[n]);
+  unknownPaths(merged, '', warnings);
+  const values = {};
+  for (const row of KNOBS) {
+    if (!row.path) continue;
+    const v = getPath(merged, row.path);
+    if (v === undefined) continue;
+    try { values[row.key] = clean(row, v); } catch (err) { warnings.push(`${row.path}: ${err.message}`); }
+  }
+  // Kind weights are relative; the game reads the troll share.
+  const w = KIND_WEIGHTS.map((k) => ({ ...k, v: getPath(merged, k.path) }));
+  if (w.some((k) => k.v !== undefined)) {
+    const bad = w.find((k) => k.v !== undefined && !(typeof k.v === 'number' && Number.isFinite(k.v) && k.v >= 0));
+    if (bad) warnings.push(`${bad.path} must be a number >= 0`);
+    else {
+      const [g, t] = w.map((k) => k.v ?? k.def);
+      if (g + t <= 0) warnings.push('monsters.kinds: the weights cannot both be 0');
+      else values.trollShare = clean(BY_KEY.get('trollShare'), t / (g + t));
+    }
+  }
+  const ch = merged.monsters?.characters;
+  return { values, presets: isObj(ch?.presets) ? ch.presets : {}, mix: ch?.mix ?? 'mixed', warnings };
+}
+
+// ---------- the commented YAML template ----------
+const scalar = (v) => YAML.stringify(v, { lineWidth: 0 }).trim();
+const COL = 34; // comments start in this column when the line is shorter
+
+const TRAIT_DOC = {
+  aggression: '1 hesitant, 2 steady, 3 fierce (chase range, striking)',
+  persistence: '1 gives up fast, 2 standard, 3 relentless (search time)',
+  horizon: '1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)',
+  roaming: '1 stays home, 2 ranges, 3 roams everywhere (patrol area)',
+  pack: '1 loner, 2 team player, 3 pack hunter (calls, team sight)',
+  style: 'One line Jev reads as its personality',
+};
+
+export function templateYaml() {
+  const tree = {};
+  const put = (path, entry) => {
+    const parts = path.split('.');
+    let n = tree;
+    for (const p of parts.slice(0, -1)) n = (n[p] ??= {});
+    n[parts.at(-1)] = entry;
+  };
+  const leaf = (value, doc) => ({ __leaf: true, value, doc });
+  for (const k of KNOBS) if (k.path) put(k.path, leaf(k.def, k.doc));
+  for (const k of KIND_WEIGHTS) put(k.path, leaf(k.def, k.doc));
+  put('monsters.characters.mix', leaf('mixed', "'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }"));
+  const presets = {};
+  const defs = defaultPresets();
+  for (const id of SPECIAL_IDS) {
+    presets[id] = {};
+    TRAITS.forEach((t, i) => { presets[id][t] = leaf(defs[id].traits[i], TRAIT_DOC[t]); });
+    presets[id].style = leaf(defs[id].style, TRAIT_DOC.style);
+  }
+  put('monsters.characters.presets', presets);
+
+  // Order sections like CATEGORIES, then anything else.
+  const lines = [
+    '# central-config.yaml: every tunable of the Jev dungeon, read by all servers (arena, gym, standalone).',
+    '# Edit and save: a running server picks it up on its next step or new game. Live knobs apply at once, the rest from the next game.',
+    '# Delete a key to fall back to its default. A bad value is skipped with a warning in the server log. Secrets stay in ../.env.',
+    '# Layers, lowest first: defaults, this file, instances.<kind>, instances.<kind/name>, the instance\'s own settings.json (settings page saves).',
+    '',
+  ];
+  const emit = (node, indent, depthPath) => {
+    for (const [k, v] of Object.entries(node)) {
+      const pad = '  '.repeat(indent);
+      if (v.__leaf) {
+        const text = `${pad}${k}: ${scalar(v.value)}`;
+        lines.push(v.doc ? `${text.padEnd(COL)}  # ${v.doc}` : text);
+      } else {
+        const path = depthPath ? `${depthPath}.${k}` : k;
+        if (indent === 0 && CATEGORIES[k]) lines.push(`# ${CATEGORIES[k].doc}`);
+        lines.push(`${pad}${k}:`);
+        emit(v, indent + 1, path);
+      }
+    }
+    if (indent === 0) lines.push('');
+  };
+  const order = Object.keys(CATEGORIES);
+  const sorted = Object.fromEntries(Object.entries(tree).sort(([a], [b]) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99)));
+  const top = Object.entries(sorted);
+  for (const [k, v] of top) {
+    if (CATEGORIES[k]) lines.push(`# ${CATEGORIES[k].doc}`);
+    lines.push(`${k}:`);
+    emit(v, 1, k);
+    lines.push('');
+  }
+  lines.push('# Per-instance overrides, same shape as everything above. Names: arena, gym (every instance of that kind),');
+  lines.push('# arena/main, gym/main, arena/a1, ... Example:  arena/main: { explorer: { lives: 4 } }');
+  lines.push('instances: {}');
+  return lines.join('\n') + '\n';
+}

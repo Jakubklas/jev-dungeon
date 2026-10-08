@@ -1,0 +1,161 @@
+# central-config.yaml: every tunable of the Jev dungeon, read by all servers (arena, gym, standalone).
+# Edit and save: a running server picks it up on its next step or new game. Live knobs apply at once, the rest from the next game.
+# Delete a key to fall back to its default. A bad value is skipped with a warning in the server log. Secrets stay in ../.env.
+# Layers, lowest first: defaults, this file, instances.<kind>, instances.<kind/name>, the instance's own settings.json (settings page saves).
+
+# Dungeon layout, light, coins and hearts. Developer only.
+world:
+  sightRange: 7 # How far anyone sees along a clear line (explorer and monsters)
+  coins:
+    floorPerCoin: 60 # Floor cells per coin: lower = more coins
+    max: 30 # Coins lying around at the start (0 = none)
+    dropChance: 0.6 # Chance a dispelled monster drops a coin (0-1)
+  hearts:
+    roomsPerHeart: 4 # One heart (restores a life) per this many rooms
+    max: 6 # Cap on hearts per map (0 = none)
+  lightRadius: 7 # Cells each visited cell lights up
+  size:
+    min: 25 # Smallest map side
+    max: 90 # Largest map side
+  roomArea: 290 # Floor cells per room: lower = more, closer rooms
+
+# The knight: lives and protection after a hit.
+explorer:
+  graceTicks: 4 # Steps of protection after the explorer is hit
+  lives: 2 # Lives the explorer starts with
+
+# Sword, shield and the stun they cause.
+skills:
+  sword_strike:
+    damage: 1 # Hit points a sword strike takes
+    cooldown: 1 # Steps before the sword is ready again
+  shield_block:
+    effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
+    cooldown: 2 # Steps before the shield can be raised again
+  stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
+
+# Ghosts and trolls: speed, packs, spawn, stats, characters.
+monsters:
+  global:
+    speed: 0.6 # Monster speed as a share of the explorer (1 = same speed)
+    chaseRange: 7 # Cells within which a seen explorer starts a hunt
+    maxSearchTicks: 18 # Ticks without sight before a monster gives up
+    keepHuntingMin: 0.5 # Jev keep-hunting answer below this ends the hunt (0-1)
+    limitedMap: false # true = monsters only know their home zone and what they saw (needs adversaryCharacters)
+    clawCooldown: 2 # Steps before a monster can claw again
+  characters:
+    enabled: false # true = each monster gets a personality (see characters); false = all standard
+    mix: mixed # 'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }
+    presets:
+      aggressive:
+        aggression: 3 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Charges straight at the explorer and does not plan far ahead. # One line Jev reads as its personality
+      pursuer:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 3 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 2 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Never lets go of a trail until it is stone cold. # One line Jev reads as its personality
+      ambusher:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 3 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Predicts where the explorer will pass and waits at the chokepoint. # One line Jev reads as its personality
+      patient_hunter:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 3 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 3 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 3 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Methodical; keeps long memories and works with the pack. # One line Jev reads as its personality
+      short_sighted:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 2 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Searches close, forgets quickly, gives up soon. # One line Jev reads as its personality
+      timid:
+        aggression: 1 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 1 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Only chases what is right next to it, quits quickly, never calls for help. # One line Jev reads as its personality
+      territorial:
+        aggression: 3 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 2 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 2 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 1 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 1 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Guards its own area fiercely and will not leave it far behind. # One line Jev reads as its personality
+      rover:
+        aggression: 2 # 1 hesitant, 2 steady, 3 fierce (chase range, striking)
+        persistence: 1 # 1 gives up fast, 2 standard, 3 relentless (search time)
+        horizon: 1 # 1 short-term, 2 standard, 3 long-term planner (memory, cut-offs)
+        roaming: 3 # 1 stays home, 2 ranges, 3 roams everywhere (patrol area)
+        pack: 2 # 1 loner, 2 team player, 3 pack hunter (calls, team sight)
+        style: Wanders widely; a hunt is a detour. # One line Jev reads as its personality
+  pack:
+    alert: true # A spotter calls nearby patrolling monsters into the hunt
+    alertSteps: 24 # Path steps within which a call is heard
+    teamSight: true # Hunters see the explorer through packmates' eyes
+  spawn:
+    floorPerMonster: 150 # Floor cells per monster: lower = more monsters
+    max: 12 # Cap on monsters per map (0 = none)
+  kinds:
+    ghost:
+      clawDamage: 1 # Lives a ghost claw strike takes.
+      hp: 2 # Hits a ghost takes before it is dispelled.
+      weight: 0.75 # Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls)
+    troll:
+      hp: 4 # Hits a troll takes before it is dispelled (a ghost has Ghost hit points).
+      clawDamage: 2 # Lives a troll claw strike takes.
+      speed: 0.65 # A troll moves at this share of the ghost speed.
+      weight: 0.25 # Spawn weight, relative to the other kinds
+
+# Directives the player may whisper to the explorer.
+player:
+  enabled: true # Player may whisper directives to the explorer
+  maxChars: 140 # Longest directive in characters
+  steps: 20 # Steps a directive stays live
+  cooldownS: 10 # Seconds between two directives
+
+# Per-instance overrides, same shape as everything above. Names: arena, gym (every instance of that kind),
+# arena/main, gym/main, arena/a1, ... Example:  arena/main: { explorer: { lives: 4 } }
+instances:
+  arena/main:
+    monsters:
+      global:
+        speed: 1
+        clawCooldown: 0
+      spawn:
+        max: 8
+    player:
+      cooldownS: 100
+    skills:
+      shield_block:
+        effectiveness: 0.45
+        cooldown: 3
+      stunTicks: 0
+    world:
+      coins:
+        dropChance: 0.5
+    explorer:
+      lives: 4
+  gym/main:
+    monsters:
+      global:
+        speed: 1
+      spawn:
+        floorPerMonster: 70
+    world:
+      size:
+        min: 37

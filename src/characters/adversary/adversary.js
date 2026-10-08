@@ -13,7 +13,7 @@ import {
 } from './brain.js';
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
-import { assignCharacters, profileOf, traitsOf } from './character.js';
+import { assignSpawnCharacters, profileOf, traitsOf } from './character.js';
 import { assignKinds, kindOf } from './kinds.js';
 import { setSkills } from './memory.js';
 import { buildSkillSet } from '../../skills/loadouts.js';
@@ -268,7 +268,7 @@ export function spawnAdversaries(dungeon) {
     for (const cells of perRoom) if (picked.length < count && cells[round]) picked.push(cells[round]);
   }
   // Kinds and characters come from their own streams and are drawn after every spawn rng call, so dungeons and ghost cells never change.
-  const characters = CHARACTERS_ON ? assignCharacters(dungeon.seed, picked.length, 'mixed') : [];
+  const characters = CHARACTERS_ON ? assignSpawnCharacters(dungeon.seed, picked.length) : [];
   const kinds = assignKinds(dungeon.seed, picked.length, TROLL_SHARE);
   return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i] }));
 }
