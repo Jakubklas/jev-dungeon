@@ -23,7 +23,7 @@ import {
   compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, reachableFrontier, sameCell, step, wouldReveal,
 } from './known-map.js';
 import {
-  encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
+  blocksOnlyRoute, encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
   threatDistance, threatsOf,
 } from './encounter.js';
 
@@ -293,7 +293,7 @@ function hereKind(world) {
 // `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null } = {}) {
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -310,10 +310,11 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   };
   add('slip_past', s.slip && s.slip.gap >= minGap);
   add('run_away', true);
-  add('engage', armed);
+  add('engage', armed && (!panic || blocksOnlyRoute(world, threats))); // panic fights only an enemy that shuts the only way out
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);
   add('carry_on', threats.every((th) => !th.chasing) && s.frontier && s.frontier.gap >= minGap);
+  if (panic) for (const id of Object.keys(out)) if (!['run_away', 'race_to_exit', 'engage'].includes(id)) delete out[id]; // panic: run, or take the portal, nothing subtler
   return out;
 }
 

@@ -205,6 +205,19 @@ const result = (world, f) => ({
 });
 
 // A cell is open-room space when it sits in a 2x2 block of known floor.
+// PLAN-moods panic: true when the enemies in sight shut every known way out: a frontier cell or the seen portal is reachable over
+// known floor, but not without entering a cell next to (or on) a visible enemy. With no way out known at all it is false (nothing to
+// fight for). Known floor and visible enemies only.
+export function blocksOnlyRoute(world, threats) {
+  const near = new Set();
+  for (const th of threats) for (const c of [th.pos, ...neighbours(th.pos)]) near.add(key(c));
+  near.delete(key(world.pos));
+  const portal = world.seenTreasure();
+  const goalIn = (dist) => (portal && dist.has(portal)) || dist.order.some((c) => isFrontier(world, c));
+  if (!goalIn(knownDistances(world, world.pos, null, null, null, true))) return false; // nothing known to run toward: not "blocked"
+  return !goalIn(knownDistances(world, world.pos, null, (c) => !near.has(key(c)), null, true));
+}
+
 export function isRoomCell(world, p) {
   for (const [dx, dy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
     const block = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([ox, oy]) => [p[0] + dx + ox, p[1] + dy + oy]);

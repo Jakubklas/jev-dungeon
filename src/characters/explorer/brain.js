@@ -30,7 +30,7 @@ import {
 } from './memory.js';
 import { ADVERSARY_SPEED, GRACE_TICKS } from '../adversary/adversary.js';
 import {
-  BOLD_MIN, PRESSED_RANGE, allowedMoods, defaultMood, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
+  BOLD_MIN, PRESSED_RANGE, allowedMoods, defaultMood, panicNext, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
@@ -67,7 +67,7 @@ export const SENTIMENTS = {
     min_gap: 1, end_ticks: 8,
     move_priority: 'Panic: get away at any cost; nothing else matters.',
     when: 'Entered by code when confidence collapses; never offered as a choice.',
-    priority: 'Panic: get away at any cost. Only a clear path matters: ignore coins, lives and fights, and keep running from every enemy. Strike only an enemy that blocks the only way.',
+    priority: 'Panic: get away at any cost. Only a clear path matters: ignore coins, claws and fights, and keep running from every enemy. Strike only an enemy that blocks the only way.',
     note: 'Flees at any cost: only the way out matters.',
     skill_priority: 'Strike only an enemy that blocks your only way; otherwise keep running.',
   },
@@ -386,9 +386,14 @@ export class ExplorerBrain {
 
   // The player's live instruction (PLAN-inject): null or { text, from_step, until_step, steps_left }. Lives in game
   // steps: from_step is the first step it applies to, until_step the last; steps_left counts the steps still to take.
+  #directiveExpired() {
+    const d = this.#memory.directive;
+    return !!d && d.until_step - this.#world.steps <= 0;
+  }
+
   get directive() {
     const d = this.#memory.directive;
-    if (!d) return null;
+    if (!d || this.#memory.sentiment?.id === 'panic') return null; // panic cannot be overridden: a whisper waits (and still runs out) until it ends
     const steps_left = d.until_step - this.#world.steps;
     return steps_left > 0 ? { text: d.text, from_step: d.from_step, until_step: d.until_step, steps_left } : null;
   }
@@ -584,7 +589,7 @@ export class ExplorerBrain {
     const world = this.#world;
     const h = this.#hold;
     const stop = () => { this.#hold = { cell: null, n: 0, adj: 0 }; return false; };
-    if (!this.#holdOn || this.#memory.approach.id !== 'engage' || !this.#armed()) return stop();
+    if (!this.#holdOn || this.#memory.approach.id !== 'engage' || !this.#armed() || this.#memory.sentiment.id === 'panic') return stop();
     const threats = threatsOf(world);
     const stunned = this.#stunnedIds();
     const th = holdGhost(threats, stunned, world.pos, this.#holdOn === 'multi');
@@ -625,7 +630,7 @@ export class ExplorerBrain {
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
     }
-    if (memory.directive && !this.directive) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
+    if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
     const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
     const enc = this.#encounterPolicy(sit, prev);
@@ -651,7 +656,13 @@ export class ExplorerBrain {
       const cap = this.#capState();
       const cur = memory.sentiment.id;
       const list = this.#allowed(cap);
-      if (cur !== 'panic' && !list.includes(cur)) {
+      const wasPanic = cur === 'panic';
+      if (!this.#fixedMood && panicNext(cap.C, wasPanic) !== wasPanic) { // PLAN-moods: panic starts below C 20 and ends at 25, by code, no sentiment call
+        const to = wasPanic ? defaultMood(list) : 'panic';
+        setSentiment(memory, { id: to }, step);
+        policy = { from: cur, to, reason: `confidence ${Math.floor(cap.C)}` };
+        if (to === 'panic' && inSight) trigger ??= 'confidence'; // the tactic question follows (run away, or the portal), no mood call
+      } else if (!wasPanic && !list.includes(cur)) {
         const dir = TIER_RANK[tierOfMood(cur)] < TIER_RANK[tierOf(cap.C, tierOfMood(cur))] ? 'up' : 'down';
         if (inSight) {
           if (!this.#capFired.has(dir) && (trigger || step - info.lastDecision >= REDECIDE_COOLDOWN)) { this.#capFired.add(dir); trigger ??= 'confidence'; }
@@ -684,7 +695,7 @@ export class ExplorerBrain {
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight() });
+        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic' });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -897,7 +908,7 @@ export class ExplorerBrain {
     if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last adversary and won.');
     this.#skills.turnPassed();
     if (doneNow && this.directive) this.clearDirective('Jev judged it done');
-    if (memory.directive && !this.directive) this.clearDirective('ran out of steps'); // its last step was just taken
+    if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // its last step was just taken
     {
       // Regen pulls C toward the start (after REGEN_WAIT quiet ticks), every tick; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
       this.#confide('regen');
@@ -1008,6 +1019,7 @@ export class ExplorerBrain {
   // speed below 1 (speed 1 measured 3.9% deaths). Never 4 or more. Remembered ghosts count through C, not here.
   // Reads only the explorer's own state, the hp bars in sight and the sword.
   #fightOn(sit) {
+    if (this.#memory.sentiment.id === 'panic') return false;
     const n = sit.threats.visible.length;
     if (n === 1) return this.#loneFight(sit);
     if (n < 2 || n > 3) return false;
@@ -1029,6 +1041,7 @@ export class ExplorerBrain {
   async #askSentiment(sit, trigger) {
     const world = this.#world;
     const memory = this.#memory;
+    if (memory.sentiment.id === 'panic') return { choice: 'panic', probabilities: { panic: 1 }, ms: 0 }; // panic is code's, not Jev's, until C is back at PANIC_EXIT
     const caps = this.#capState();
     const ids = this.#allowed(caps);
     if (ids.length === 1) { // only one mood left: code takes it, no one-option Choice
