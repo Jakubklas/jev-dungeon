@@ -197,9 +197,10 @@ export function capability({ lives, maxLives = lives, clawDamage = 1, swordDamag
     k += (g.weight ?? 1) * (HP_BASE + HP_SLOPE * strikes);
   }
   const W = clawDamage * wPerExtra * (steady ? Math.max(0, k - 1) : k);
-  const R = clamp(Math.round(100 * (lives - W) / (lives + 1)), 0, 100);
-  const base = Math.min(R, CAPABILITY_MAX); // a fresh, unhurt explorer starts at 70 whatever its lives; the high tier is earned in fights
-  return armed ? base : Math.min(base, NO_SWORD_MAX);
+  // The unhurt baseline is 100 * lives / (lives + 1) but never above CAPABILITY_MAX (70 at the start whatever the lives); each point of W then
+  // costs 100 / (lives + 1), so enemies still lower capability at 4 lives instead of being hidden under a flat cap.
+  const R = clamp(Math.round(Math.min(CAPABILITY_MAX, 100 * lives / (lives + 1)) - 100 * W / (lives + 1)), 0, 100);
+  return armed ? R : Math.min(R, NO_SWORD_MAX);
 }
 
 // C = clamp(R + h, 0, cap(lives, maxLives)): history shifts capability by at most +-HIST_SPAN, the lives cap still applies.

@@ -29,7 +29,7 @@ const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
 const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
-const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 70], [3, 2, 4, 50, 66]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
+const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 70], [3, 2, 4, 50, 56]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
 const cells = { 1: [[9, 3]], 2: [[9, 3], [9, 2]], 3: [[9, 3], [9, 2], [9, 4]] };
 let combos = 0, checkedMenu = 0;
 for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]) for (const H of [20, 50, 80]) for (const mode of ['chase', 'patrol']) {
@@ -131,16 +131,16 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
 // ---- 4. the confidence trigger: once per encounter per direction ----
 {
   const log = [];
-  const r = make({ H: 29, log });
+  const r = make({ H: 70, log });
   r.game.adversaries.forEach((a) => { a.mode = "chase"; }); // no patrol->chase encounter trigger in the way
-  await tick(r); // C 45, bold
-  r.game.health = 2; // C 22: bold and greedy closed
+  await tick(r); // 4 lives, 3 enemies, H 70: C 76, high tier, bold
+  r.game.health = 2; // C 63: the high tier closed
   const triggers = [];
   for (let i = 0; i < 12 && !r.game.lost; i++) { const t = await tick(r); if (t.decision) triggers.push(t.decision.trigger); }
   const n = triggers.filter((x) => x === 'confidence').length;
   ok(n === 1, `confidence trigger fires exactly once per encounter (got ${n}: ${triggers})`);
   const after = sentimentKeys(log).at(-1);
-  ok(after && !after.includes('bold') && !after.includes('greedy'), `after the cap closed bold the question lists ${after}`);
+  ok(after && !after.includes('bold') && !after.includes('fearless'), `after the high tier closed the question lists ${after}`);
   ok(log.some((q) => q.kind === 'sentiment' && /Your confidence changed enough/.test(q.questions.sentiment.instructions)), 'the confidence trigger text is in the sentiment question');
 }
 

@@ -126,10 +126,10 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   const cap0 = (L, M, n, w, extra = {}) => capability({ lives: L, maxLives: M, ghosts: g2(n), ...extra }, w);
   const C0 = (L, M, n, w) => combine(cap0(L, M, n, w), 50, L, M);
   // (a) the section 2.2 table (rows: lives left of max; columns: 0..4 ghosts of 2 hp), history neutral
-  const T05 = { '2/2': [67, 67, 50, 33, 17], '3/3': [70, 70, 63, 50, 38], '4/4': [70, 70, 70, 60, 50], '1/2': [45, 45, 25, 0, 0] };
-  const T035 = { '2/2': [67, 67, 55, 43, 32], '3/3': [70, 70, 66, 57, 49], '4/4': [70, 70, 70, 66, 59], '1/2': [45, 45, 33, 15, 0] };
-  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'unsure'], '3/3': ['sure', 'sure', 'sure', 'even', 'even'], '4/4': ['sure', 'sure', 'sure', 'sure', 'even'], '1/2': ['even', 'even', 'unsure', 'shaken', 'shaken'] };
-  const B05 = { '2/2': ['sure', 'sure', 'even', 'unsure', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'unsure'], '4/4': ['sure', 'sure', 'sure', 'even', 'even'], '1/2': ['even', 'even', 'shaken', 'shaken', 'shaken'] };
+  const T05 = { '2/2': [67, 67, 50, 33, 17], '3/3': [70, 70, 58, 45, 33], '4/4': [70, 70, 60, 50, 40], '1/2': [45, 45, 25, 0, 0] };
+  const T035 = { '2/2': [67, 67, 55, 43, 32], '3/3': [70, 70, 61, 53, 44], '4/4': [70, 70, 63, 56, 49], '1/2': [45, 45, 33, 15, 0] };
+  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'unsure'], '3/3': ['sure', 'sure', 'even', 'even', 'even'], '4/4': ['sure', 'sure', 'even', 'even', 'even'], '1/2': ['even', 'even', 'unsure', 'shaken', 'shaken'] };
+  const B05 = { '2/2': ['sure', 'sure', 'even', 'unsure', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'unsure'], '4/4': ['sure', 'sure', 'even', 'even', 'even'], '1/2': ['even', 'even', 'shaken', 'shaken', 'shaken'] };
   ok(W_PER_EXTRA === 0.35 && W_PER_EXTRA_SAFE === 0.5, 'W_PER_EXTRA 0.35, W_PER_EXTRA_SAFE 0.5');
   ok(cap0(2, 2, 3) === cap0(2, 2, 3, W_PER_EXTRA), 'default wPerExtra is W_PER_EXTRA');
   for (const [w, T, B] of [[0.5, T05, B05], [0.35, T035, B035]]) {
