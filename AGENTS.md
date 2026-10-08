@@ -427,6 +427,7 @@ The money system: coins lie around the dungeon from the start, and a dispelled g
 | `ghostSkills` | `'default'` | `'default'` (claw strike) or `'none'` (harmless ghosts, for exploring tests); `ghostSkillSetOf(config)` gives the `buildSkillSet` argument. |
 | `ghostHp` | `null` | 1..5 hit points per ghost; `null` = the Skills setting `ghostHp`. |
 | `coins` | `0` | Coins lying around at the start: a count 0..60 (spread by `spawnCoins` on its own stream, so the arena is unchanged) or explicit cells `[[x, y], …]` (URL: `"x,y;x,y"`; not wall, not the start). ASCII `c` cells override it. Independent of the `maxCoins` / `floorPerCoin` settings. |
+| `hearts` | `null` | Floating hearts at explicit cells `[[x, y], …]` (URL: `"x,y;x,y"`; inside floor, at most 60). Drawn like coins (lit cells, or Reveal), sent as `view().heart_cells` (`game.heartPiles`). Stepping on one restores a life (`applyMove` returns `healed`, `Run.playTurn` emits a `heart` event); at full lives it is left where it lies. Jev is told nothing about hearts (not in any request). |
 
 Unknown keys, bad values and impossible placements throw `TestbedError` with a readable message (the server answers **400**).
 

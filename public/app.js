@@ -713,6 +713,12 @@ function drawScene(now) {
     ents.push({ depth: cx2 + cy2, order: -.5, gx: cx2, gy: cy2, kind: 'coin', n, face: 1,
       alpha: lit ? Math.min(1, Math.max(.15, shown[cy2][cx2] / .4)) : REVEAL_ALPHA });
   }
+  for (const [hx, hy] of game.heart_cells ?? []) { // hearts: lit cells only (or Reveal), like coins
+    const lit = known(hx, hy);
+    if (!(lit || reveal) || game.light[hy]?.[hx] === undefined) continue;
+    ents.push({ depth: hx + hy, order: -.5, gx: hx, gy: hy, kind: 'heart', n: 1, face: 1,
+      alpha: lit ? Math.min(1, Math.max(.15, shown[hy][hx] / .4)) : REVEAL_ALPHA });
+  }
   if (propArt) {
     for (const p of floorProps) {
       if (p.w) { pushForge(ents, p, known, shown, reveal); continue; }
@@ -1684,7 +1690,7 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop', 'heart'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
@@ -1704,6 +1710,7 @@ const EVENT_TEXT = {
   struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
   bump: (id) => `${id} bumped Jev`,
   coin_drop: (id) => `${id} dropped a coin`,
+  heart: () => 'Jev picked up a heart: one life back',
   coin: (id, e) => `Jev picked up a coin${Number.isFinite(e.total) ? ` (${e.total})` : ''}`,
   alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,
