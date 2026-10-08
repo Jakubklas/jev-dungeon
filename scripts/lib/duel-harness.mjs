@@ -14,6 +14,7 @@
 //   ghosts      [[x, y] | { cell: [x, y], offset?: [dx, dy], mode?: 'chase' | 'patrol' }]; 1, 2 or 3 (4 works too; the testbed cap is 8).
 //               `offset` is added to `cell`, so a pair can be "N steps apart" from one base cell. Default: the room's cell.
 //   ghostMode   'chase' (default: the ghost hunts from tick 0) or 'patrol'; a per-ghost `mode` wins.
+//   kinds       the monsters' kind for the testbed ('ghost' default | 'troll' | 'mixed' | a list), see src/testbed.js.
 //   ghostHp     hp per ghost (the ghostHp setting otherwise).
 //   settings    overrides of the skill and ghost tunables for this duel: stunTicks, swordCooldown, swordDamage,
 //               clawCooldown, clawDamage, shieldChance, coinDropChance, ghostHp, graceTicks (alias grace), speed, chaseRange.
@@ -161,7 +162,7 @@ export async function playDuel(opts = {}) {
     const skills = opts.skills ?? 'sword';
     const holder = {};
     const run = newTestGame(
-      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills },
+      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills, ...(opts.kinds ? { kinds: opts.kinds } : {}) },
       { ask: (req) => { opts.onAsk?.(req); return holder.ask(req); }, decide, dir: url, memoryDir: url, hold: opts.hold ?? true, confidence: opts.confidence ?? { fixedMood: true } },
     );
     const game = run.game;

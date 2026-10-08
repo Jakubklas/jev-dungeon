@@ -57,7 +57,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
           events.push({ id: 'explorer', type: 'cleared', at });
         }
       } else {
-        events.push({ id: a.id, type: 'struck', at, hp: out.hp });
+        events.push({ id: a.id, type: 'struck', at, hp: out.hp, staggered: out.staggered });
       }
     }
   }

@@ -486,6 +486,7 @@ monsters:
       hp: 4 # Hits a troll takes before it is dispelled (a ghost has Ghost hit points).
       clawDamage: 2 # Lives a troll claw strike takes.
       speed: 0.65 # A troll moves at this share of the ghost speed.
+      stunTicks: 0 # Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step).
       skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
       clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
       weight: 0.25 # Spawn weight, relative to the other kinds

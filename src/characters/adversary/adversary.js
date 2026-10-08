@@ -168,14 +168,21 @@ export class Adversary {
   takeHit(damage, fromPos, game = null) {
     this.#hp = Math.max(0, this.#hp - damage);
     if (this.#hp === 0) return { hp: 0, dispelled: true };
+    const stun = this.stunTicks;
+    if (stun === 0) return { hp: this.#hp, dispelled: false, staggered: false }; // a troll shrugs the blow off: no knockback or lost step
     const dx = this.pos[0] - fromPos[0], dy = this.pos[1] - fromPos[1];
     const step = Math.abs(dx) >= Math.abs(dy) ? [Math.sign(dx), 0] : [0, Math.sign(dy)];
     const to = [this.pos[0] + step[0], this.pos[1] + step[1]];
     if (game && (step[0] || step[1]) && isFloor(game.dungeon, to) && !same(to, fromPos)) this.pos = to;
-    this.#stun = skillConfig().stunTicks;
+    this.#stun = stun;
     this.budget = 0;
     this.#route = null; // patrol routes assume contiguous cells
-    return { hp: this.#hp, dispelled: false };
+    return { hp: this.#hp, dispelled: false, staggered: true };
+  }
+
+  // Ticks a sword hit stuns this monster (its kind's own, else the global stunTicks); 0 = it is never staggered.
+  get stunTicks() {
+    return kindOf(this.#kind).stunTicks() ?? skillConfig().stunTicks;
   }
 
   // Mirrors the SkillSet into the memory (plain JSON, at most 4).

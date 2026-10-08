@@ -26,6 +26,7 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.kinds.troll.hp` | 4 | 1..10 | next | no | Hits a troll takes before it is dispelled (a ghost has Ghost hit points). |
 | `monsters.kinds.troll.clawDamage` | 2 | 1..3 | next | no | Lives a troll claw strike takes. |
 | `monsters.kinds.troll.speed` | 0.65 | 0.2..1 | next | no | A troll moves at this share of the ghost speed. |
+| `monsters.kinds.troll.stunTicks` | 0 | 0..6 | next | no | Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step). |
 | `monsters.spawn.minSteps` | 20 | 1..60 | next | no | Path steps a monster spawns away from the explorer start |
 | `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
 | `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |

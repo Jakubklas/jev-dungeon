@@ -533,7 +533,7 @@ export class ExplorerBrain {
     }
     const self = {
       pos: [...world.pos],
-      visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance, hp: v.hp, maxHp: v.maxHp })),
+      visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance, hp: v.hp, maxHp: v.maxHp, stun: v.stun })),
       opponentsNear,
       threatNear,
       stunTicks: skillConfig().stunTicks,
@@ -954,7 +954,7 @@ export class ExplorerBrain {
     this.#skillEvents.push(...events); // handed to Run.playTurn through the turn shape
     for (const e of events) {
       if (e.type === 'struck') {
-        this.#struck.set(e.id, step);
+        if (e.staggered !== false) this.#struck.set(e.id, step); // a monster the blow did not stagger is not stunned: do not wait on it
         this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {

@@ -34,7 +34,7 @@ export class KnownWorld {
   // while in sight (user-approved amendment of rule 1). Out of sight nothing is read, hp included.
   visibleAdversaries() {
     const byId = new Map(this.#game.adversaries.map((a) => [a.id, a]));
-    return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp }));
+    return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp, stun: byId.get(v.id).stunTicks }));
   }
 
   // The portal (dungeon.treasure) once it is lit, else null. A testbed arena may have none.

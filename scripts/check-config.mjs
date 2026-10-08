@@ -79,6 +79,7 @@ const OLD = [
   ['trollHp', 4, 'next'],
   ['trollClawDamage', 2, 'next'],
   ['trollSpeed', 0.65, 'next'],
+  ['trollStunTicks', 0, 'next'],
   ['roomsPerHeart', 4, 'next'],
   ['maxHearts', 6, 'next'],
   ['coinDropChance', 0.6, 'next'],
@@ -91,7 +92,7 @@ const OLD = [
 ];
 
 // 1. registry vs the old schema
-check(OLD.length === 39, `frozen list has 39 rows, got ${OLD.length}`);
+check(OLD.length === 40, `frozen list has 40 rows, got ${OLD.length}`);
 const byKey = new Map(L.SCHEMA.map((s) => [s.key, s]));
 for (const [key, def, when] of OLD) {
   const row = byKey.get(key);

@@ -5,17 +5,20 @@
 import { rng } from '../../dungeon.js';
 import { skillConfig } from '../../skills/config.js';
 
+// stunTicks: ticks a hit stuns this kind; null = the global stunTicks, 0 = never staggered (hp loss only).
 // speed: a multiplier of ADVERSARY_SPEED; tuning: per-loadout number overrides for this kind's own skills.
 // hp: a function, so a settings change is read when the monster is built (never cached).
 // skills: a name for buildSkillSet (loadouts.js DEFAULT_SETS) or a list of loadout ids.
 export const KINDS = {
   ghost: {
-    id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, speed: () => skillConfig().ghostSpeed, skills: 'ghost',
+    id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, speed: () => skillConfig().ghostSpeed, skills: 'ghost', stunTicks: () => null,
     tuning: () => (skillConfig().ghostClawCooldown == null ? {} : { claw_strike: { cooldown: skillConfig().ghostClawCooldown } }),
   },
-  // Slower, tougher and harder-hitting than a ghost; it hunts and decides like one for now.
+  // Slower, tougher and harder-hitting than a ghost, and a sword hit does not stagger it (trollStunTicks 0): without
+// that the explorer's engage hold (strike first, then it is knocked back and stunned) kept it from ever clawing.
   troll: {
     id: 'troll', name: 'Troll', hp: () => skillConfig().trollHp, speed: () => skillConfig().trollSpeed, get skills() { return skillConfig().trollSkills; },
+    stunTicks: () => skillConfig().trollStunTicks,
     tuning: () => ({ claw_strike: { damage: skillConfig().trollClawDamage, ...(skillConfig().trollClawCooldown == null ? {} : { cooldown: skillConfig().trollClawCooldown }) } }),
   },
 };
