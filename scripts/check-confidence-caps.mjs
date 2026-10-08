@@ -181,34 +181,33 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
 {
   const bodies = [];
   const first = async (o) => { const sent = []; await playDuel({ maxTicks: 1, onAsk: (r) => { bodies.push(r.body); sent.push(r); }, ...o }); return sent; };
-  const stakes = /usually costs at most one life/;
+  const stakes = /each dispel removes an enemy for good/;
   const dflt = /Default: engage while the sword is ready \(you act first; hold off the nearest\)/;
   const text = (sent) => sent.map((r) => JSON.stringify(r.questions)).join('\n');
   for (const [name, o, wantClaim] of [
     ['2 ghosts', { ghosts: cells[2] }, true],
     ['3 ghosts', { ghosts: cells[3] }, true],
-    ['3 ghosts at speed 1', { ghosts: cells[3], settings: { speed: 1 } }, false],
-    ['4 ghosts', { ghosts: [[9, 3], [9, 2], [9, 4], [10, 3]] }, false],
-    ['2 ghosts hp 4', { ghosts: cells[2], ghostHp: 4 }, false],
-    ['2 ghosts, claw damage 2 at 2 lives', { ghosts: cells[2], health: 2, settings: { clawDamage: 2 } }, false],
-    ['2 ghosts, stun 1 (not steady)', { ghosts: cells[2], settings: { stunTicks: 1 } }, false],
-    ['2 ghosts, sword cooldown 2 (not steady)', { ghosts: cells[2], settings: { swordCooldown: 2 } }, false],
+    ['3 ghosts at speed 1 (no numeric gate)', { ghosts: cells[3], settings: { speed: 1 } }, true],
+    ['4 ghosts (no numeric gate)', { ghosts: [[9, 3], [9, 2], [9, 4], [10, 3]] }, true],
+    ['2 ghosts hp 4 (no numeric gate)', { ghosts: cells[2], ghostHp: 4 }, true],
+    ['2 ghosts, claw damage 2 at 2 lives (one claw is the last life: low tier)', { ghosts: cells[2], health: 2, settings: { clawDamage: 2 } }, false],
+    ['2 ghosts, stun 1 (no numeric gate)', { ghosts: cells[2], settings: { stunTicks: 1 } }, true],
+    ['2 ghosts, sword cooldown 2 (no numeric gate)', { ghosts: cells[2], settings: { swordCooldown: 2 } }, true],
     ['2 ghosts at C below 40', { ghosts: cells[2], confidence: { caps: true, start: 20 }, health: 2 }, false],
   ]) {
     const t = text(await first({ confidence: { caps: true, start: 80 }, ghostHp: 2, health: 4, ...o }));
     ok(stakes.test(t) === wantClaim, `claim gate (${name}): stakes sentence ${stakes.test(t) ? 'present' : 'absent'}, want ${wantClaim ? 'present' : 'absent'}`);
     ok(!/\d\+? (adversar|enem|monster|ghost)/i.test(t), `no counts on enemies (${name})`);
   }
-  // the default line on a decision tick with the tactic question (steady mood, 2 ghosts, fight on)
+  // steady: the default engage line is for a single or hurt monster, not for two full-health ones
   {
     const sent = await first({ ghosts: cells[2], ghostHp: 2, health: 4, confidence: { caps: true, start: 50 }, mood: 'steady' });
-    ok(sent.some((r) => dflt.test(JSON.stringify(r.questions))), 'default engage line for 2 ghosts (steady, fight on)');
-    ok(!sent.some((r) => /Default: engage a lone adversary/.test(JSON.stringify(r.questions))), 'no lone-adversary default line with 2 ghosts');
+    ok(!sent.some((r) => dflt.test(JSON.stringify(r.questions))), 'steady, two healthy enemies: no default engage line');
   }
   // one ghost: today's lone-fight wording
   {
     const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 50 }, mood: 'steady' }));
-    ok(/Default: engage a lone adversary/.test(t) && /A lone adversary you can strike first/.test(t), "one ghost keeps today's lone-fight wording in caps mode");
+    ok(/Default: engage a lone enemy/.test(t) && /A single enemy you strike first costs little/.test(t), 'one enemy: the single-monster wording');
   }
   for (const g of [cells[3], [[9, 3], [9, 2], [9, 4], [10, 3]]]) {
     await playDuel({ ghosts: g, ghostHp: 2, health: 4, maxTicks: 25, confidence: { caps: true, start: 50 }, onAsk: (r) => bodies.push(r.body) });

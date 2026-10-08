@@ -111,7 +111,7 @@ const tickReq = (st, from = 0) => st.seen.slice(from).filter((r) => r.kind === '
     const nm = r.questions.next_move;
     if (nm) {
       const p = nm.instructions.priorities;
-      ok(p[0].startsWith("Follow the player's directive: \"go for the coins in the east room\"") && p[0].includes('Never step onto an adversary'), `first priority line: ${p[0]}`);
+      ok(p[0].startsWith("Follow the player's directive: \"go for the coins in the east room\"") && p[0].includes('Never step onto an enemy'), `first priority line: ${p[0]}`);
       ok(!p.some((x) => /Avoid backtracking|reveal new cells|Steady:/.test(x)), 'mood and approach lines dropped');
       ok(!Object.values(nm.criteria).some((c) => /Closer to the target|Reaches the target/.test(c)), 'no approach-target progress in the move facts');
     }

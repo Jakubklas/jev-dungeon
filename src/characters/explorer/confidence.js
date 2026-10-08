@@ -173,7 +173,6 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
 export const W_PER_EXTRA = 0.35;
 export const W_PER_EXTRA_SAFE = 0.5;
 export const HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
-export const BOLD_MIN = 40; // the fight gate's C floor (#fightOn); the moods themselves come from the tiers
 export const NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
 const HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
 const HP_SLOPE = 0.125;

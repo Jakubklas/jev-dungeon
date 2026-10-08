@@ -394,7 +394,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
 
   // b. Engage's fact: strikes needed from the visible hp; the clear sentence only for the one ghost ever seen.
   const solo = await withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
-  check(solo?.engage && /2 strikes dispel it; expect at most one claw at you\./.test(solo.engage), `engage fact has strikes and the claw line (${solo?.engage})`);
+  check(solo?.engage && /2 strikes dispel it\./.test(solo.engage) && !/claw/.test(solo.engage), `engage fact has the strikes and no claw claim (${solo?.engage})`);
   check(/Dispelling it may clear the dungeon \(a win\)\./.test(solo?.engage ?? ''), 'engage fact: a lone adversary may clear the dungeon');
   // Twin: a second ghost sealed away and never seen changes nothing.
   const SEALED = ['#############', '#...........#', '#...........#', '#..@...A....#', '#...........#', '#...........#', '#############', '#...........#', '#.....A.....#', '#############'];

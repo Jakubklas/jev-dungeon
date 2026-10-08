@@ -28,9 +28,9 @@ import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
   LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
 } from './memory.js';
-import { ADVERSARY_SPEED, GRACE_TICKS } from '../adversary/adversary.js';
+import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
-  BOLD_MIN, PRESSED_RANGE, allowedMoods, defaultMood, panicNext, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
+  PRESSED_RANGE, allowedMoods, defaultMood, panicNext, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
@@ -142,18 +142,18 @@ const profileNote = (id) => {
 };
 
 // The one place Jev is told what self.confidence means (sentiment question only; rules() rides on every request).
-export const CAPS_SENTENCE = ' `self.confidence` weighs your lives, sword and the adversaries you know against how your fights went; it decides which moods are offered.';
+export const CAPS_SENTENCE = ' `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered.';
 
 const TRIGGER_TEXT = {
   start: 'The explorer is about to start exploring the dark dungeon.',
-  encounter: 'An adversary has just come into sight (or started chasing): the explorer must choose how to deal with it.',
-  tactic_failed: 'The current tactic stopped working: its target is gone or the adversary got closer than the minimum gap.',
-  chase_over: 'No adversary has been in sight for a while: the encounter is over and exploring resumes.',
+  encounter: 'An enemy has just come into sight (or started chasing): the explorer must choose how to deal with it.',
+  tactic_failed: 'The current tactic stopped working: its target is gone or the enemy got closer than the minimum gap.',
+  chase_over: 'No enemy has been in sight for a while: the encounter is over and exploring resumes.',
   exit: 'The portal (the way out) has just been seen.',
   coins: 'Coins have just come into view nearby.',
-  dispelled: 'The explorer has just dispelled an adversary; others may remain.',
+  dispelled: 'The explorer has just dispelled an enemy; others may remain.',
   review: 'The explorer just dropped an exploration approach that was not working and switched to another.',
-  hit: 'The explorer just lost a life to an adversary: rethink whether to keep at it.',
+  hit: 'The explorer just lost a life to an enemy: rethink whether to keep at it.',
   confidence: 'Your confidence changed enough that your mood no longer fits: choose again.',
   directive: "The player has just given the explorer an instruction (`directive`): it outranks every mood's `when`.",
 };
@@ -162,13 +162,13 @@ const TRIGGER_TEXT = {
 const DIRECTIVE_DEFAULT_STEPS = 20;
 const cleanDirective = (t) => String(t ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LIMITS.directive).trim();
 // The first priority line while a directive is live: quoted and labelled as the player's words, safety kept.
-const directiveLine = (text) => `Follow the player's directive: ${JSON.stringify(text)}. It outranks the mood and the approach. Never step onto an adversary.`;
+const directiveLine = (text) => `Follow the player's directive: ${JSON.stringify(text)}. It outranks the mood and the approach. Never step onto an enemy.`;
 
 // How each tactic should shape the move while an adversary is in sight.
 const TACTIC_MOVE_HINT = {
   run_away: 'Keep the distance growing; avoid known dead ends.',
   slip_past: 'Moving toward or alongside it is fine while the gap holds: follow the route past it.',
-  engage: 'Go to the target: 2 steps off a hunting adversary, so it steps next to you and you strike first; next to one you stunned.',
+  engage: 'Go to the target: 2 steps off a hunting enemy, so it steps next to you and you strike first; next to one you stunned.',
   hide: 'Reach the target out of its sight fast; do not step back into its line of sight.',
   race_to_exit: 'Head straight for the portal; getting there first matters most.',
   carry_on: 'It has not seen you: keep exploring, out of its line of sight.',
@@ -179,10 +179,10 @@ const TACTIC_MOVE_HINT = {
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null, directive = false) =>
   'Goal: loot this dark dungeon and get out alive. Your score is the coins you hold when you win. ' +
-  'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every adversary. At 0 lives you lose, coins and all. ' +
+  'You win by stepping onto the portal (it ends the game: leave once staying is not worth it) or by dispelling every enemy. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
-  `Adversaries chase an explorer they see, at ${speedPhrase()}. ` +
-  `A touch only bumps. An adjacent adversary's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
+  `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
+  `A touch only bumps. An adjacent enemy's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
   '`threats.visible`: in sight now, with each health bar (`hp`); `threats.remembered`: seen earlier, frozen where last seen.' +
   (combat ? ` ${combatRule(combat)}` : '') +
   (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '') +
@@ -198,9 +198,9 @@ const chancePhrase = (p) => (p >= 1 ? 'every time' : p === 0.5 ? 'half the time'
 const stunHolds = (stun, cooldown) => stun >= 2 && cooldown < stun;
 function combatRule({ name, damage, cooldown, stun, coinChance, clawCooldown, shield }) {
   const loot = coinChance > 0 ? ' and may drop a coin' : ''; // the chance is never stated (user decision)
-  return `Your ${name.toLowerCase()} always hits an adjacent adversary: it loses ${damage} hp${stun ? ` and is knocked back and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}` +
+  return `Your ${name.toLowerCase()} always hits an adjacent enemy: it loses ${damage} hp${stun ? ` and is knocked back and stunned ${stun} step${stun === 1 ? '' : 's'}` : ''}` +
     `${stunHolds(stun, cooldown) ? ', so your next strike lands before it can claw' : ''}; at 0 hp it is gone for good${loot}. ` +
-    `An adversary's claw needs ${clawCooldown} step${clawCooldown === 1 ? '' : 's'} to recharge` +
+    `An enemy's claw needs ${clawCooldown} step${clawCooldown === 1 ? '' : 's'} to recharge` +
     `${shield > 0 ? `, and your shield stops it ${chancePhrase(shield)}` : ''}.`;
 }
 
@@ -729,7 +729,7 @@ export class ExplorerBrain {
         type: 'choice',
         instructions: {
           question:
-            `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps adversaries ` +
+            `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps enemies ` +
             `${profile.min_gap}+ steps away: only tactics allowing that are listed. Judge from \`threats\`.`,
           priorities: liveDirective
             ? [directiveLine(liveDirective.text), 'Pick the tactic that best serves the directive without breaking the safety rule; racing to the portal ends the game.']
@@ -737,14 +737,14 @@ export class ExplorerBrain {
             ? [
               sit.threats.visible.length > 1
                 ? 'Default: engage while the sword is ready (you act first; hold off the nearest). Run away when cramped or without the sword.'
-                : 'Default: engage a lone adversary while the sword is ready (you act first). Run away when cramped or without the sword.',
+                : 'Default: engage a lone enemy while the sword is ready (you act first). Run away when cramped or without the sword.',
               profile.priority,
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
             ]
             : [
               profile.priority,
               'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
-              'Engage while the sword is ready: hold 2 steps off the nearest adversary so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
+              'Engage while the sword is ready: hold 2 steps off the nearest enemy so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
             ],
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
@@ -789,7 +789,7 @@ export class ExplorerBrain {
       this.#coinStep = step;
       questions.next_approach = this.#nextApproachQuestion(
         availableApproaches(world).filter((id) => id !== 'go_to_exit'),
-        'Coins have come into view (`surroundings.coins`). Which approach should the explorer follow now? Keep `plan.approach.current` unless going for the coins is worth the detour (adversaries, `threats.remembered`, what is left to explore).',
+        'Coins have come into view (`surroundings.coins`). Which approach should the explorer follow now? Keep `plan.approach.current` unless going for the coins is worth the detour (enemies, `threats.remembered`, what is left to explore).',
       );
     }
     // directive_done (Noul): an early end for "until relevant". Rides on a request that is made anyway (never the
@@ -905,7 +905,7 @@ export class ExplorerBrain {
       this.#review = { step: world.steps, targetSteps: this.#target(pendingSwitch.id)?.steps ?? null };
       info.pending = info.pending ?? 'review'; // the new approach gets its sentiment next tick
     }
-    if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last adversary and won.');
+    if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last enemy and won.');
     this.#skills.turnPassed();
     if (doneNow && this.directive) this.clearDirective('Jev judged it done');
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // its last step was just taken
@@ -996,45 +996,27 @@ export class ExplorerBrain {
     }
     const goal = this.#goal();
     if (memory.approach.id === 'hide' && goal && sameCell(goal, here)) {
-      addLandmark(memory, { kind: 'hiding_spot_used', cell: here, step, note: "Hid here, out of an adversary's sight." });
+      addLandmark(memory, { kind: 'hiding_spot_used', cell: here, step, note: "Hid here, out of an enemy's sight." });
     }
   }
 
-  // A fight the duels bear out (check-skills section 12): one adversary in sight and none remembered, the sword
-  // ready, the stun outlasting the sword's cooldown, at most 2 strikes to dispel it (then it costs at most one claw),
-  // and one claw cannot end the game: lives above the claw's damage and full lives or hit protection (bold's `when`).
-  // Reads only the explorer's own state, the visible adversary's hp and the sword.
-  #loneFight(sit) {
-    const world = this.#world;
-    const fight = this.#fight();
-    const [v] = world.visibleAdversaries();
-    if (!fight?.steady || !this.#armed() || sit.threats.visible.length !== 1 || sit.threats.remembered.length || !v) return false;
-    if (Math.ceil(v.hp / fight.damage) > 2) return false;
-    return world.health > skillConfig().clawDamage && (world.health >= world.maxHealth || world.graceLeft > 0);
-  }
-
-  // Caps mode: the fight the multi hold backs (PLAN-confidence-mood section 5, phase 2 measurements). One adversary in sight:
-  // today's #loneFight, unchanged. 2-3: the sword ready, the stun outlasting its cooldown (`steady`), each visible one at most
-  // 3 strikes from dispelled, C at BOLD_MIN or better, a claw not lethal (lives above its damage), and with 3 in sight a
-  // speed below 1 (speed 1 measured 3.9% deaths). Never 4 or more. Remembered ghosts count through C, not here.
-  // Reads only the explorer's own state, the hp bars in sight and the sword.
+  // PLAN-moods: is a fight worth talking up? The sword is ready, the explorer is not panicking or in the low tier, and it is a single
+  // monster, a hurt one, or confidence in the high tier / a mood that wants the fight (bold, fearless). No counts of enemies, hp or claws: Jev gets the specs
+  // (hp bars, the sword's numbers) and decides. Reads only the explorer's own state and the hp bars in sight.
   #fightOn(sit) {
-    if (this.#memory.sentiment.id === 'panic') return false;
-    const n = sit.threats.visible.length;
-    if (n === 1) return this.#loneFight(sit);
-    if (n < 2 || n > 3) return false;
-    const fight = this.#fight();
-    if (!fight?.steady || !this.#armed()) return false;
-    if (n === 3 && ADVERSARY_SPEED >= 1) return false;
-    if (this.#world.visibleAdversaries().some((v) => Math.ceil(v.hp / fight.damage) > 3)) return false;
-    return this.#world.health > skillConfig().clawDamage && this.#capState().C >= BOLD_MIN;
+    const id = this.#memory.sentiment.id;
+    if (id === 'panic' || !this.#armed() || !sit.threats.visible.length) return false;
+    const tier = tierOf(this.#capState().C, tierOfMood(id));
+    if (tier === 'low') return false;
+    if (tier === 'high' || id === 'bold' || id === 'fearless') return true;
+    return sit.threats.visible.length === 1 || this.#world.visibleAdversaries().some((v) => v.hp < v.maxHp);
   }
 
   // The encounter's stakes in one sentence, only for a #fightOn. Otherwise ''.
   #stakes(sit, trigger) {
     if (!['encounter', 'tactic_failed', 'hit', 'confidence'].includes(trigger) || !this.#fightOn(sit)) return '';
-    if (sit.threats.visible.length > 1) return ' Holding 2 steps off the nearest and striking first, a fight with these adversaries usually costs at most one life; running may leave them hunting you.';
-    return ' A lone adversary you can strike first costs at most one claw and a dispel removes it for good; running may leave it hunting you.';
+    if (sit.threats.visible.length > 1) return ' Holding off the nearest and striking first, each dispel removes an enemy for good; running may leave them hunting you.';
+    return ' A single enemy you strike first costs little and a dispel removes it for good; running may leave it hunting you.';
   }
 
   // Request 1 of a decision step. Sets memory.sentiment and returns { choice, probabilities, ms }.
@@ -1066,7 +1048,7 @@ export class ExplorerBrain {
         type: 'choice',
         instructions:
           `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} ${caps ? `What should the explorer go after right now? Only the moods your confidence allows are listed: ${ids.map((id) => MOOD_GLOSS[id]).join(', ')}.` : 'What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)?'} ` +
-          'The mood sets how close adversaries may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
+          'The mood sets how close enemies may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
           '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
           CAPS_SENTENCE +
           (this.directive ? " The player's `directive` outranks every mood's `when`: pick the mood that serves it best." : ''),
@@ -1125,16 +1107,16 @@ export class ExplorerBrain {
         : 'Take a move onto the portal; else move closer to it along the known path.'
       : speculative
         ? 'Onto the portal only to leave or dodge a strike.'
-        : 'A move onto the portal ends the game: take it only if leaving now is the plan or an adversary would otherwise strike you.';
+        : 'A move onto the portal ends the game: take it only if leaving now is the plan or an enemy would otherwise strike you.';
     const engaging = approachId === 'engage';
     const hint = TACTIC_MOVE_HINT[approachId] ?? 'Avoid known dead ends where you can be cornered; keep the distance growing.';
     const safety = sit.threats.visible.length
       ? [
           approachId === 'engage'
-            ? `Never step onto an adversary. ${hint}`
+            ? `Never step onto an enemy. ${hint}`
             : speculative
-            ? `Never step into an adversary; keep ${gap}+ steps from it. ${hint}`
-            : `Never step into an adversary; avoid moves marked "below your minimum gap" (under ${gap} steps). ${hint}`,
+            ? `Never step into an enemy; keep ${gap}+ steps from it. ${hint}`
+            : `Never step into an enemy; avoid moves marked "below your minimum gap" (under ${gap} steps). ${hint}`,
         ]
       : [];
     // The one-per-tactic questions decide the move on a decision tick, so they keep the mood's rule (shortened).
@@ -1146,7 +1128,7 @@ export class ExplorerBrain {
           ...dirLine,
           ...(portalSeen ? [portalLine] : []),
           ...safety,
-          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the directive needs it.'] : []),
+          ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the directive needs it.'] : []),
         ]
       : speculative
       ? [...(portalSeen ? [portalLine] : []), ...safety, ...(engaging ? [] : [profile.move_priority])]
@@ -1155,17 +1137,17 @@ export class ExplorerBrain {
           // progress" and "reveal new cells" would talk the explorer off the holding cell (P7a).
           ...(portalSeen ? [portalLine] : []),
           ...safety,
-          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the approach needs it.'] : []),
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
         ]
       : [
           ...(portalSeen ? [portalLine] : []),
           ...safety,
-          ...(sit.threats.remembered.length ? ['Do not head toward where an adversary was last seen (`threats.remembered`) unless the approach needs it.'] : []),
-          ...(nearbyPiles(this.#world, COIN_NEAR).length ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an adversary is near.'] : []),
+          ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(nearbyPiles(this.#world, COIN_NEAR).length ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an enemy is near.'] : []),
           profile.priority,
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
-          'Stay makes no progress and lets adversaries close in: only when every step is worse.',
+          'Stay makes no progress and lets enemies close in: only when every step is worse.',
           'Follow the approach (`plan.approach.current`): prefer moves closer to its target.',
           'Prefer moves revealing many new cells or onto never-visited cells.',
           'Avoid backtracking: no known dead end with nothing left to explore, and do not undo the previous move unless every other way is explored (`recent`).',
@@ -1197,7 +1179,7 @@ export class ExplorerBrain {
     if (alternatives.length) {
       questions.next_approach = this.#nextApproachQuestion(
         alternatives,
-        'If `plan.approach.current` were dropped, which approach should the explorer try next? Avoid approaches in `plan.tried` that already failed, use `surroundings.unexplored_by_direction`, and steer clear of where adversaries were just seen (`threats.remembered`).',
+        'If `plan.approach.current` were dropped, which approach should the explorer try next? Avoid approaches in `plan.tried` that already failed, use `surroundings.unexplored_by_direction`, and steer clear of where enemies were just seen (`threats.remembered`).',
       );
     }
   }
@@ -1230,7 +1212,7 @@ export class ExplorerBrain {
     const memory = this.#memory;
     if (cell) this.#tacticGoal = { id, cell };
     if (memory.approach.id === id) return;
-    interruptApproach(memory, approachOf(id), trigger === 'encounter' ? 'met an adversary' : `encounter: ${trigger.replace(/_/g, ' ')}`, prev);
+    interruptApproach(memory, approachOf(id), trigger === 'encounter' ? 'met an enemy' : `encounter: ${trigger.replace(/_/g, ' ')}`, prev);
     this.#review = { step: prev + 1, targetSteps: null };
   }
 
@@ -1291,7 +1273,7 @@ export class ExplorerBrain {
         a.interrupted = null;
       }
       this.#review = { step: at, targetSteps: this.#target(a.id)?.steps ?? null };
-      policy = { from, to: a.id, reason: `no adversary in sight for ${info.unseen} tick${info.unseen === 1 ? '' : 's'}` };
+      policy = { from, to: a.id, reason: `no enemy in sight for ${info.unseen} tick${info.unseen === 1 ? '' : 's'}` };
       trigger = 'chase_over';
       { // evaded: it had a chasing sighting and ended with no hit and no dispel
         const evaded = this.#cs.counts.evaded;
