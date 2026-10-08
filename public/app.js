@@ -80,13 +80,13 @@ const ANIM_MS = 260;              // idle animation frame time
 const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
-const SHIELD_SLASH_MS = 200;      // the block spark: a quick flash, shorter than the sword's slash
+const SHIELD_SLASH_MS = 200;      // the block spark: 4 discrete frames, shorter than the sword's slash
 const SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
   claw: ['#6b0f12', '#c22a2a', '#ff8f80', '#fff1ea'],
-  shield: ['#b8801c', '#e0a92a', '#f6cf5a', '#fff0b0'], // the shield's own gold face tones
+  shield: ['#c98a14', '#ffc633', '#fff0a8', '#ffffff'], // the block spark: the coin gold ramp (the shield's face), rim to core
 };
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
@@ -893,12 +893,10 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const scr = (x, y) => [(x - y) * HW - cx, (x + y) * HH + HH - cy]; // cell centre, as the trail
   let [ox, oy] = scr(from[0], from[1]);
   const [tx, ty] = scr(mx, my);
-  if (st.by === 'shield') oy -= 10; // centred on the knight's torso, not its feet
   let dx = tx - ox, dy = ty - oy;
   if (Math.hypot(dx, dy) < 2) { dx = FACE_X[game.facing] ?? 1; dy = 0; } // no aim known: slash across the cell
   const aim = Math.atan2(dy, dx);
-  const small = st.by === 'shield'; // the block spark: a smaller slash round the knight
-  const reach = small ? 17 : Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
+  const reach = Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
   const flip = dx >= 0 ? 1 : -1; // the swing is mirrored for a cut toward the left of the screen
   const frame = Math.min(SLASH_FRAMES - 1, Math.floor(t * SLASH_FRAMES));
   const sweepFull = 2.3; // radians covered by a finished slash
@@ -906,8 +904,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const tail = Math.max(0, p * 1.35 - 1) * sweepFull;       // the tail catches up late: the crescent thins out
   const head = p * sweepFull;
   const fade = frame >= SLASH_FRAMES - 2 ? .55 : 1;
-  const pal = SLASH_COLORS[small ? 'shield' : st.by === 'explorer' ? 'sword' : 'claw'];
-  const wScale = small ? 1.25 : 1; // the block spark is a little fatter than the sword's, with a shorter reach
+  const pal = SLASH_COLORS[st.by === 'explorer' ? 'sword' : 'claw'];
   const lead = flip > 0 ? aim - sweepFull / 2 : aim + sweepFull / 2; // where the sweep starts
   b.globalAlpha = (st.result === 'miss' ? .6 : 1) * fade;
   const R = Math.ceil(reach + 6);
@@ -918,7 +915,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
       ang = Math.atan2(Math.sin(ang), Math.cos(ang)) * flip; // signed angle along the sweep, 0 at its start
       if (ang < tail || ang > head) continue;
       const u = (ang - tail) / Math.max(.001, head - tail);    // 0 at the tail, 1 at the head
-      const w = wScale * (1.5 + 6 * Math.sin(Math.min(1, u * .9 + .1) * Math.PI * .5) * (1 - .35 * (1 - u) * (1 - u))); // half-width
+      const w = (1.5 + 6 * Math.sin(Math.min(1, u * .9 + .1) * Math.PI * .5) * (1 - .35 * (1 - u) * (1 - u))); // half-width
       const off = r - reach + (u - .5) * 1.5;                 // the arc bows: the head sits a touch further out
       if (Math.abs(off) > w) continue;
       const f = 1 - Math.abs(off) / w;                        // 0 at the rim, 1 on the centre line
@@ -928,6 +925,45 @@ function drawSlash(st, t, cx, cy, known, reveal) {
     }
   }
   b.globalAlpha = 1;
+}
+
+// Block spark (a claw met the shield): not a slash but an impact burst on the shield's edge toward the attacker,
+// in 4 discrete frames of the coin-gold ramp: a white-hot cross, a tight ring, a broken wide ring, then a few
+// fading sparks. Rings are 2:1 iso diamonds (|dx| + 2|dy|), so they match the floor's slope. Per pixel, no
+// rotation. Skipped when the attacker's cell is outside the light unless Reveal is on, like the slash.
+const SPARK_FRAMES = 4;
+const SPARK_SCATTER = [[-13, 0], [13, 0], [0, -7], [0, 7], [-9, -4], [9, 4], [-9, 4], [9, -4]];
+function drawBlockSpark(from, t, cx, cy, known, reveal) {
+  if (!Number.isInteger(from[0]) || !Number.isInteger(from[1]) || !(reveal || known(from[0], from[1]))) return;
+  const scr = (x, y) => [(x - y) * HW - cx, (x + y) * HH + HH - cy];
+  const [kx, ky] = scr(game.pos[0], game.pos[1]);
+  const [ax, ay] = scr(from[0], from[1]);
+  let dx = ax - kx, dy = ay - ky;
+  if (Math.hypot(dx, dy) < 2) { dx = FACE_X[game.facing] ?? 1; dy = 0; }
+  const len = Math.hypot(dx, dy);
+  const ix = Math.round(kx + (dx / len) * 8), iy = Math.round(ky - 10 + (dy / len) * 4); // shield edge, at torso height
+  const pal = SLASH_COLORS.shield;
+  const dot = (x, y, tone) => { b.fillStyle = pal[tone]; b.fillRect(ix + x, iy + y, 1, 1); };
+  const frame = Math.min(SPARK_FRAMES - 1, Math.floor(t * SPARK_FRAMES));
+  if (frame === 0) {
+    dot(0, 0, 3);
+    for (const [x, y] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) dot(x, y, 2);
+  } else if (frame === 1) {
+    for (let y = -3; y <= 3; y++) for (let x = -7; x <= 7; x++) {
+      const d = Math.abs(x) + 2 * Math.abs(y);
+      if (d === 5 || d === 6) dot(x, y, d === 5 ? 3 : 2);
+    }
+  } else if (frame === 2) {
+    for (let y = -5; y <= 5; y++) for (let x = -12; x <= 12; x++) {
+      const d = Math.abs(x) + 2 * Math.abs(y);
+      if ((d === 10 || d === 11) && (Math.abs(x) + Math.abs(y)) % 2 === 0) dot(x, y, d === 10 ? 2 : 1);
+    }
+    for (const [x, y] of [[-8, 0], [8, 0], [0, -4], [0, 4]]) dot(x, y, 3);
+  } else {
+    b.globalAlpha = .55;
+    for (const [x, y] of SPARK_SCATTER) dot(x, y, 1);
+    b.globalAlpha = 1;
+  }
 }
 
 // pass 'fill' runs in the flats pass, 'edge' after the entities; only 'edge' retires strikeFx.
@@ -959,46 +995,37 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
     for (const st of strikeFx.strikes) {
       const blockedClaw = st.result === 'blocked' && st.by !== 'explorer';
       if (t < 1 && !blockedClaw) drawSlash(st, t, cx, cy, known, reveal); // a blocked claw shows only the shield's spark
-      // A blocked claw sparks a small slash in the shield's own colours at the knight, toward the attacker.
-      if (blockedClaw && ts < 1 && Array.isArray(st.from) && Array.isArray(game.pos)) {
-        drawSlash({ by: 'shield', from: game.pos, cells: [st.from], result: 'blocked' }, ts, cx, cy, known, reveal);
-      }
+      // A blocked claw bursts a spark on the shield's edge facing the attacker.
+      if (blockedClaw && ts < 1 && Array.isArray(st.from) && Array.isArray(game.pos)) drawBlockSpark(st.from, ts, cx, cy, known, reveal);
     }
   }
 }
 
-// Shield over the knight while game.block is active: a 15x14 art px heater shield with a dark outline, a
-// bevelled steel rim (lit top and left, shaded right and bottom) and a gold plank face with grain and cracks.
-// Its corners are notched and the sides run straight before tapering to the point. Built once.
+// Shield over the knight while game.block is active: a 15x14 art px heater shield, hand-placed like the sprites.
+// Steel ramp rim (outline #172531; lit top-left, shaded bottom-right; W rivets), coin-gold face (h lit, Y body,
+// y shade) with a steel boss on a centre seam. Authored at full brightness; it flashes on the block's spark frames.
 const SHIELD_W = 15, SHIELD_H = 14;
-const SHIELD_COLORS = { E: '#14121c', s: '#aab6c8', S: '#5d6a80', G: '#e0a92a', g: '#f6cf5a', Y: '#b8801c', W: '#6b4512' };
-const SHIELD_FLASH = { E: '#ffffff', s: '#ffffff', S: '#dbe6ff', G: '#fff1b8', g: '#ffffff', Y: '#ffd97a', W: '#f0c460' };
-const SHIELD_ROWS = (() => {
-  const half = [6, 7, 7, 7, 7, 7, 7, 7, 6, 6, 5, 4, 3, 1]; // half-width per row: notched corners, straight sides, taper
-  const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half[r];
-  // Wood grain streaks (x, first row, last row) and a crack stepping down the face.
-  const grain = new Set();
-  for (const [x, r0, r1] of [[4, 3, 6], [7, 2, 4], [7, 7, 9], [10, 4, 8], [5, 8, 10]]) for (let r = r0; r <= r1; r++) grain.add(`${x},${r}`);
-  for (const [x, r] of [[6, 5], [6, 6], [7, 6]]) grain.add(`${x},${r}`);
-  const rows = [];
-  for (let r = 0; r < SHIELD_H; r++) {
-    let row = '';
-    for (let x = 0; x < SHIELD_W; x++) {
-      if (!inside(x, r)) { row += '.'; continue; }
-      const nb = (d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([ox, oy]) => !inside(x + ox, r + oy));
-      if (nb(1)) row += 'E';
-      else if (nb(2)) row += x <= 7 || r <= 1 ? (r > 9 && x > 7 ? 'S' : 's') : 'S'; // lit on the top and left, shaded right and low
-      else if (grain.has(`${x},${r}`)) row += 'W';
-      else if (grain.has(`${x - 1},${r}`) || (x < 6 && r < 6)) row += 'g';
-      else row += x >= 10 || r >= 11 ? 'Y' : 'G';
-    }
-    rows.push(row);
-  }
-  return rows;
-})();
-function drawShield(x, y, now) { // x: centre column, y: top row; flashes while a block's slash plays
+const SHIELD_COLORS = { o: '#172531', D: '#3f5b6f', M: '#6f8fa5', L: '#abbfce', W: '#edf3f7', y: '#c98a14', Y: '#ffc633', h: '#fff0a8' };
+const SHIELD_FLASH = { o: '#edf3f7', D: '#abbfce', M: '#edf3f7', L: '#ffffff', W: '#ffffff', y: '#ffc633', Y: '#fff0a8', h: '#ffffff' };
+const SHIELD_ROWS = [
+  '.ooooooooooooo.',
+  'oWLLLLLLLLLLLMo',
+  'oLhhhhhhhhhhhWo',
+  'oLhhYYYyYYYYYMo',
+  'oLhYYYYyYYYYyMo',
+  'oLhYYYLWLYYYyMo',
+  'oLYYYYMLDYYyyMo',
+  'oLYYYYMDDYYyyDo',
+  '.oLYYYYyYYyyDo.',
+  '.oLYYYYyYyyyDo.',
+  '..oLYYYyYyyDo..',
+  '...oLYyyyYDo...',
+  '....oMyyyDo....',
+  '.....ooooo.....',
+];
+function drawShield(x, y, now) { // x: centre column, y: top row; flashes while a block's spark plays
   const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && st.by !== 'explorer')
-    && (now - strikeFx.t0) / SHIELD_SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SHIELD_SLASH_MS * 3) % 2 === 0;
+    && (now - strikeFx.t0) / SHIELD_SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SHIELD_SLASH_MS * SPARK_FRAMES) % 2 === 0;
   SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
     if (ch === '.') return;
     b.fillStyle = (flashing ? SHIELD_FLASH : SHIELD_COLORS)[ch];

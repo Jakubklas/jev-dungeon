@@ -60,7 +60,7 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | Ghost eye | `#ff3b30` (one pixel per socket) | `GHOST_PAL` e |
 | Danger / enemy / claw strike | `#ff4a3a` (`PALETTE.enemy`, chase glow, hp pips), `#ff3a2c` (`STRIKE_COLOR` diamonds) | app.js |
 | Gold / loot | `#ffc633` · `#fff0a8` · `#c98a14`, outline `#3a2406` | `COIN_PAL`, coin glow |
-| Shield (block) | gold face `#e0a92a` / `#f6cf5a` / `#b8801c`, grain `#6b4512`, steel rim `#aab6c8` / `#5d6a80`, outline `#14121c`; blocked diamonds `#8fb4ff` | `SHIELD_COLORS`, `BLOCK_COLOR` |
+| Shield (block) | steel rim (the Steel ramp `#3f5b6f` · `#6f8fa5` · `#abbfce` · `#edf3f7`, outline `#172531`) round a coin-gold face (`#c98a14` · `#ffc633` · `#fff0a8`); blocked diamonds `#8fb4ff` | `SHIELD_COLORS`, `BLOCK_COLOR` |
 | Jev brain on | `#7ee8ff` on `#082c36` | `PALETTE.brain` / `brainEdge` |
 | Trail | `#ffd98c` at alpha .38 | `PALETTE.trail` |
 
@@ -70,7 +70,7 @@ Ramps are listed dark → light. The character in brackets is the palette key th
 | --- | --- |
 | Sword (explorer) | `#2a2392` · `#5b4fe0` · `#a9a4ff` · `#ffffff` |
 | Claw (ghost) | `#6b0f12` · `#c22a2a` · `#ff8f80` · `#fff1ea` |
-| Shield spark (blocked claw) | `#b8801c` · `#e0a92a` · `#f6cf5a` · `#fff0b0` |
+| Shield spark (blocked claw) | `#c98a14` · `#ffc633` · `#fff0a8` · `#ffffff` (the coin ramp) |
 
 ### World ramps: stone, light and fog
 
@@ -119,7 +119,7 @@ The page's colours echo the canvas: navy panels and amber accent.
 | Solid floor props | About 24-25 × 23-30, roughly one cell's diamond wide (chest 24×23, shelf 24×30, crates 25×30) | floor-art.js |
 | Coin | 7×7 | `COIN_A` |
 | Wall decor | At most 14×19, front view, bottom row on the floor line | wall-art.js header |
-| Shield overlay | 15×14 heater shield, top 13 px above the feet | `SHIELD_ROWS`, `drawShield` |
+| Shield overlay | 15×14 hand-placed heater shield (steel rim with rivets, gold face, steel boss on a centre seam), top 13 px above the feet | `SHIELD_ROWS`, `drawShield` |
 | Hp pips | 2×2 fill in a 4×4 dark frame, 4 px apart | `drawEntity` |
 | Shadows | Pixel ellipse 6×2 under the knight and ghosts, 4×1 under coins | `pixelEllipse` |
 
@@ -215,7 +215,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
 | Chase glow | 3 red rings, pulse `.75 + .25·sin(now/180)` | `drawEntity` |
 | Sword / claw slash | 340 ms, 6 frames | `SLASH_MS` |
 | Strike diamonds | 800 ms (hold 50%, 2 pulses, fade) | `STRIKE_MS`, `STRIKE_HOLD` |
-| Shield block spark | 200 ms. The shield flashes to `SHIELD_FLASH` tones | `SHIELD_SLASH_MS` |
+| Shield block spark | 200 ms, 4 frames: white-hot cross, tight ring, broken wide ring, scattered sparks (rings are 2:1 iso diamonds on the shield edge toward the attacker). The shield flashes to `SHIELD_FLASH` tones on frames 0 and 2 | `SHIELD_SLASH_MS`, `drawBlockSpark` |
 | Hit protection | The knight blinks every 120 ms at alpha .3 | `BLINK_MS` |
 | Torch / fireplace / gate | 130 / 150 / 200 ms per frame | `frameMs` in wall-art.js |
 | Coins | 1 px bob, `sin(now/380 + cell phase)` | `drawEntity` |
