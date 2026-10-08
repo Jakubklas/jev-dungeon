@@ -210,6 +210,28 @@ const TROLL_A = [
 
 const TROLL_B = ['.'.repeat(40), ...TROLL_A.slice(0, 21), ...TROLL_A.slice(22)];
 
+// Walk cycle: the feet are rows 43-47 (left foot cols 9-20, right foot cols 22-32). A step lifts one foot two rows
+// and a column forward (it still hangs over the loincloth hem), while the planted foot stays on the ground; the
+// passing frames reuse the idle art with the torso a row lower (a stride dips the body). Four frames: lift left,
+// pass, lift right, pass.
+function liftFoot(base, x0, x1, dx, lowerBody) {
+  const g = (lowerBody ? TROLL_B : base).map((r) => r.split(''));
+  for (let y = 43; y <= 47; y++) for (let x = x0; x <= x1; x++) g[y][x] = '.';
+  for (let y = 43; y <= 47; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const c = base[y][x];
+      if (c !== '.' && x + dx >= 0 && x + dx < 40) g[y - 2][x + dx] = c;
+    }
+  }
+  return g.map((r) => r.join(''));
+}
+const TROLL_WALK = [
+  liftFoot(TROLL_A, 9, 20, 1, true),
+  TROLL_A,
+  liftFoot(TROLL_A, 22, 32, 1, true),
+  TROLL_A,
+];
+
 // ----------------------------------------------------------------- coin 7x7
 const COIN_PAL = { o: '#3a2406', y: '#ffc633', L: '#fff0a8', d: '#c98a14' };
 const COIN_A = [
@@ -239,7 +261,7 @@ const HEART_A = [
 export const ART = {
   knight: { palette: KNIGHT_PAL, frames: [KNIGHT_A, KNIGHT_B], anchorX: 9, anchorY: 23 },
   ghost: { palette: GHOST_PAL, frames: [GHOST_A, GHOST_B], anchorX: 9, anchorY: 19 },
-  troll: { palette: TROLL_PAL, frames: [TROLL_A, TROLL_B], anchorX: 20, anchorY: 47 },
+  troll: { palette: TROLL_PAL, frames: [TROLL_A, TROLL_B], walk: TROLL_WALK, anchorX: 20, anchorY: 47 },
   chest: { palette: CHEST_PAL, frames: [CHEST_A], anchorX: 6, anchorY: 9 },
   coin: { palette: COIN_PAL, frames: [COIN_A], anchorX: 3, anchorY: 5 },
   heart: { palette: HEART_PAL, frames: [HEART_A], anchorX: 3, anchorY: 5 },
@@ -274,6 +296,7 @@ function build(def) {
   }));
   const main = { ...frames[0] };
   if (frames.length > 1) main.frames = frames;
+  if (def.walk) main.walk = def.walk.map((grid) => ({ ...frames[0], canvas: rasterise(grid, def.palette) }));
   return main;
 }
 

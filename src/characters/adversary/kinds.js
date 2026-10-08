@@ -5,11 +5,16 @@
 import { rng } from '../../dungeon.js';
 import { skillConfig } from '../../skills/config.js';
 
+// speed: a multiplier of ADVERSARY_SPEED; tuning: per-loadout number overrides for this kind's own skills.
 // hp: a function, so a settings change is read when the monster is built (never cached).
 // skills: a name for buildSkillSet (loadouts.js DEFAULT_SETS) or a list of loadout ids.
 export const KINDS = {
-  ghost: { id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, skills: 'ghost' },
-  troll: { id: 'troll', name: 'Troll', hp: () => skillConfig().ghostHp, skills: 'ghost' }, // same numbers as a ghost for now
+  ghost: { id: 'ghost', name: 'Ghost', hp: () => skillConfig().ghostHp, speed: () => 1, skills: 'ghost', tuning: () => ({}) },
+  // Slower, tougher and harder-hitting than a ghost; it hunts and decides like one for now.
+  troll: {
+    id: 'troll', name: 'Troll', hp: () => skillConfig().trollHp, speed: () => skillConfig().trollSpeed, skills: 'ghost',
+    tuning: () => ({ claw_strike: { damage: skillConfig().trollClawDamage } }),
+  },
 };
 export const KIND_IDS = Object.keys(KINDS);
 

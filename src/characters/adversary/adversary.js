@@ -100,6 +100,7 @@ export class Adversary {
   #facing = 'down'; // 4-way: the last step's direction or the last strike's aim (accessor, never an own property)
   #hp; // hit points (D1) and their maximum; a hit knocks back and stuns, at 0 the ghost is dispelled
   #maxHp;
+  #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
   #stun = 0; // ticks of stun left: no step, no Jev call
 
   constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', hp, skills }) {
@@ -116,9 +117,15 @@ export class Adversary {
     this.#home = [...pos];
     this.#hunt = newHunt(id, this.#profile, character);
     this.#hp = this.#maxHp = hp ?? spec.hp();
+    this.#speed = spec.speed();
+    const own = skills === undefined; // a kind's own loadout carries its tuning; an explicit one is taken as given
     skills ??= spec.skills;
-    this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
+    this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills, own ? spec.tuning() : {}) : skills;
     this.syncSkills();
+  }
+
+  get speed() {
+    return this.#speed;
   }
 
   get skills() {
@@ -589,11 +596,11 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   for (const a of order) ageHunt(a, tick);
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
-  for (const a of order) if (!stunned.has(a)) a.budget += ADVERSARY_SPEED; // a stunned ghost gains no budget
+  for (const a of order) if (!stunned.has(a)) a.budget += ADVERSARY_SPEED * a.speed; // a stunned ghost gains no budget
 
   const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };
   const thinking = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
-  const cfgOf = (a) => ({ ...cfg, hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
+  const cfgOf = (a) => ({ ...cfg, speed: ADVERSARY_SPEED * a.speed, hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
   const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
 
   for (const a of order) {
