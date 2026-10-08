@@ -890,12 +890,14 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const mx = cells.reduce((s, c) => s + c[0], 0) / cells.length, my = cells.reduce((s, c) => s + c[1], 0) / cells.length;
   const from = Array.isArray(st.from) ? st.from : [mx, my];
   const scr = (x, y) => [(x - y) * HW - cx, (x + y) * HH + HH - cy]; // cell centre, as the trail
-  const [ox, oy] = scr(from[0], from[1]), [tx, ty] = scr(mx, my);
+  let [ox, oy] = scr(from[0], from[1]);
+  const [tx, ty] = scr(mx, my);
+  if (st.by === 'shield') oy -= 10; // centred on the knight's torso, not its feet
   let dx = tx - ox, dy = ty - oy;
   if (Math.hypot(dx, dy) < 2) { dx = FACE_X[game.facing] ?? 1; dy = 0; } // no aim known: slash across the cell
   const aim = Math.atan2(dy, dx);
   const small = st.by === 'shield'; // the block spark: a smaller slash round the knight
-  const reach = small ? 12 : Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
+  const reach = small ? 17 : Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)); // radius of the arc
   const flip = dx >= 0 ? 1 : -1; // the swing is mirrored for a cut toward the left of the screen
   const frame = Math.min(SLASH_FRAMES - 1, Math.floor(t * SLASH_FRAMES));
   const sweepFull = 2.3; // radians covered by a finished slash
@@ -904,7 +906,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const head = p * sweepFull;
   const fade = frame >= SLASH_FRAMES - 2 ? .55 : 1;
   const pal = SLASH_COLORS[small ? 'shield' : st.by === 'explorer' ? 'sword' : 'claw'];
-  const wScale = small ? .55 : 1;
+  const wScale = small ? 1 : 1; // the block spark is as wide as the sword's, only its reach is shorter
   const lead = flip > 0 ? aim - sweepFull / 2 : aim + sweepFull / 2; // where the sweep starts
   b.globalAlpha = (st.result === 'miss' ? .6 : 1) * fade;
   const R = Math.ceil(reach + 6);
@@ -967,10 +969,10 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
 
 // Shield over the knight while game.block is active: a 15x20 art px heater shield (steel-blue rim, dark
 // outline, a lit left half and a shaded right half of amber) that covers the whole sprite. Built once.
-const SHIELD_W = 15, SHIELD_H = 20;
+const SHIELD_W = 15, SHIELD_H = 17;
 const SHIELD_COLORS = { E: '#0b1430', B: '#4f7fd6', L: '#f0a640', D: '#b8652a', H: '#ffe0a0' };
 const SHIELD_ROWS = (() => {
-  const half = (r) => (r < 12 ? 7 : Math.round(7 * (1 - (r - 12) / 8)));
+  const half = (r) => (r < 10 ? 7 : Math.round(7 * (1 - (r - 10) / 7)));
   const inside = (x, r) => r >= 0 && r < SHIELD_H && Math.abs(x - 7) <= half(r);
   const rows = [];
   for (let r = 0; r < SHIELD_H; r++) {
@@ -978,16 +980,19 @@ const SHIELD_ROWS = (() => {
     for (let x = 0; x < SHIELD_W; x++) {
       if (!inside(x, r)) { row += '.'; continue; }
       const nb = (d) => [[d, 0], [-d, 0], [0, d], [0, -d]].some(([ox, oy]) => !inside(x + ox, r + oy));
-      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 3 && r < 8 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
+      row += nb(1) ? 'E' : nb(2) || !inside(x - 1, r - 1) || !inside(x + 1, r - 1) ? 'B' : x < 7 ? ((x === 3 || x === 4) && r > 2 && r < 7 ? 'H' : 'L') : x === 7 ? 'L' : 'D';
     }
     rows.push(row);
   }
   return rows;
 })();
-function drawShield(x, y) { // x: centre column, y: top row
+const SHIELD_FLASH = { E: '#ffffff', B: '#cfe0ff', L: '#fff1c8', D: '#ffd27a', H: '#ffffff' };
+function drawShield(x, y, now) { // x: centre column, y: top row; flashes while a block's slash plays
+  const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && st.by !== 'explorer')
+    && (now - strikeFx.t0) / SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SLASH_MS * 4) % 2 === 0;
   SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
     if (ch === '.') return;
-    b.fillStyle = SHIELD_COLORS[ch];
+    b.fillStyle = (flashing ? SHIELD_FLASH : SHIELD_COLORS)[ch];
     b.fillRect(x - 7 + rx, y + ry, 1, 1);
   }));
 }
@@ -1087,7 +1092,7 @@ function drawEntity(en, now, cx, cy) {
     const blink = game?.invulnerable && Math.floor(now / BLINK_MS) % 2 === 1;
     blitSprite(spr, px, py, en.face, blink ? .3 : 1);
     drawCoinGlow(px, py, now);
-    if (game?.block) drawShield(px, py - 22);
+    if (game?.block) drawShield(px, py - 16, now); // top edge at the helmet's visor line: covers the lower half of the helmet and below
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
