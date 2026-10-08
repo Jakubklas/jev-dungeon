@@ -5,6 +5,8 @@ import { Adversary, configureAdversaries, spawnAdversaries } from '../src/charac
 import { KIND_IDS, assignKinds, kindOf } from '../src/characters/adversary/kinds.js';
 import { TestbedError, buildArena } from '../src/testbed.js';
 import { newTestGame } from '../src/turn.js';
+import { stepAdversaries } from '../src/characters/adversary/adversary.js';
+const stepAdversariesOnce = (game) => { return stepAdversaries(game, { decide: () => ({}) }); };
 
 let fails = 0;
 const check = (ok, msg) => { if (!ok) { fails++; console.log(`FAIL: ${msg}`); } };
@@ -20,7 +22,11 @@ const g = new Adversary({ id: 'a1', pos: [1, 1] });
 const t = new Adversary({ id: 'a2', pos: [2, 1], kind: 'troll' });
 check(g.kind === 'ghost' && t.kind === 'troll', 'kind accessor');
 check(Object.keys(t).join() === 'id,pos,mode,budget,lastSeen,goal' && !JSON.stringify(t).includes('troll'), 'kind is not a public field');
-check(t.hp === g.hp && t.maxHp === g.maxHp && t.skills.skills.length === g.skills.skills.length, 'troll has ghost numbers for now');
+const claw = (a) => a.skills.skills.find((k) => k.kind === 'attack');
+check(g.hp === 2 && t.hp === 4 && t.maxHp === 4, 'ghost has 2 hp, troll 4');
+check(claw(g).damage === 1 && claw(t).damage === 2 && claw(t).cooldown === claw(g).cooldown, 'troll claw takes 2 lives, ghost 1');
+check(g.speed === 1 && t.speed < 1 && t.speed > 0, 'troll is slower than a ghost');
+check(claw(new Adversary({ id: 'a4', pos: [1, 1], kind: 'troll', skills: 'ghost' })).damage === 1, 'explicit skills are taken as given');
 check(new Adversary({ id: 'a3', pos: [1, 1], kind: 'troll', hp: 4 }).hp === 4, 'explicit hp overrides the kind');
 threw = false; try { new Adversary({ id: 'a4', pos: [1, 1], kind: 'dragon' }); } catch { threw = true; }
 check(threw, 'unknown kind throws');
@@ -58,6 +64,23 @@ for (const bad of ['dragon', [], ['troll', 'x']]) {
 // View carries the kind; a troll plays a turn like a ghost.
 const run = newTestGame({ numAdversaries: 1, kinds: 'troll', treasure: null }, { ask: () => ({}), decide: () => ({}), memoryDir: '/private/tmp/claude-502/-Users-jakub-jev-playground-dungeon-game/ca19c17d-dfc6-41fe-b0d0-86bd2a9b4157/scratchpad' });
 check(run.view().adversaries[0].kind === 'troll', 'view().adversaries[].kind');
+
+// A troll steps less often than a ghost over the same ticks (open arena, patrolling, same seed).
+{
+  const stepsOf = async (kind) => {
+    const r = newTestGame({ size: [20, 9], numAdversaries: 1, kinds: kind, treasure: null, start: [1, 1], seed: 4 }, { ask: () => ({}), decide: () => ({}), memoryDir: '/private/tmp/claude-502/-Users-jakub-jev-playground-dungeon-game/ca19c17d-dfc6-41fe-b0d0-86bd2a9b4157/scratchpad' });
+    const a = r.game.adversaries[0];
+    let n = 0, last = [...a.pos];
+    for (let i = 0; i < 100; i++) {
+      await stepAdversariesOnce(r.game);
+      if (a.pos[0] !== last[0] || a.pos[1] !== last[1]) n++;
+      last = [...a.pos];
+    }
+    return n;
+  };
+  const gs = await stepsOf("ghost"), ts = await stepsOf("troll");
+  check(ts < gs && ts > 0, `troll moved ${ts} times vs ghost ${gs} in 100 ticks`);
+}
 
 if (fails) { console.log(`${fails} failure(s)`); process.exit(1); }
 console.log('check-kinds: all checks passed');

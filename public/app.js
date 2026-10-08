@@ -77,6 +77,7 @@ const FLOOR_VARIANTS = 6;
 const TWEEN_MS = 150;             // entity move tween
 const BOB_PX = 2, BOB_MS = 1600;  // ghost hover
 const ANIM_MS = 260;              // idle animation frame time
+const WALK_MS = 620;              // a troll's stride after each step: feet cycle through the walk frames (it steps slowly)
 const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
@@ -739,7 +740,7 @@ function drawScene(now) {
     const a = actors.get(ad.id);
     if (!a) continue;
     const [gx, gy] = actorPos(a, now);
-    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind === 'troll' ? 'troll' : 'ghost', face: a.face,
+    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind === 'troll' ? 'troll' : 'ghost', face: a.face, stepAt: a.t0 || undefined,
       id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
       maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
@@ -1148,7 +1149,11 @@ function drawEntity(en, now, cx, cy) {
     }
   }
   b.globalAlpha = 1;
-  const spr = frameOf(sprites[troll ? 'troll' : 'ghost'] ?? sprites.ghost, now, en.phase * 4);
+  const art = sprites[troll ? 'troll' : 'ghost'] ?? sprites.ghost;
+  const sinceStep = en.stepAt === undefined ? Infinity : now - en.stepAt;
+  const spr = art.walk && sinceStep < WALK_MS
+    ? art.walk[Math.min(art.walk.length - 1, Math.floor(sinceStep / (WALK_MS / art.walk.length)))]
+    : frameOf(art, now, en.phase * 4);
   blitSprite(spr, px, py - 2 + bob, en.face, en.alpha);
   const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
   heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });

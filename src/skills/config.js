@@ -4,6 +4,7 @@
 const DEFAULTS = Object.freeze({
   swordDamage: 1, swordCooldown: 1, shieldChance: 0.6, shieldCooldown: 2,
   clawDamage: 1, clawCooldown: 2, ghostHp: 2, stunTicks: 2, coinDropChance: 0.6,
+  trollHp: 4, trollClawDamage: 2, trollSpeed: 0.65, // the troll's own numbers: tougher, harder-hitting, slower than a ghost
 });
 let current = DEFAULTS;
 
