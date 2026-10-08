@@ -79,28 +79,29 @@ const ch = [{ id: 'a1', distance: 5, mode: 'chase' }];
 const ctx = { lives: 2, maxLives: 2 };
 const struck = { id: 'a1', type: 'struck', hp: 1 };
 let t = applyTurn(createConfidence(), { skill_events: [struck], events: [struck] }, { ...ctx, visible: ch });
-ok(t.value === 55, `struck turn counted once: ${t.value}`);
+ok(t.value === 54, `struck turn counted once: ${t.value}`);
 t = applyTurn(createConfidence(), { skill_events: [{ id: 'a1', type: 'dispelled' }], events: [{ id: 'a1', type: 'dispelled' }] }, { ...ctx, visible: [] });
 ok(t.value === 58 && t.enc.killed, `dispelled turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'hit', at: [1, 1], health: 1 }] }, { lives: 1, maxLives: 2, visible: ch });
-ok(t.value === 43 && t.enc.hurt, `hit turn: ${t.value}`);
+ok(t.value === 42 && t.enc.hurt, `hit turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'blocked' }] }, { ...ctx, visible: ch });
-ok(t.value === 53, `blocked turn: ${t.value}`);
+ok(t.value === 52, `blocked turn: ${t.value}`);
 t = applyTurn(createConfidence(), {}, { ...ctx, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
-ok(t.counts.evaded === 1 && t.value === 52, `evaded: ${t.value}`);
+ok(t.counts.evaded === 1 && t.value === 51, `evaded: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ type: 'hit' }] }, { lives: 1, maxLives: 2, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { lives: 1, maxLives: 2, visible: [] });
 ok(t.counts.evaded === 0 && !t.enc.hurt, 'hurt encounter is not evaded; encounter closed');
 t = applyTurn(createConfidence(), { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
 ok(t.counts.evaded === 0, 'chase_over with no chasing sighting is not evaded');
 const close = [{ id: 'a1', distance: 2, mode: 'chase' }];
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false }).value === 48, 'pressed -2');
-ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: true }).value === 50, 'armed: not pressed');
+ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false }).value === 49, 'pressed -1');
+ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: true }).value === 49, 'armed or not, a chaser in sight presses');
+ok(applyTurn(createConfidence(), {}, { ...ctx, visible: [{ id: 'a1', distance: 6, mode: 'chase' }] }).value === 49, 'a chaser far off presses too');
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, engaging: true }).value === 50, 'engaging: not pressed');
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, stunned: ['a1'] }).value === 50, 'stunned: not pressed');
 ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40 && applyTurn(at(40), {}, { ...ctx, visible: [] }).idle === 1, 'a quiet turn counts toward the regen wait');
-ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).value === 40.25, 'regen runs with an enemy in sight too');
+ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).value === 39.25, 'regen runs with an enemy in sight too (then pressed -1)');
 
 // 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
 ok(JSON.stringify(Object.keys(createConfidence())) === '["value","idle","counts","enc"]', 'default state has no w / model keys');
@@ -176,7 +177,7 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   for (let L = 1; L <= 4; L++) for (let n = 0; n <= 4; n++) ok(cap0(L, 4, n, 0.35, { armed: false }) <= NO_SWORD_MAX, `no attack skill: R <= 20 (L ${L} n ${n})`);
   ok(NO_SWORD_MAX === 20 && cap0(2, 2, 3, 0.35, { armed: false }) === Math.min(20, cap0(2, 2, 3, 0.35)) && cap0(2, 2, 0, 0.35, { armed: false }) === 20, 'no sword: min(R, 20)');
   // (d) allowedMoods: the three tiers of PLAN-moods (low wary/guarded, mid cautious/steady/greedy, high bold/fearless)
-  const LOW = 'wary,guarded', MID = 'cautious,steady,greedy', HIGH = 'bold,fearless';
+  const LOW = 'wary,guarded', MID = 'cautious,steady,greedy,bold', HIGH = 'bold,fearless';
   const ORDER = Object.keys(SENTIMENTS);
   ok(JSON.stringify(ORDER) === '["panic","wary","guarded","cautious","steady","greedy","bold","fearless"]', `SENTIMENTS order ${ORDER}`);
   for (let C = 0; C <= 100; C++) {
@@ -187,7 +188,7 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
     // hysteresis: the tier of the current mood is kept 5 points past its edge
     ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 75 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
     ok(allowedMoods(C, { current: 'panic' }).join() === allowedMoods(C, { current: 'wary' }).join(), `panic holds the low tier like wary (${C})`);
-    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C >= 71 ? HIGH : MID), `high tier kept down to 71 (C ${C})`);
+    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C <= 75 ? MID : HIGH), `bold belongs to the mid tier too, no hysteresis (C ${C})`);
     ok(allowedMoods(C, { current: 'steady' }).join() === l.join(), `a mid mood adds no hysteresis (${C})`);
     for (const ex of ['lastLife', 'swordDown']) ok(allowedMoods(C, { [ex]: true }).join() === LOW, `${ex} forces the low tier at ${C}`);
   }

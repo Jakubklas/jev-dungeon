@@ -14,7 +14,7 @@
 //   blocked   own shield stopped a claw: +3, only up to BLOCK_CEILING (never lowers a higher C)
 //   evaded    an encounter with a chasing sighting ended with no hit and no dispel: +2, only up to
 //             EVADE_CEILING; closes the encounter
-//   pressed   a chaser within 2 steps with the sword not ready: -2 per tick, at most -8 per encounter
+//   pressed   a chaser in sight (not stunned by the explorer, not engaging): -1 per tick, at most -8 per encounter
 //   regen     PLAN-moods: 0.25 toward 50 from either side, but only after REGEN_WAIT ticks with no change to C
 //             (any other event that moves C restarts the wait); the caller sends one per tick
 // Every change ends with C clamped to 0..100 and to the lives cap.
@@ -25,7 +25,7 @@ export const D_STRUCK = 5;
 export const D_DISPELLED = 8;
 export const D_BLOCKED = 3;
 export const D_EVADED = 2;
-export const D_PRESSED = -2;
+export const D_PRESSED = -1;
 export const PRESSED_MAX = 8; // per encounter
 export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
 export const REGEN_WAIT = 10; // ticks since C last changed before regen starts
@@ -159,7 +159,7 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
     else s = { ...s, enc: freshEnc() };
   }
   step('regen');
-  if (visible.length && !armed && !engaging && visible.some((a) => a.mode === 'chase' && a.distance <= PRESSED_RANGE && !stunned.includes(a.id))) step('pressed');
+  if (visible.length && !engaging && visible.some((a) => a.mode === 'chase' && !stunned.includes(a.id))) step('pressed');
   return s;
 }
 
@@ -211,8 +211,8 @@ export function combine(R, H, lives, maxLives) {
 
 // PLAN-moods: the moods each tier offers, in the order the sentiment question lists them. `panic` is entered by code below
 // PANIC_ENTER and is never offered; a tier never offers another tier's moods.
-export const TIER_MOODS = { low: ['wary', 'guarded'], mid: ['cautious', 'steady', 'greedy'], high: ['bold', 'fearless'] };
-export const tierOfMood = (id) => (id === 'panic' || TIER_MOODS.low.includes(id) ? 'low' : TIER_MOODS.high.includes(id) ? 'high' : TIER_MOODS.mid.includes(id) ? 'mid' : null);
+export const TIER_MOODS = { low: ['wary', 'guarded'], mid: ['cautious', 'steady', 'greedy', 'bold'], high: ['bold', 'fearless'] };
+export const tierOfMood = (id) => (id === 'panic' || TIER_MOODS.low.includes(id) ? 'low' : TIER_MOODS.mid.includes(id) ? 'mid' : TIER_MOODS.high.includes(id) ? 'high' : null);
 
 // The moods the sentiment question may list at C. ctx: { lastLife, swordDown, current }. The tier comes from C with the hysteresis
 // of tierOf, held from the tier the current mood belongs to; a last life or a chaser close by with the sword down (dangers code

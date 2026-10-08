@@ -134,13 +134,14 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   const r = make({ H: 70, log });
   r.game.adversaries.forEach((a) => { a.mode = "chase"; }); // no patrol->chase encounter trigger in the way
   await tick(r); // 4 lives, 3 enemies, H 70: C 76, high tier, bold
+  r.memory.sentiment.id = 'fearless'; // a high-tier-only mood (bold is also offered in the mid tier)
   r.game.health = 2; // C 63: the high tier closed
   const triggers = [];
   for (let i = 0; i < 12 && !r.game.lost; i++) { const t = await tick(r); if (t.decision) triggers.push(t.decision.trigger); }
   const n = triggers.filter((x) => x === 'confidence').length;
   ok(n === 1, `confidence trigger fires exactly once per encounter (got ${n}: ${triggers})`);
   const after = sentimentKeys(log).at(-1);
-  ok(after && !after.includes('bold') && !after.includes('fearless'), `after the high tier closed the question lists ${after}`);
+  ok(after && after.includes('bold') && !after.includes('fearless'), `after the high tier closed the question lists ${after} (bold stays, it is mid too)`);
   ok(log.some((q) => q.kind === 'sentiment' && /Your confidence changed enough/.test(q.questions.sentiment.instructions)), 'the confidence trigger text is in the sentiment question');
 }
 
