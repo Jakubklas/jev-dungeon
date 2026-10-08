@@ -80,12 +80,13 @@ const ANIM_MS = 260;              // idle animation frame time
 const STRIKE_MS = 800;            // strike overlay: held at full strength, then fades (STRIKE_HOLD)
 const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
+const SHIELD_SLASH_MS = 200;      // the block spark: a quick flash, shorter than the sword's slash
 const SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
   claw: ['#6b0f12', '#c22a2a', '#ff8f80', '#fff1ea'],
-  shield: ['#3b4558', '#8a97ad', '#e0a92a', '#fff0b0'], // the shield's steel rim and gold face
+  shield: ['#b8801c', '#e0a92a', '#f6cf5a', '#fff0b0'], // the shield's own gold face tones
 };
 const FACE_X = { right: 1, up: 1, left: -1, down: -1 }; // server facing -> sprite side
 const REVEAL_ALPHA = .42;         // cells and ghosts shown only because of "Reveal map"
@@ -906,7 +907,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   const head = p * sweepFull;
   const fade = frame >= SLASH_FRAMES - 2 ? .55 : 1;
   const pal = SLASH_COLORS[small ? 'shield' : st.by === 'explorer' ? 'sword' : 'claw'];
-  const wScale = small ? 1 : 1; // the block spark is as wide as the sword's, only its reach is shorter
+  const wScale = small ? 1.25 : 1; // the block spark is a little fatter than the sword's, with a shorter reach
   const lead = flip > 0 ? aim - sweepFull / 2 : aim + sweepFull / 2; // where the sweep starts
   b.globalAlpha = (st.result === 'miss' ? .6 : 1) * fade;
   const R = Math.ceil(reach + 6);
@@ -954,14 +955,13 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   b.globalAlpha = 1;
   // The slash rides on the 'edge' pass (after the entities, so nothing hides it) for its own shorter time.
   if (pass === 'edge') {
-    const t = (now - strikeFx.t0) / SLASH_MS;
-    if (t < 1) {
-      for (const st of strikeFx.strikes) {
-        drawSlash(st, t, cx, cy, known, reveal);
-        // A blocked claw also sparks a small shield-coloured slash at the knight, toward the attacker.
-        if (st.result === 'blocked' && st.by !== 'explorer' && Array.isArray(st.from) && Array.isArray(game.pos)) {
-          drawSlash({ by: 'shield', from: game.pos, cells: [st.from], result: 'blocked' }, t, cx, cy, known, reveal);
-        }
+    const t = (now - strikeFx.t0) / SLASH_MS, ts = (now - strikeFx.t0) / SHIELD_SLASH_MS;
+    for (const st of strikeFx.strikes) {
+      const blockedClaw = st.result === 'blocked' && st.by !== 'explorer';
+      if (t < 1 && !blockedClaw) drawSlash(st, t, cx, cy, known, reveal); // a blocked claw shows only the shield's spark
+      // A blocked claw sparks a small slash in the shield's own colours at the knight, toward the attacker.
+      if (blockedClaw && ts < 1 && Array.isArray(st.from) && Array.isArray(game.pos)) {
+        drawSlash({ by: 'shield', from: game.pos, cells: [st.from], result: 'blocked' }, ts, cx, cy, known, reveal);
       }
     }
   }
@@ -998,7 +998,7 @@ const SHIELD_ROWS = (() => {
 })();
 function drawShield(x, y, now) { // x: centre column, y: top row; flashes while a block's slash plays
   const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && st.by !== 'explorer')
-    && (now - strikeFx.t0) / SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SLASH_MS * 4) % 2 === 0;
+    && (now - strikeFx.t0) / SHIELD_SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SHIELD_SLASH_MS * 3) % 2 === 0;
   SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
     if (ch === '.') return;
     b.fillStyle = (flashing ? SHIELD_FLASH : SHIELD_COLORS)[ch];
