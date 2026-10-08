@@ -22,7 +22,7 @@ const stepCell = ([x, y], dir) => [x + DIRS[dir][0], y + DIRS[dir][1]];
 const key = ([x, y]) => `${x},${y}`;
 const cellOf = (k) => k.split(',').map(Number);
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
-const HEARD_STEPS = 6; // path steps around a reported cell that a call copies from the caller's map
+let HEARD_STEPS = 6; // path steps around a reported cell that a call copies from the caller's map
 
 export class AdversaryView {
   #game;
@@ -333,3 +333,10 @@ export class AdversaryView {
     return true;
   }
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen at once.
+export function configureAdversaryView(o) {
+  if (o.advHeardSteps !== undefined) HEARD_STEPS = o.advHeardSteps;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const adversaryViewSnapshot = () => ({ advHeardSteps: HEARD_STEPS });

@@ -22,9 +22,10 @@ export const APPROACHES = {
 };
 export const SEARCH_APPROACHES = ['cut_off', 'sweep_last_seen'];
 
-const SWEEP_RADIUS = 10; // default path steps around last_seen that sweep_last_seen searches (per ghost: hunt.profile.sweepRadius)
-const CUT_MIN = 3, CUT_MAX = 24; // default path steps from last_seen for cut-off candidates (per ghost: hunt.profile.cutMax)
-const SURROUND_REACH = 24; // path steps the surroundings facts look at
+let SWEEP_RADIUS = 10; // default path steps around last_seen that sweep_last_seen searches (per ghost: hunt.profile.sweepRadius)
+let CUT_MIN = 3;
+let CUT_MAX = 24; // default path steps from last_seen for cut-off candidates (per ghost: hunt.profile.cutMax)
+let SURROUND_REACH = 24; // path steps the surroundings facts look at
 
 const key = ([x, y]) => `${x},${y}`;
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
@@ -113,7 +114,7 @@ function trend(before, after, what) {
   return `Path distance to ${what} ${before} → ${after}.`;
 }
 
-const COVER_RADIUS = 12; // explorer path steps around it that "coverage" looks at
+let COVER_RADIUS = 12; // explorer path steps around it that "coverage" looks at
 
 // Cells the explorer can reach within COVER_RADIUS steps where `ghost` (at `at`) would be waiting:
 // it gets there no later than the explorer does (1/speed ticks per step against 1). Returns a Set.
@@ -332,3 +333,14 @@ export function approachOption(view, a, hunt, id) {
     : ' No target left: everything near the last-seen cell is checked.';
   return APPROACHES[id].text + where;
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen at once.
+export function configureAdversaryPerception(o) {
+  if (o.advSweepRadius !== undefined) SWEEP_RADIUS = o.advSweepRadius;
+  if (o.advCutMin !== undefined) CUT_MIN = o.advCutMin;
+  if (o.advCutMax !== undefined) CUT_MAX = o.advCutMax;
+  if (o.advSurroundReach !== undefined) SURROUND_REACH = o.advSurroundReach;
+  if (o.advCoverRadius !== undefined) COVER_RADIUS = o.advCoverRadius;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const adversaryPerceptionSnapshot = () => ({ advSweepRadius: SWEEP_RADIUS, advCutMin: CUT_MIN, advCutMax: CUT_MAX, advSurroundReach: SURROUND_REACH, advCoverRadius: COVER_RADIUS });

@@ -29,6 +29,10 @@ const BR = await import('../src/characters/explorer/brain.js');
 const PE = await import('../src/characters/explorer/perception.js');
 const EN = await import('../src/characters/explorer/encounter.js');
 const CF = await import('../src/characters/explorer/confidence.js');
+const AB = await import('../src/characters/adversary/brain.js');
+const AP = await import('../src/characters/adversary/perception.js');
+const AM = await import('../src/characters/adversary/memory.js');
+const AV = await import('../src/characters/adversary/adversary-view.js');
 const { eq } = L;
 const { generateDungeon } = D;
 
@@ -109,6 +113,8 @@ const LIT = {
   ...C.traitDefaults(),
   // P3
   ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot(),
+  // P4
+  ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot(),
 };
 check(KD.KINDS.ghost.skills === 'ghost' && Object.keys(KD.KINDS.ghost.tuning()).length === 0, 'the ghost kind starts with the plain ghost set and no tuning');
 check(KD.KINDS.troll.tuning().claw_strike.cooldown === undefined, 'the troll kind inherits the global claw cooldown by default');
@@ -279,6 +285,21 @@ await S.refresh();
 const sortedEntries = (o) => JSON.stringify(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : 1)));
 const nowP3 = { ...BR.explorerBrainSnapshot(), ...PE.explorerPerceptionSnapshot(), ...EN.explorerEncounterSnapshot(), ...CF.confidenceSnapshot() };
 check(sortedEntries(nowP3) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in nowP3))), 'removing the keys restores every P3 default');
+
+// 6e. P4: the monsters' own numbers follow the file (live); a cut-off range that is backwards is refused
+writeFileSync(cfg, 'monsters: { brain: { pingpongs: 5, skillNear: 6 }, perception: { sweepRadius: 15, cutMin: 4, cutMax: 30 }, memory: { sightingSpacing: 5 }, pack: { heardSteps: 9 } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+const nowP4 = { ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot() };
+check(nowP4.advPingpongs === 5 && nowP4.advSkillNear === 6 && nowP4.advSweepRadius === 15 && nowP4.advCutMin === 4 && nowP4.advCutMax === 30 && nowP4.advSightingSpacing === 5 && nowP4.advHeardSteps === 9, 'monster brain, perception, memory and view numbers follow the file');
+p = L.parseConfig(YAML.parse('monsters: { perception: { cutMin: 20, cutMax: 5 } }'));
+const crossed = L.crossProblems({ ...L.defaults(), ...p.values });
+check(crossed.some((w) => w.includes('cut-off')), 'cutMin above cutMax is a cross-field problem');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+const backP4 = { ...AB.adversaryBrainSnapshot(), ...AP.adversaryPerceptionSnapshot(), ...AM.adversaryMemorySnapshot(), ...AV.adversaryViewSnapshot() };
+check(sortedEntries(backP4) === sortedEntries(Object.fromEntries(Object.entries(LIT).filter(([k]) => k in backP4))), 'removing the keys restores every P4 default');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
 for (const [name, c] of Object.entries(R.CATEGORIES)) check(typeof c.userSetting === 'boolean', `category ${name} has userSetting`);

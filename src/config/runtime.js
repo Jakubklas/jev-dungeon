@@ -22,6 +22,10 @@ import { configureExplorerBrain } from '../characters/explorer/brain.js';
 import { configureExplorerPerception } from '../characters/explorer/perception.js';
 import { configureExplorerEncounter } from '../characters/explorer/encounter.js';
 import { configureConfidence } from '../characters/explorer/confidence.js';
+import { configureAdversaryBrain } from '../characters/adversary/brain.js';
+import { configureAdversaryPerception } from '../characters/adversary/perception.js';
+import { configureAdversaryMemory } from '../characters/adversary/memory.js';
+import { configureAdversaryView } from '../characters/adversary/adversary-view.js';
 import { KNOBS, isUserSetting } from './registry.js';
 import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml, eq } from './load.js';
 
@@ -64,6 +68,10 @@ function push() {
   configureExplorerPerception(applied);
   configureExplorerEncounter(applied);
   configureConfidence(applied);
+  configureAdversaryBrain(applied);
+  configureAdversaryPerception(applied);
+  configureAdversaryMemory(applied);
+  configureAdversaryView(applied);
   configureCoins(applied);
   configureHearts(applied);
 }

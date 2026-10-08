@@ -28,7 +28,7 @@ import { addLandmarkTo, ageEntries, backAndForth, pushRing } from '../shared/mem
 
 export const LIMITS = { objective: 200, approach: 240, triedApproaches: 5, events: 5, event: 200, reason: 200, trend: 160, sightings: 5, landmarks: 8, landmarkNote: 120, moves: 6, cells: 8, skills: 4, skillText: 120 };
 export const LANDMARK_KINDS = ['home', 'explorer_seen', 'explorer_lost', 'explorer_hid', 'hit_here', 'area_checked']; // `chest` is never legal: ghosts do not know it
-export const SIGHTING_SPACING = 3; // a new sighting is stored only when the explorer moved this far from the newest one
+export let SIGHTING_SPACING = 3; // a new sighting is stored only when the explorer moved this far from the newest one
 const SOURCES = ['seen', 'called'];
 export const OBJECTIVE = 'Catch the explorer before it finds the treasure.';
 const OFF_TEXT = 'Brain off: patrolling the dungeon by code.';
@@ -221,3 +221,10 @@ export async function saveMemories(memories, tick, dirURL) {
   memories.forEach(validateMemory);
   await writeFile(new URL('adversaries.json', dirURL), JSON.stringify({ tick, adversaries: memories }, null, 2));
 }
+
+// Central config hook (src/config/runtime.js): the constants above are `let` so a changed value is seen at once.
+export function configureAdversaryMemory(o) {
+  if (o.advSightingSpacing !== undefined) SIGHTING_SPACING = o.advSightingSpacing;
+}
+// The values in force, keyed like the registry (the config check compares them with the registry defaults).
+export const adversaryMemorySnapshot = () => ({ advSightingSpacing: SIGHTING_SPACING });

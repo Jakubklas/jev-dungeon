@@ -57,6 +57,7 @@ export function crossProblems(values) {
   if (values.roomMax !== undefined && values.minSize !== undefined && values.roomMax + 2 > values.minSize) out.push('Largest room side must fit the smallest map (room side + 2 <= Min map side)');
   if (values.torchMin > values.torchMax) out.push('Fewest torches cannot be more than the most');
   if (values.clusterSizeMin > values.clusterSizeMax) out.push('Smallest cluster cannot be larger than the largest');
+  if (values.advCutMin > values.advCutMax) out.push('Nearest cut-off candidate cannot be farther than the farthest');
   if (values.confPanicExit < values.confPanicEnter) out.push('Panic must end at or above the confidence where it starts');
   if (values.confTierLowMax >= values.confTierHighMin) out.push('The low tier must end below the confidence where the high tier starts');
   if (!(values.confBandDominant > values.confBandSure && values.confBandSure > values.confBandEven && values.confBandEven > values.confBandUnsure && values.confBandUnsure >= 0)) out.push('Confidence bands must fall: dominant > sure > even > unsure');

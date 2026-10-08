@@ -305,6 +305,7 @@ monsters:
     alert: true # A spotter calls nearby patrolling monsters into the hunt
     alertSteps: 24 # Path steps within which a call is heard
     teamSight: true # Hunters see the explorer through packmates' eyes
+    heardSteps: 6 # Path steps around a called cell that a monster copies from the caller's map
   spawn:
     floorPerMonster: 150 # Floor cells per monster: lower = more monsters
     max: 12 # Cap on monsters per map (0 = none)
@@ -324,6 +325,17 @@ monsters:
       skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
       clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
       weight: 0.25 # Spawn weight, relative to the other kinds
+  brain:
+    pingpongs: 3 # Back-and-forth steps while searching before a monster re-picks its search approach
+    skillNear: 10 # A monster asks about a skill when the explorer is within this many cells
+  perception:
+    sweepRadius: 10 # Default sweep radius around the last sighting, steps (a character may override)
+    cutMin: 3 # Nearest cut-off candidate from the last sighting, steps
+    cutMax: 24 # Farthest cut-off candidate from the last sighting, steps (a character may override)
+    surroundReach: 24 # Path steps the surroundings facts look at
+    coverRadius: 12 # Explorer path steps around a monster that coverage looks at
+  memory:
+    sightingSpacing: 3 # A new sighting is stored only after the explorer moved this far
 
 # Directives the player may whisper to the explorer.
 player:
