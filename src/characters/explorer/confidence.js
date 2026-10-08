@@ -173,6 +173,7 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
 export const W_PER_EXTRA = 0.35;
 export const W_PER_EXTRA_SAFE = 0.5;
 export const HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
+export const CAPABILITY_MAX = 70; // capability never exceeds this: the start is 70, not a lives-dependent 80+
 export const NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
 const HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
 const HP_SLOPE = 0.125;
@@ -197,7 +198,8 @@ export function capability({ lives, maxLives = lives, clawDamage = 1, swordDamag
   }
   const W = clawDamage * wPerExtra * (steady ? Math.max(0, k - 1) : k);
   const R = clamp(Math.round(100 * (lives - W) / (lives + 1)), 0, 100);
-  return armed ? R : Math.min(R, NO_SWORD_MAX);
+  const base = Math.min(R, CAPABILITY_MAX); // a fresh, unhurt explorer starts at 70 whatever its lives; the high tier is earned in fights
+  return armed ? base : Math.min(base, NO_SWORD_MAX);
 }
 
 // C = clamp(R + h, 0, cap(lives, maxLives)): history shifts capability by at most +-HIST_SPAN, the lives cap still applies.

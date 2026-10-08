@@ -359,7 +359,7 @@ export class ExplorerBrain {
   }
 
   #syncConfidence() {
-    this.#memory.progress.confidence = { value: this.#cs.value, counts: { ...this.#cs.counts } };
+    this.#memory.progress.confidence = { value: this.#cs.value, now: this.#capState().C, counts: { ...this.#cs.counts } }; // value = history H, now = C
   }
 
   // The turn's `confidence` object for the UI: value, band word, change since the last report and why.
@@ -914,6 +914,7 @@ export class ExplorerBrain {
       this.#confide('regen');
       if (sit.threats.visible.length && !csArmed && !csEngaging && sit.threats.visible.some((v) => v.chasing && v.distance <= PRESSED_RANGE && !csStunned.has(v.id))) this.#confide('pressed');
     }
+    this.#syncConfidence(); // memory.progress.confidence.now follows sightings too, not only events
     await this.#save();
 
     return {

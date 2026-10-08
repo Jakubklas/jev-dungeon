@@ -126,10 +126,10 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   const cap0 = (L, M, n, w, extra = {}) => capability({ lives: L, maxLives: M, ghosts: g2(n), ...extra }, w);
   const C0 = (L, M, n, w) => combine(cap0(L, M, n, w), 50, L, M);
   // (a) the section 2.2 table (rows: lives left of max; columns: 0..4 ghosts of 2 hp), history neutral
-  const T05 = { '2/2': [67, 67, 50, 33, 17], '3/3': [75, 75, 63, 50, 38], '4/4': [80, 80, 70, 60, 50], '1/2': [45, 45, 25, 0, 0] };
-  const T035 = { '2/2': [67, 67, 55, 43, 32], '3/3': [75, 75, 66, 57, 49], '4/4': [80, 80, 73, 66, 59], '1/2': [45, 45, 33, 15, 0] };
-  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'unsure'], '3/3': ['sure', 'sure', 'sure', 'even', 'even'], '4/4': ['dominant', 'dominant', 'sure', 'sure', 'even'], '1/2': ['even', 'even', 'unsure', 'shaken', 'shaken'] };
-  const B05 = { '2/2': ['sure', 'sure', 'even', 'unsure', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'unsure'], '4/4': ['dominant', 'dominant', 'sure', 'even', 'even'], '1/2': ['even', 'even', 'shaken', 'shaken', 'shaken'] };
+  const T05 = { '2/2': [67, 67, 50, 33, 17], '3/3': [70, 70, 63, 50, 38], '4/4': [70, 70, 70, 60, 50], '1/2': [45, 45, 25, 0, 0] };
+  const T035 = { '2/2': [67, 67, 55, 43, 32], '3/3': [70, 70, 66, 57, 49], '4/4': [70, 70, 70, 66, 59], '1/2': [45, 45, 33, 15, 0] };
+  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'unsure'], '3/3': ['sure', 'sure', 'sure', 'even', 'even'], '4/4': ['sure', 'sure', 'sure', 'sure', 'even'], '1/2': ['even', 'even', 'unsure', 'shaken', 'shaken'] };
+  const B05 = { '2/2': ['sure', 'sure', 'even', 'unsure', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'unsure'], '4/4': ['sure', 'sure', 'sure', 'even', 'even'], '1/2': ['even', 'even', 'shaken', 'shaken', 'shaken'] };
   ok(W_PER_EXTRA === 0.35 && W_PER_EXTRA_SAFE === 0.5, 'W_PER_EXTRA 0.35, W_PER_EXTRA_SAFE 0.5');
   ok(cap0(2, 2, 3) === cap0(2, 2, 3, W_PER_EXTRA), 'default wPerExtra is W_PER_EXTRA');
   for (const [w, T, B] of [[0.5, T05, B05], [0.35, T035, B035]]) {
@@ -207,7 +207,7 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(JSON.stringify(inp) === frozenIn, 'capability does not mutate its input');
   ok(allowedMoods(33, { current: 'bold' }).join() === allowedMoods(33, JSON.parse(JSON.stringify({ current: 'bold' }))).join(), 'allowedMoods round-trip');
   ok(JSON.stringify(allowedMoods(50, {})) === JSON.stringify(JSON.parse(JSON.stringify(allowedMoods(50, {})))), 'allowedMoods returns plain JSON');
-  console.log('capability table, C at H 50 (rows lives/max, columns 0..4 ghosts of 2 hp):');
+  console.log('capability table (start 70 at most), C at H 50 (rows lives/max, columns 0..4 ghosts of 2 hp):');
   for (const [w, T] of [[0.5, T05], [0.35, T035]]) for (const k of Object.keys(T)) console.log(`  w ${w}  ${k}: ${T[k].join(' ')}`);
 }
 

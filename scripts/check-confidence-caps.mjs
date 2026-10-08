@@ -29,7 +29,7 @@ const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
 const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
-const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 80], [3, 2, 4, 50, 66]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
+const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 70], [3, 2, 4, 50, 66]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
 const cells = { 1: [[9, 3]], 2: [[9, 3], [9, 2]], 3: [[9, 3], [9, 2], [9, 4]] };
 let combos = 0, checkedMenu = 0;
 for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]) for (const H of [20, 50, 80]) for (const mode of ['chase', 'patrol']) {
