@@ -280,7 +280,7 @@ let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'chest', 'coin']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'chest', 'coin', 'heart']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -1095,14 +1095,15 @@ function drawEntity(en, now, cx, cy) {
     }
     return;
   }
-  if (en.kind === 'coin') {
+  if (en.kind === 'coin' || en.kind === 'heart') { // a heart hovers exactly like a coin
+    const spr = sprites[en.kind];
     const bob = Math.round(Math.sin(now / 380 + en.gx * 1.7 + en.gy * 2.3));
     b.globalAlpha = en.alpha * .7;
     b.fillStyle = PALETTE.shadow;
     pixelEllipse(px, py + 1, 4, 1);
     b.globalAlpha = 1;
-    if (en.n > 1) blitSprite(sprites.coin, px + 3, py + 1, 1, en.alpha); // a second coin peeks out behind
-    blitSprite(sprites.coin, px - (en.n > 1 ? 1 : 0), py - 1 + bob, 1, en.alpha);
+    if (en.n > 1) blitSprite(spr, px + 3, py + 1, 1, en.alpha); // a second coin peeks out behind
+    blitSprite(spr, px - (en.n > 1 ? 1 : 0), py - 1 + bob, 1, en.alpha);
     return;
   }
   if (en.kind === 'chest') {

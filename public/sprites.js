@@ -222,6 +222,19 @@ const COIN_A = [
   '..ooo..',
 ];
 
+// ----------------------------------------------------------------- heart 7x7
+// A floating heart pickup: same size, anchor and hover as the coin; the knight's red ramp (STYLE_GUIDELINES).
+const HEART_PAL = { o: '#2b0508', R: '#d11920', d: '#750b0f', L: '#ff9a8f' };
+const HEART_A = [
+  '.oo.oo.',
+  'oLRoRRo',
+  'oLRRRRo',
+  'oRRRRdo',
+  '.oRRdo.',
+  '..odo..',
+  '...o...',
+];
+
 // Raw art data (DOM-free) so it can be validated / previewed in node.
 export const ART = {
   knight: { palette: KNIGHT_PAL, frames: [KNIGHT_A, KNIGHT_B], anchorX: 9, anchorY: 23 },
@@ -229,6 +242,7 @@ export const ART = {
   troll: { palette: TROLL_PAL, frames: [TROLL_A, TROLL_B], anchorX: 20, anchorY: 47 },
   chest: { palette: CHEST_PAL, frames: [CHEST_A], anchorX: 6, anchorY: 9 },
   coin: { palette: COIN_PAL, frames: [COIN_A], anchorX: 3, anchorY: 5 },
+  heart: { palette: HEART_PAL, frames: [HEART_A], anchorX: 3, anchorY: 5 },
 };
 
 function rasterise(grid, palette) {
@@ -270,5 +284,6 @@ export function buildSprites() {
     troll: build(ART.troll),
     chest: build(ART.chest),
     coin: build(ART.coin),
+    heart: build(ART.heart),
   };
 }
