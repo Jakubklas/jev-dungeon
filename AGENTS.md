@@ -299,6 +299,14 @@ The player can whisper one short instruction to the explorer. Built I1-I4 (PLAN-
 - **Events** (explorer memory): `Heard: <text>`, `Directive ended: <reason>` (ran out of steps, replaced by a new one, cleared by the player, Jev judged it done). `turn.directive` and `view().directive` carry the live directive (null otherwise); `POST /api/step` also returns `directive`.
 - **Rules.** The text is the player's own, so fog of war is untouched; it is quoted in requests and cannot switch off the safety line. No `rng()` is used. With no directive requests are byte-identical (`check-request-hashes`). Checks: `check-inject.mjs` (brain, requests, expiry, `directive_done`, size), `check-inject-api.mjs` (policy, HTTP statuses on a throwaway server, a full stubbed `Run` over 24 steps). Never hit `/api/step` to test this.
 
+## Hearts
+
+Rare, fixed pickups that restore one life (built on the heart sprite and the testbed `hearts` option).
+- **Spawn** (`src/hearts.js`, `spawnHearts`): one per `roomsPerHeart` (4) rooms, at least one, at most `maxHearts` (6; 0 = none), each in a different room, never on the start, portal, small prop or a coin. Own PRNG stream (`seed ^ 0x2f6b1d57`), so dungeons, props, ghosts and coins never change (rule 8). Settings: Spawn group, `when: 'next'`. Enemies drop no hearts.
+- **Pickup** (`Game.applyMove`): stepping on one while `health < maxHealth` takes it and heals one life (`healed`, a `heart` event); at full lives it stays on the floor. `heartPiles` is replaced, never spliced; `view().heart_cells` feeds the UI.
+- **Explorer (fog-safe)**: `KnownWorld.seenHearts()` returns lit hearts only. Only while hurt does Jev hear of hearts: `surroundings.hearts` (nearest two, direction and distance), the move facts `Picks up a heart: restores a life.` / `Toward a seen heart (N steps after this).` and one `next_move` priority line. At full lives requests are byte-identical to before.
+- **The `heal` approach** (perception.js `heartTarget`, `needsHeart`): offered in reviews only while a heart is reachable and the explorer is hurt. In the brain a quiet tick (no enemy in sight, no directive, not leaving, not in a tactic) switches to it by code, with no call: at half the lives or fewer for any reachable heart, above half for one within `HEAL_NEAR` = 12 known-path steps. It ends (back to `nearest_frontier`, no `plan.tried` row) when lives are full or no heart is reachable. A tactic parks it like any approach. Check: `scripts/check-hearts.mjs`.
+
 ## Victory
 
 Two ways to win, recorded in `game.winBy` (`'chest'` | `'cleared'`, `null` while playing) and sent as `view().won_by`:

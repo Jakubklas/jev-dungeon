@@ -35,6 +35,7 @@ export const APPROACHES = {
   largest_unexplored: { text: 'Head for the largest dark region, judged by how much unknown space lies in each direction.', thought: 'That big dark patch looks promising.' },
   far_side: { text: 'Travel to the part of the dungeon farthest from where the explorer has already been.', thought: "Let's try the far side of this place." },
   collect_coins: { text: 'Go for the best seen pile of coins: coins are the score, so a detour for them can pay.', thought: 'Coins! Worth the detour.', needsCoins: true },
+  heal: { text: 'Go for the nearest seen heart: it restores a life, and you are hurt.', thought: 'A heart! I need that.', needsHeart: true },
   go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
   slip_past: {
     text: 'Slip past the enemy: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
@@ -100,7 +101,21 @@ const amount = (n) => (n === 0 ? 'none' : n <= 30 ? 'little' : n <= 120 ? 'some'
 // Exploration approaches Jev may pick in a review (tactics are offered by tacticOptions).
 export function availableApproaches(world) {
   const coins = Object.values(APPROACHES).some((a) => a.needsCoins) ? coinTarget(world, knownDistances(world, world.pos)) : null;
-  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsExit || exitSeen(world)) && (!APPROACHES[id].needsCoins || coins));
+  const heart = heartTarget(world, knownDistances(world, world.pos));
+  return Object.keys(APPROACHES).filter((id) => !APPROACHES[id].tactic && (!APPROACHES[id].needsExit || exitSeen(world)) && (!APPROACHES[id].needsCoins || coins) && (!APPROACHES[id].needsHeart || heart));
+}
+
+// The heart `heal` heads for: the nearest seen heart by known path (ties (y, x)), only while hurt (a heart is used up only
+// when it heals, so a full-health explorer is never told about them). `avoid` is skipped while another heart is reachable.
+// Returns { cell, steps, why } or null. Lit hearts only (KnownWorld.seenHearts).
+export function heartTarget(world, dist, avoid = null) {
+  if (world.health >= world.maxHealth) return null;
+  const reach = world.seenHearts().filter((c) => dist.has(c)).map((c) => ({ cell: c, steps: dist.get(c) }));
+  const open = avoid?.size ? reach.filter((h) => !avoid.has(key(h.cell))) : reach;
+  const cands = open.length ? open : reach;
+  cands.sort((a, b) => a.steps - b.steps || a.cell[1] - b.cell[1] || a.cell[0] - b.cell[0]);
+  const best = cands[0];
+  return best && { cell: [...best.cell], steps: best.steps, why: `A seen heart that restores a life, ${plural(best.steps, 'step')} to the ${compass(world.pos, best.cell)} by known path.` };
 }
 
 // Seen coin piles (lit cells only) as { cell, count } per cell, other than the cell the explorer stands on.
@@ -240,6 +255,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
   }
 
   if (approachId === 'collect_coins') return coinTarget(world, dist, avoid);
+  if (approachId === 'heal') return heartTarget(world, dist, avoid);
 
   const frontier = reachableFrontier(world, dist);
 
@@ -354,6 +370,16 @@ function coinView(world, dist) {
   return list.length ? { coins: list } : {};
 }
 
+// Seen hearts (lit cells only), nearest two, while hurt: { hearts: [{ direction, distance }] }, else {} (the key is left out).
+function heartView(world, dist) {
+  if (world.health >= world.maxHealth) return {};
+  const list = world.seenHearts()
+    .map((c) => ({ c, distance: dist.get(c) ?? Math.round(euclid(world.pos, c)) }))
+    .sort((a, b) => a.distance - b.distance || a.c[1] - b.c[1] || a.c[0] - b.c[0]).slice(0, 2)
+    .map((h) => ({ direction: sameCell(world.pos, h.c) ? 'here' : compass8(world.pos, h.c), distance: h.distance }));
+  return list.length ? { hearts: list } : {};
+}
+
 // The facts the `leave_now` question states, from this tick's situation `sit`: coins held, lit piles not yet
 // taken (count, nearest by known path), the portal's known-path distance, lives, adversaries, what is left
 // to explore. All fog-safe: purse, lit piles, known floor, adversaries in sight or remembered.
@@ -418,6 +444,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
       frontier_cells: reachableFrontier(world, dist).length,
       landmarks: landmarkView(world, distX, landmarks),
       ...coinView(world, dist),
+      ...heartView(world, dist),
     },
     threats: {
       visible: threats.map((th) => ({
@@ -550,6 +577,10 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
   // The nearest seen pile by known path, when it lies within COIN_NEAR steps: a "toward" fact per move that closes in.
   const pile = nearbyPiles(world, COIN_NEAR)[0] ?? null;
   const toPile = pile ? knownDistances(world, pile.cell) : null;
+  const hurt = world.health < world.maxHealth;
+  const hearts = hurt ? world.seenHearts() : []; // a full-health explorer is told nothing about hearts
+  const heart = hearts.length ? heartTarget(world, knownDistances(world, world.pos)) : null;
+  const toHeart = heart ? knownDistances(world, heart.cell) : null;
 
   for (const dir of world.legalMoves()) {
     const dest = step(here, dir);
@@ -584,6 +615,8 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     else if (pile && toPile.has(dest) && toPile.has(here) && toPile.get(dest) < toPile.get(here)) {
       facts.push(`Toward ${plural(pile.count, 'seen coin')} (${plural(toPile.get(dest), 'step')} after this).`);
     }
+    if (hearts.some((c) => sameCell(c, dest))) facts.push('Picks up a heart: restores a life.');
+    else if (heart && toHeart.has(dest) && toHeart.has(here) && toHeart.get(dest) < toHeart.get(here)) facts.push(`Toward a seen heart (${plural(toHeart.get(dest), 'step')} after this).`);
     const reveal = wouldReveal(world, dest);
     facts.push(reveal ? `Reveals about ${plural(reveal, 'new cell')}.` : 'Reveals nothing new.');
     facts.push(visitSentence(world.visits[key(dest)]));

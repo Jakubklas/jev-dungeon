@@ -19,7 +19,7 @@
 //              follows the new tactic. With a single feasible tactic code takes it (no Choice).
 import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
-  APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
+  APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
 import { holdGhost, knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
@@ -206,6 +206,7 @@ function combatRule({ name, damage, cooldown, stun, coinChance, clawCooldown, sh
 
 // Encounter sentences that repeat a tactic option's own fact (dropped when the tactic question is asked).
 const TACTIC_FACT_KEYS = ['slip_past', 'hide', 'run_away', 'exit'];
+const HEAL_NEAR = 12; // when hurt but above half the lives, a seen heart this many known-path steps away or less starts `heal`
 const COIN_NEAR = 8; // a newly seen pile this many known-path steps away or less can start a coin decision
 const COIN_EVERY = 10; // min steps between coin decisions
 const COIN_SWITCH = 0.5; // the coin decision's next_approach pick must reach this probability to switch
@@ -629,6 +630,22 @@ export class ExplorerBrain {
       changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
+    }
+    // Hearts (hurt only): heal ends when full or no heart is reachable any more; and a quiet moment with a heart in reach starts it.
+    // Need sets the reach: at half the lives or fewer any known heart is worth the walk, otherwise only one close by.
+    if (memory.approach.id === 'heal' && !this.#target('heal')) {
+      changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
+      this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
+      policy = { from: 'heal', to: 'nearest_frontier', reason: world.health >= world.maxHealth ? 'lives are full' : 'no seen heart left to reach' };
+    } else if (!policy && !this.directive && !isTactic(memory.approach.id) && !['heal', 'go_to_exit'].includes(memory.approach.id) && !this.#leaving() &&
+      !world.visibleAdversaries().length && world.health < world.maxHealth) {
+      const heart = heartTarget(world, knownDistances(world, world.pos));
+      if (heart && (world.health * 2 <= world.maxHealth || heart.steps <= HEAL_NEAR)) {
+        const from = memory.approach.id;
+        changeApproach(memory, approachOf('heal'), prev);
+        this.#review = { step: Math.max(prev, 1), targetSteps: heart.steps };
+        policy = { from, to: 'heal', reason: `hurt (${world.health} of ${world.maxHealth} lives) and a heart is ${heart.steps} steps away` };
+      }
     }
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
     const liveDirective = this.directive;
@@ -1145,6 +1162,7 @@ export class ExplorerBrain {
           ...(portalSeen ? [portalLine] : []),
           ...safety,
           ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the approach needs it.'] : []),
+          ...(this.#world.health < this.#world.maxHealth && this.#world.seenHearts().length ? ['You are hurt: a seen heart restores a life, so a detour for it is worth it unless an enemy is near.'] : []),
           ...(nearbyPiles(this.#world, COIN_NEAR).length ? ['Coins are the score: a step toward a seen pile beats revealing new cells unless an enemy is near.'] : []),
           profile.priority,
           ...(skillLine ? [`Skills: ${profile.skill_priority}`] : []),
