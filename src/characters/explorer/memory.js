@@ -54,7 +54,7 @@ const WINDOW = 10; // revisits_last_10
 const revisitWindows = new WeakMap();
 
 // The mood ids (brain.js SENTIMENTS has exactly these keys; check-dungeon asserts it). Validation accepts nothing else.
-export const MOOD_IDS = ['wary', 'steady', 'greedy', 'bold'];
+export const MOOD_IDS = ['panic', 'wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 export function createMemory({ approachId, approachText, thought, sentiment, start }) {
   const memory = {

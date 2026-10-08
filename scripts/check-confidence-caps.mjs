@@ -5,7 +5,7 @@
 //     spot values from the plan's tables (W 0.35)
 //  2. a scripted Jev at DOMINANT history (H 80) with 2 ghosts in sight is never offered wary, picks bold, engages and dispels
 //     both with no death at 2 lives (real health 2), follow and walk-in
-//  3. hysteresis: the same C offers bold to a brain whose mood is bold and not to one whose mood is steady
+//  3. hysteresis (pure rule in check-confidence.mjs 12d)
 //  4. the `confidence` trigger fires at most once per encounter per direction
 //  5. out of sight a closed mood is swapped to steady silently: a policy, no event, no request
 //  6. fog twin: a hidden never-seen ghost leaves C, the options and every request byte-identical
@@ -23,7 +23,7 @@ import { SENTIMENTS } from '../src/characters/explorer/brain.js';
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
 const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
-const ORDER = ['wary', 'steady', 'greedy', 'bold'];
+const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
 const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 80], [3, 2, 4, 50, 66]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
@@ -47,7 +47,7 @@ for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]
   if (!sent) { ok(false, `${tag}: no sentiment request`); continue; }
   const ids = Object.keys(sent.questions.sentiment.criteria).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   ok(JSON.stringify(ids) === JSON.stringify(want), `${tag}: moods ${ids} want ${want} (C ${C})`);
-  ok(ids.length === want.length && ids.includes('steady'), `${tag}: option count ${ids.length}`);
+  ok(ids.length === want.length, `${tag}: option count ${ids.length}`);
   ok(String(sent.state.self.confidence).startsWith(`${Math.floor(C)} `), `${tag}: self.confidence ${sent.state.self.confidence}, C ${C}`);
   const menu = first?.decision?.tactic?.options;
   if (menu) {
@@ -121,26 +121,8 @@ async function tick(run) {
 }
 const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r) => Object.keys(r.questions.sentiment.criteria).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)));
 
-// ---- 3. hysteresis: C 35 offers bold only to a brain whose mood is already bold ----
-// 3 ghosts hp 2, H 27 (h -21): lives 4 -> C 45, lives 3 -> C 36, lives 2 -> C 22.
-{
-  const logA = [];
-  const a = make({ H: 29, log: logA });
-  await tick(a); // lives 4, C 45: bold offered and picked
-  ok(logA.some((r) => r.kind === 'sentiment' && 'bold' in r.questions.sentiment.criteria), 'hysteresis: bold offered at C 45');
-  ok(a.memory.sentiment.id === 'bold', `hysteresis: bold picked at C 45 (got ${a.memory.sentiment.id})`);
-  a.game.health = 3; // C 36: past the threshold by 5, the current mood stays
-  const n0 = logA.length;
-  for (let i = 0; i < 4; i++) await tick(a);
-  const decided = logA.slice(n0).filter((r) => r.kind === 'sentiment');
-  ok(decided.every((r) => 'bold' in r.questions.sentiment.criteria), 'hysteresis: bold stays offered to a bold brain at C 36');
-  ok(!logA.slice(n0).some((r) => /Your confidence changed/.test(JSON.stringify(r.questions))), 'hysteresis: no confidence trigger inside the band');
-  const logB = [];
-  const b = make({ H: 29, lives: 3, log: logB, pick: (k) => (k.includes('steady') ? 'steady' : k[0]) });
-  await tick(b); // lives 3, C 35, mood steady: bold is not offered
-  const k = sentimentKeys(logB)[0];
-  ok(k && !k.includes("bold") && !k.includes("wary") && k.includes("greedy"), `hysteresis: a steady brain at C 36 is offered greedy and neither wary nor bold (got ${k})`);
-}
+// ---- 3. hysteresis: the tier edges keep the current mood's tier 5 points past the edge; that is a pure rule, checked for every C in
+// check-confidence.mjs section 12(d) (allowedMoods), and exercised end to end by the tier swaps in sections 4 and 5 below.
 
 // ---- 4. the confidence trigger: once per encounter per direction ----
 {
@@ -211,23 +193,23 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   ]) {
     const t = text(await first({ confidence: { caps: true, start: 80 }, ghostHp: 2, health: 4, ...o }));
     ok(stakes.test(t) === wantClaim, `claim gate (${name}): stakes sentence ${stakes.test(t) ? 'present' : 'absent'}, want ${wantClaim ? 'present' : 'absent'}`);
-    ok(!/outnumbered/.test(t), `no 'outnumbered' (${name})`);
+    ok(!/\d\+? (adversar|enem|monster|ghost)/i.test(t), `no counts on enemies (${name})`);
   }
   // the default line on a decision tick with the tactic question (steady mood, 2 ghosts, fight on)
   {
-    const sent = await first({ ghosts: cells[2], ghostHp: 2, health: 4, confidence: { caps: true, start: 80 }, mood: 'steady' });
+    const sent = await first({ ghosts: cells[2], ghostHp: 2, health: 4, confidence: { caps: true, start: 50 }, mood: 'steady' });
     ok(sent.some((r) => dflt.test(JSON.stringify(r.questions))), 'default engage line for 2 ghosts (steady, fight on)');
     ok(!sent.some((r) => /Default: engage a lone adversary/.test(JSON.stringify(r.questions))), 'no lone-adversary default line with 2 ghosts');
   }
   // one ghost: today's lone-fight wording
   {
-    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 80 }, mood: 'steady' }));
+    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 50 }, mood: 'steady' }));
     ok(/Default: engage a lone adversary/.test(t) && /A lone adversary you can strike first/.test(t), "one ghost keeps today's lone-fight wording in caps mode");
   }
   for (const g of [cells[3], [[9, 3], [9, 2], [9, 4], [10, 3]]]) {
     await playDuel({ ghosts: g, ghostHp: 2, health: 4, maxTicks: 25, confidence: { caps: true, start: 50 }, onAsk: (r) => bodies.push(r.body) });
   }
-  ok(bodies.length > 20 && !bodies.some((b) => /outnumbered/.test(b)), `no 'outnumbered' in ${bodies.length} caps-mode requests`);
+  ok(bodies.length > 20 && !bodies.some((b) => /\d\+? (adversar|enem|monster|ghost)/i.test(b)), `no counts on enemies in ${bodies.length} requests`);
   ok(ORDER.every((id) => id in SENTIMENTS), 'the four moods are still in SENTIMENTS (commit 3 replaces them)');
 }
 

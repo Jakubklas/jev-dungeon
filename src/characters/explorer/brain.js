@@ -30,7 +30,7 @@ import {
 } from './memory.js';
 import { ADVERSARY_SPEED, GRACE_TICKS } from '../adversary/adversary.js';
 import {
-  BOLD_MIN, PRESSED_RANGE, allowedMoods, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
+  BOLD_MIN, PRESSED_RANGE, allowedMoods, defaultMood, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { askJev, shuffle } from '../../jev.js';
 
@@ -62,51 +62,77 @@ const askReal = ({ state, questions, body }) => askJev(state, questions, body);
 //   when       - what Jev reads when picking it (concrete circumstances)
 //   skill_priority - the mind's rule for skills: in the `skill` question and, while a skill is offered, next_move's priorities
 export const SENTIMENTS = {
+  // Low tier (C <= 35). Panic is entered by code below C 20 and never offered to Jev; its gap is ignored in spirit (1).
+  panic: {
+    min_gap: 1, end_ticks: 8,
+    move_priority: 'Panic: get away at any cost; nothing else matters.',
+    when: 'Entered by code when confidence collapses; never offered as a choice.',
+    priority: 'Panic: get away at any cost. Only a clear path matters: ignore coins, lives and fights, and keep running from every enemy. Strike only an enemy that blocks the only way.',
+    note: 'Flees at any cost: only the way out matters.',
+    skill_priority: 'Strike only an enemy that blocks your only way; otherwise keep running.',
+  },
   wary: {
     min_gap: 4, end_ticks: 5,
-    move_priority: 'Wary: never move toward an adversary; grow the distance, keep exits open, avoid dead ends.',
-    when: 'Upside: gets you out alive. Risk: gives up coins and progress. Pick when outnumbered (2+ adversaries in sight or remembered), or a chaser is within 3 steps with no route past it, or only 1 life is left.',
-    priority: 'Wary: getting away comes first. Never move toward an adversary; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it.',
-    note: 'Gets away first: runs, hides, never moves toward an adversary.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.',
+    move_priority: 'Wary: never move toward an enemy; grow the distance, keep exits open, avoid dead ends.',
+    when: 'Upside: gets you out alive. Risk: gives up coins and progress. Offered when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by.',
+    priority: 'Wary: getting away comes first. Never move toward an enemy; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it.',
+    note: 'Gets away first: runs, hides, never moves toward an enemy.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.',
+  },
+  guarded: {
+    min_gap: 3, end_ticks: 4,
+    move_priority: 'Guarded: explore away from enemies; skip loot and fights.',
+    when: 'Upside: keeps exploring while staying clear of trouble. Risk: misses loot and fights. Pick when `self.confidence` is low but you are not running: an enemy is known and fighting it looks bad, or nothing else fits.',
+    priority: 'Guarded: explore, but away from known enemies. Skip loot that lies near one, avoid fights, keep at least 3 steps from enemies and favour well-connected ground over dead ends.',
+    note: 'Explores away from enemies; no detours, no fights.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.',
+  },
+  // Mid tier (36..75).
+  cautious: {
+    min_gap: 4, end_ticks: 4,
+    move_priority: 'Cautious: keep your distance; slip past enemies rather than meet them.',
+    when: 'Upside: avoids needless risk while still exploring. Risk: leaves the initiative to the enemy. Pick when an enemy is known and you would rather slip past it than fight, or when you are cornered.',
+    priority: 'Cautious: keep your distance. Slip past enemies and explore with a cushion of at least 4 steps; fight only a hurt monster or when cornered.',
+    note: 'Keeps its distance and slips past; fights only a hurt monster or when cornered.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
   },
   steady: {
     min_gap: 3, end_ticks: 4,
     move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when no adversary is in sight and nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when exactly one is in sight and fighting it is clearly bad (sword not ready, or fewer than full lives and no hit protection). Never with 2+ adversaries known: that is wary.',
-    priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from adversaries and favour well-connected ground with several exits over dead ends and long corridors.',
-    note: 'Sticks to the plan: explores, coins on the way, keeps a safe distance.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready; else block if one can reach you.',
+    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when enemies are in sight and you would rather keep to the plan than fight them.',
+    priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready.',
+    note: 'Sticks to the plan: explores, coins on the way, fights a single or hurt monster.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
   },
   greedy: {
     min_gap: 3, end_ticks: 2,
     move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
-    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no adversary in sight and full lives or hit protection.',
-    priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from adversaries.',
+    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no enemy in sight and full lives or hit protection.',
+    priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from enemies.',
     note: 'Goes after coins and unexplored rooms; detours are fine.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, then carry on looting.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready, then carry on looting.',
   },
+  // High tier (> 75).
   bold: {
     min_gap: 2, end_ticks: 1,
-    move_priority: 'Bold: take the fight; moving toward an adversary is fine.',
-    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when a lone adversary is the only one known (in sight at any distance, or remembered), the sword is ready (`self.skills`) and you have full lives or hit protection.',
-    priority: 'Bold: take the fight. Engage a lone or weakened adversary you can beat; moving toward one is fine; keep at least 2 steps unless striking.',
-    note: 'Takes fights it can win: engages lone or weak adversaries.',
-    skill_priority: 'Strike an adjacent adversary whenever the sword is ready, and step up to a hurt one.',
+    move_priority: 'Bold: take the fight; moving toward an enemy is fine.',
+    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and you want the fight: a single monster, a hurt one, or several.',
+    priority: 'Bold: take the fight. Engage enemies you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking.',
+    note: 'Takes fights it can win, single or several.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready, and step up to a hurt one.',
+  },
+  fearless: {
+    min_gap: 1, end_ticks: 1,
+    move_priority: 'Fearless: hunt enemies down; close in on the nearest.',
+    when: 'Upside: the fastest way to the cleared win and to the coins enemies drop. Risk: claws cost lives. Pick when the sword is ready and nothing says to hold back: dispelling them is your aim.',
+    priority: 'Fearless: hunt enemies down. Close in on the nearest one and strike whenever the sword is ready; being outnumbered does not stop you, dispelling them is your aim.',
+    note: 'Hunts enemies down, even several at once.',
+    skill_priority: 'Strike an adjacent enemy whenever the sword is ready and keep closing in on the next.',
   },
 };
-// Caps-mode wording (PLAN-confidence-mood section 5): the moods' `when` / `priority` once C decides which moods are offered
-// (confidence: 'caps'). A separate table, so SENTIMENTS and every request with caps off stay byte-identical. No word about
-// being outnumbered: how many adversaries there are is already inside `self.confidence`.
-export const CAPS_TEXT = {
-  wary: { when: 'Upside: gets you out alive. Risk: gives up coins and progress. Offered only when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by.' },
-  steady: { when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when no adversary is in sight and nothing else clearly fits (a plan to follow, no coins in sight, little left to explore nearby), or when adversaries are in sight and you would rather keep to the plan than fight them.' },
-  bold: {
-    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and `self.confidence` is even or better (it already weighs the adversaries you know, their hp and your lives), one adversary or several.',
-    priority: 'Bold: take the fight. Engage adversaries you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking.',
-  },
-};
-const MOOD_GLOSS = { wary: 'safety (wary)', steady: 'the plan (steady)', greedy: 'loot (greedy)', bold: 'the fight (bold)' };
+// Moods the sentiment question lists, with the short gloss for its first sentence (panic is never listed).
+const TIER_RANK = { low: 0, mid: 1, high: 2 };
+const MOOD_GLOSS = { wary: 'safety (wary)', guarded: 'caution while exploring (guarded)', cautious: 'distance (cautious)', steady: 'the plan (steady)', greedy: 'loot (greedy)', bold: 'the fight (bold)', fearless: 'the hunt (fearless)' };
 const DEFAULT_SENTIMENT = 'steady';
 export const profileOf = (memory) => SENTIMENTS[memory.sentiment?.id] ?? SENTIMENTS[DEFAULT_SENTIMENT];
 
@@ -260,7 +286,7 @@ export class ExplorerBrain {
   // Confidence caps (PLAN-confidence-mood, confidence: 'caps'): C = capability + history decides which moods the sentiment question
   // lists. #capFired = the directions ('up' wary closed, 'down' bold or greedy closed) whose `confidence` trigger already fired
   // this encounter; #visibleIds = the ids in sight at the start of this tick (for the weights).
-  #fixedMood = false; // arm { fixedMood: true } (duel harness): every mood stays offered, so the hold can be measured without C moving the mood
+  #fixedMood = false; // arm { fixedMood: true } (duel harness): the four classic moods stay offered, so the hold and the request sizes can be measured without C moving the mood
   #wExtra; // capability()'s wPerExtra override (undefined = the default)
   #capFired = new Set();
   #visibleIds = new Set();
@@ -311,20 +337,19 @@ export class ExplorerBrain {
     const H = this.#cs.value;
     const C = combine(R, H, world.health, world.maxHealth);
     const swordDown = !!k && !this.#armed() && threatsOf(world).some((th) => th.chasing && threatDistance(th, world.pos) <= 3);
-    return { R, H, C, ctx: { lastLife: world.health <= cfg.clawDamage, swordDown, noSword: !k } };
+    return { R, H, C, ctx: { lastLife: world.health <= cfg.clawDamage, swordDown } };
   }
 
   // The moods the sentiment question lists at C (caps mode), the current mood kept by the hysteresis.
   #allowed(cap = this.#capState()) {
-    if (this.#fixedMood) return Object.keys(SENTIMENTS);
+    if (this.#fixedMood) return ['wary', 'steady', 'greedy', 'bold']; // the four classic moods, C never moves them
     return allowedMoods(cap.C, { ...cap.ctx, current: this.#memory.sentiment?.id ?? null });
   }
 
   // The current mood's profile at the current C (all gap readers below use it, never SENTIMENTS directly).
   #profile() {
     const p = profileOf(this.#memory);
-    const c = CAPS_TEXT[this.#memory.sentiment?.id]?.priority;
-    return c ? { ...p, priority: c } : p;
+    return p;
   }
 
   // self.confidence as Jev reads it: "<floor C> <band>" (caps: C = capability + history; else the history score).
@@ -625,13 +650,15 @@ export class ExplorerBrain {
     {
       const cap = this.#capState();
       const cur = memory.sentiment.id;
-      if (!this.#allowed(cap).includes(cur)) {
-        const dir = cur === 'wary' ? 'up' : 'down';
+      const list = this.#allowed(cap);
+      if (cur !== 'panic' && !list.includes(cur)) {
+        const dir = TIER_RANK[tierOfMood(cur)] < TIER_RANK[tierOf(cap.C, tierOfMood(cur))] ? 'up' : 'down';
         if (inSight) {
           if (!this.#capFired.has(dir) && (trigger || step - info.lastDecision >= REDECIDE_COOLDOWN)) { this.#capFired.add(dir); trigger ??= 'confidence'; }
         } else {
-          setSentiment(memory, { id: 'steady' }, step);
-          policy = { from: cur, to: 'steady', reason: `confidence ${Math.floor(cap.C)}` };
+          const to = defaultMood(list);
+          setSentiment(memory, { id: to }, step);
+          policy = { from: cur, to, reason: `confidence ${Math.floor(cap.C)}` };
         }
       }
     }
@@ -1019,7 +1046,7 @@ export class ExplorerBrain {
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
       const s = SENTIMENTS[id];
       const here = inSight ? ` Tactics it leaves here: ${allowed.get(s.min_gap).join(', ') || 'none, only luck'}.` : '';
-      return [id, `${(caps && CAPS_TEXT[id]?.when) || s.when} Effect: ${profileNote(id)}${here}`];
+      return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
     }));
     const questions = {
       sentiment: {
@@ -1035,7 +1062,7 @@ export class ExplorerBrain {
     };
     const { answers, ms } = await this.#request('sentiment', this.#state(sit), questions);
     const a = answers.sentiment;
-    const choice = ids.includes(a?.choice) ? a.choice : ids.includes(memory.sentiment.id) ? memory.sentiment.id : 'steady';
+    const choice = ids.includes(a?.choice) ? a.choice : ids.includes(memory.sentiment.id) ? memory.sentiment.id : defaultMood(ids);
     setSentiment(memory, { id: choice }, world.steps + 1);
     return { choice, probabilities: a?.probabilities ?? null, ms };
   }

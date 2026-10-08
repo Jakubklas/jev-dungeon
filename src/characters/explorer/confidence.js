@@ -173,10 +173,7 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
 export const W_PER_EXTRA = 0.35;
 export const W_PER_EXTRA_SAFE = 0.5;
 export const HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
-export const WARY_MAX = 35; // wary is offered up to here without an exception
-export const BOLD_MIN = 40; // bold needs at least this (and an attack skill)
-export const GREEDY_MIN = 30; // greedy needs at least this
-export const CAP_HYST = 5; // the current mood stays offered this far past its threshold
+export const BOLD_MIN = 40; // the fight gate's C floor (#fightOn); the moods themselves come from the tiers
 export const NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
 const HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
 const HP_SLOPE = 0.125;
@@ -210,15 +207,20 @@ export function combine(R, H, lives, maxLives) {
   return clamp(R + h, 0, cap(lives, maxLives));
 }
 
-// The moods the sentiment question may list, in SENTIMENTS order (wary, steady, greedy, bold). Steady is always in.
-// ctx: { lastLife, swordDown, noSword, current }. wary: C <= WARY_MAX, or the exceptions (lastLife, noSword, swordDown: dangers
-// code can name). greedy: C >= GREEDY_MIN. bold: C >= BOLD_MIN and an attack skill. Hysteresis: the current mood stays
-// offered CAP_HYST past its threshold (wary up to 40, greedy down to 25, bold down to 35).
-export function allowedMoods(C, { lastLife = false, swordDown = false, noSword = false, current = null } = {}) {
-  const out = [];
-  if (C <= WARY_MAX || lastLife || noSword || swordDown || (current === 'wary' && C <= WARY_MAX + CAP_HYST)) out.push('wary');
-  out.push('steady');
-  if (C >= GREEDY_MIN || (current === 'greedy' && C >= GREEDY_MIN - CAP_HYST)) out.push('greedy');
-  if (!noSword && (C >= BOLD_MIN || (current === 'bold' && C >= BOLD_MIN - CAP_HYST))) out.push('bold');
-  return out;
+// PLAN-moods: the moods each tier offers, in the order the sentiment question lists them. `panic` is entered by code below
+// PANIC_ENTER and is never offered; a tier never offers another tier's moods.
+export const TIER_MOODS = { low: ['wary', 'guarded'], mid: ['cautious', 'steady', 'greedy'], high: ['bold', 'fearless'] };
+export const tierOfMood = (id) => (id === 'panic' || TIER_MOODS.low.includes(id) ? 'low' : TIER_MOODS.high.includes(id) ? 'high' : TIER_MOODS.mid.includes(id) ? 'mid' : null);
+
+// The moods the sentiment question may list at C. ctx: { lastLife, swordDown, current }. The tier comes from C with the hysteresis
+// of tierOf, held from the tier the current mood belongs to; a last life or a chaser close by with the sword down (dangers code
+// can name) force the low tier.
+export function allowedMoods(C, { lastLife = false, swordDown = false, current = null } = {}) {
+  if (lastLife || swordDown) return [...TIER_MOODS.low];
+  return [...TIER_MOODS[tierOf(C, tierOfMood(current))]];
+}
+
+// The mood a silent swap lands on when the current one is no longer offered: steady if offered, else guarded, else bold, else the first.
+export function defaultMood(list) {
+  return ['steady', 'guarded', 'bold'].find((id) => list.includes(id)) ?? list[0];
 }

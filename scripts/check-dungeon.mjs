@@ -954,11 +954,11 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       ];
       const start = [5, 4], ghost = [1, 7];
       // The boldest mood (smallest min gap) by value, not by name, so a mood rename keeps every tactic open.
-      const boldest = Object.entries(SENTIMENTS).sort((a, b) => a[1].min_gap - b[1].min_gap)[0][0];
+      const boldest = 'bold'; // the boldest mood a C-capped brain can hold with the hold on (min gap 2); fearless is gap 1
       // Run twice: confidence model off, then ON (C3: self.confidence and the sentiment sentence). With it on the two hits
       // are written into memory as noteHit writes them but without its C update: a real hit would take C out of the
       // neutral zone and close tactics, so this is the worst case inside the zone.
-      for (const conf of [FIXED_MOOD, { caps: true }]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
+      for (const conf of [FIXED_MOOD, { caps: true, start: 100 }]) for (const [mode, wantTactics, bound] of [['chase', 5, 9500], ['patrol', 6, 10500]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
         big.dungeon.treasure = [1, 1];
@@ -1656,22 +1656,22 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
 //     checked in the dispel test above) fire as specified and merge with an encounter into ONE sentiment call.
 {
   const ids = Object.keys(SENTIMENTS).sort().join();
-  if (ids !== 'bold,greedy,steady,wary') fail(`SENTIMENTS ids: ${ids}`);
+  if (ids !== 'bold,cautious,fearless,greedy,guarded,panic,steady,wary') fail(`SENTIMENTS ids: ${ids}`);
   if (MOOD_IDS.slice().sort().join() !== ids) fail('memory MOOD_IDS differ from SENTIMENTS');
   const mins = Object.fromEntries(Object.entries(SENTIMENTS).map(([k, v]) => [k, `${v.min_gap}/${v.end_ticks}`]));
-  if (JSON.stringify(mins) !== JSON.stringify({ wary: '4/5', steady: '3/4', greedy: '3/2', bold: '2/1' })) fail(`mood numbers ${JSON.stringify(mins)}`);
+  if (JSON.stringify(mins) !== JSON.stringify({ panic: '1/8', wary: '4/5', guarded: '3/4', cautious: '4/4', steady: '3/4', greedy: '3/2', bold: '2/1', fearless: '1/1' })) fail(`mood numbers ${JSON.stringify(mins)}`);
   for (const [id, m] of Object.entries(SENTIMENTS)) {
     for (const f of ['min_gap', 'end_ticks', 'priority', 'move_priority', 'when', 'note', 'skill_priority']) if (m[f] == null) fail(`mood ${id} lacks ${f}`);
     const text = [m.priority, m.move_priority, m.when, m.note, m.skill_priority].join(' ');
     if (/chest|treasure/i.test(text) || /push(es)? for|the goal/i.test(text) || /pays a coin|drops a coin/i.test(text)) fail(`mood ${id} text mentions the chest, pushing for the goal or a sure coin: ${text}`);
-    if (!/Strike an adjacent adversary whenever the sword is ready/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
-    if (!/Upside/.test(m.when) || !/Risk/.test(m.when)) fail(`mood ${id} when does not name upside and risk`);
+    if (id !== 'panic' && !/Strike an adjacent enemy whenever the sword is ready/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
+    if (id !== 'panic' && (!/Upside/.test(m.when) || !/Risk/.test(m.when))) fail(`mood ${id} when does not name upside and risk`);
   }
   const g0 = handGame(['######', '#....#', '######'], [1, 1]);
   const d0 = mkdtempSync(join(tmpdir(), 'jev-check-'));
   const b0 = new ExplorerBrain(new KnownWorld(g0), { ask: async () => ({}), confidence: FIXED_MOOD, memoryDir: pathToFileURL(d0 + '/') });
   if (b0.memory.sentiment.id !== 'steady') fail(`default mood ${b0.memory.sentiment.id}`);
-  for (const old of ['cautious', 'scared', 'risk_averse', 'curious', 'courageous', 'aggressive']) {
+  for (const old of ['scared', 'risk_averse', 'curious', 'courageous', 'aggressive']) {
     const m = structuredClone(b0.memory);
     m.sentiment.id = old;
     let threw = false;
@@ -1788,14 +1788,13 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   // leave_now switch (exploring or mid-encounter) is no failure: no plan.tried row, and the turn carries a policy.
   {
     const W = SENTIMENTS;
-    if (/adversar/.test(W.greedy.when.split('Pick when')[1].replace('with no adversary in sight', ''))) fail('greedy when names an adversary beyond "no adversary in sight"');
-    if (!/no adversary is in sight/.test(W.steady.when)) fail('steady when does not cover no adversary in sight');
-    if (!/Never with 2\+ adversaries known: that is wary/.test(W.steady.when) || !/exactly one is in sight and fighting it is clearly bad/.test(W.steady.when)) fail('steady when: the one-adversary case is not stated precisely');
-    if (/\d+\+? steps|far|close|within/.test(W.bold.when.split('Pick when')[1])) fail(`bold when has a distance cap: ${W.bold.when}`);
-    if (!/lone adversary is the only one known \(in sight at any distance, or remembered\)/.test(W.bold.when) || !/sword is ready/.test(W.bold.when) || !/full lives or hit protection/.test(W.bold.when)) fail('bold when lost a condition');
-    if (!/outnumbered \(2\+ adversaries in sight or remembered\)/.test(W.wary.when)) fail('wary when lost the outnumbered case');
-    if (/2\+/.test(W.bold.when) || /coin/.test(W.bold.when) === false) fail('bold when: overlaps wary or lost the coin upside');
-    console.log('mood whens: nothing in sight -> greedy/steady; lone ghost at any distance, sword ready, full lives -> bold; 2+ known -> wary');
+    if (/enem/.test(W.greedy.when.split('Pick when')[1].replace('with no enemy in sight', ''))) fail('greedy when mentions enemies beyond "no enemy in sight"');
+    if (!/nothing else clearly fits/.test(W.steady.when) || !/rather keep to the plan than fight them/.test(W.steady.when)) fail('steady when lost the nothing-else-fits or keep-to-the-plan case');
+    if (/\d+\+? steps|far|close|within|\d\+/.test(W.bold.when.split('Pick when')[1])) fail(`bold when has a distance cap or a count: ${W.bold.when}`);
+    if (!/sword is ready/.test(W.bold.when) || !/single monster, a hurt one, or several/.test(W.bold.when) || /coin/.test(W.bold.when) === false) fail('bold when lost a condition or the coin upside');
+    if (/\d\+|\d enem|\d monsters/.test(Object.values(W).map((m) => m.when + m.priority).join(' '))) fail('a mood text puts a number on enemies');
+    if (/adversar|ghost/i.test(Object.values(W).map((m) => [m.when, m.priority, m.move_priority, m.note, m.skill_priority].join(' ')).join(' '))) fail('a mood text still says adversary or ghost');
+    console.log('mood whens: enemy wording, no counts on enemies');
 
     const row = ['#'.repeat(40), '#' + '.'.repeat(38) + '#', '#'.repeat(40)];
     const STAKES = 'A lone adversary you can strike first costs at most one claw';

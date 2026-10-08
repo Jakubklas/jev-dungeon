@@ -3,7 +3,7 @@
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
-import { createConfidence, apply, cap, band, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, panicNext, capability, combine, allowedMoods, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
+import { createConfidence, apply, cap, band, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, panicNext, capability, combine, allowedMoods, defaultMood, tierOfMood, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -175,33 +175,24 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(combine(0, 0, 2, 2) === 0 && combine(100, 100, 2, 2) === 100 && combine(50, 200, 2, 2) === 80, 'combine: floor 0, ceiling 100, h limited to +30');
   for (let L = 1; L <= 4; L++) for (let n = 0; n <= 4; n++) ok(cap0(L, 4, n, 0.35, { armed: false }) <= NO_SWORD_MAX, `no attack skill: R <= 20 (L ${L} n ${n})`);
   ok(NO_SWORD_MAX === 20 && cap0(2, 2, 3, 0.35, { armed: false }) === Math.min(20, cap0(2, 2, 3, 0.35)) && cap0(2, 2, 0, 0.35, { armed: false }) === 20, 'no sword: min(R, 20)');
-  // (d) allowedMoods
+  // (d) allowedMoods: the three tiers of PLAN-moods (low wary/guarded, mid cautious/steady/greedy, high bold/fearless)
+  const LOW = 'wary,guarded', MID = 'cautious,steady,greedy', HIGH = 'bold,fearless';
   const ORDER = Object.keys(SENTIMENTS);
-  ok(JSON.stringify(ORDER) === '["wary","steady","greedy","bold"]', `SENTIMENTS order ${ORDER}`);
-  const idx = (l) => l.map((m) => ORDER.indexOf(m));
-  const want = (C) => (C <= 35 ? ['wary'] : []).concat(['steady'], C >= 30 ? ['greedy'] : [], C >= 40 ? ['bold'] : []);
+  ok(JSON.stringify(ORDER) === '["panic","wary","guarded","cautious","steady","greedy","bold","fearless"]', `SENTIMENTS order ${ORDER}`);
   for (let C = 0; C <= 100; C++) {
     const l = allowedMoods(C, {});
-    ok(JSON.stringify(l) === JSON.stringify(want(C)), `allowedMoods(${C}) = ${l}`);
-    ok(l.includes('steady') && JSON.stringify(idx(l)) === JSON.stringify([...idx(l)].sort((a, b) => a - b)), `steady present and SENTIMENTS order at ${C}`);
+    ok(l.join() === (C <= 35 ? LOW : C <= 75 ? MID : HIGH), `allowedMoods(${C}) = ${l}`);
+    ok(!l.includes('panic'), `panic is never offered (${C})`);
     ok(allowedMoods(C).join() === l.join(), `ctx is optional (${C})`);
-    for (const cur of ORDER) {
-      const h = allowedMoods(C, { current: cur });
-      ok(h.includes('steady'), `steady present with current ${cur} at ${C}`);
-      const th = { wary: C <= 40, greedy: C >= 25, bold: C >= 35 };
-      if (cur !== 'steady') ok(h.includes(cur) === th[cur], `hysteresis: ${cur} at C ${C}: ${h}`);
-      for (const m of ORDER) if (m !== cur) ok(h.includes(m) === l.includes(m), `hysteresis only keeps the current mood (${m} at ${C}, current ${cur})`);
-    }
-    for (const ex of ['lastLife', 'swordDown', 'noSword']) {
-      const e = allowedMoods(C, { [ex]: true });
-      ok(e.includes('wary') && e.includes('steady'), `exception ${ex} adds wary at ${C}`);
-      if (ex !== 'noSword') ok(e.includes('bold') === l.includes('bold') && e.includes('greedy') === l.includes('greedy'), `exception ${ex} changes only wary (${C})`);
-    }
-    ok(!allowedMoods(C, { noSword: true }).includes('bold'), `bold absent without an attack skill (${C})`);
-    ok(!allowedMoods(C, { noSword: true, current: 'bold' }).includes('bold'), `bold absent without an attack skill even as the current mood (${C})`);
+    // hysteresis: the tier of the current mood is kept 5 points past its edge
+    ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 75 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
+    ok(allowedMoods(C, { current: 'panic' }).join() === allowedMoods(C, { current: 'wary' }).join(), `panic holds the low tier like wary (${C})`);
+    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C >= 71 ? HIGH : MID), `high tier kept down to 71 (C ${C})`);
+    ok(allowedMoods(C, { current: 'steady' }).join() === l.join(), `a mid mood adds no hysteresis (${C})`);
+    for (const ex of ['lastLife', 'swordDown']) ok(allowedMoods(C, { [ex]: true }).join() === LOW, `${ex} forces the low tier at ${C}`);
   }
-  ok(allowedMoods(70, {}).join() === 'steady,greedy,bold' && allowedMoods(37, {}).join() === 'steady,greedy' && allowedMoods(32, {}).join() === 'wary,steady,greedy' && allowedMoods(20, {}).join() === 'wary,steady', 'section 4 table rows');
-  ok(allowedMoods(70, { lastLife: true }).join() === 'wary,steady,greedy,bold', 'last life: wary comes back, bold stays (C itself is capped at 45)');
+  ok(defaultMood(['wary', 'guarded']) === 'guarded' && defaultMood(['cautious', 'steady', 'greedy']) === 'steady' && defaultMood(['bold', 'fearless']) === 'bold', 'defaultMood: guarded / steady / bold');
+  ok(tierOfMood('panic') === 'low' && tierOfMood('fearless') === 'high' && tierOfMood('nope') === null, 'tierOfMood');
   // (e) sightWeight
   ok(sightWeight(0) === 1 && sightWeight(15) === 0.5 && sightWeight(30) === 0 && sightWeight(31) === 0 && sightWeight(500) === 0, 'sightWeight: 1, 0.5, 0, 0');
   ok(HIST_SPAN === 30, 'HIST_SPAN 30');
