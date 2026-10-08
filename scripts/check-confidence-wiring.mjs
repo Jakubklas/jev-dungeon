@@ -151,7 +151,7 @@ async function encounter({ hit = false } = {}) {
 }
 {
   const { run, over } = await encounter();
-  ok(over && over.evaded === 1 && over.v === 52 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +2 to 52, got ${JSON.stringify(over)}`);
+  ok(over && over.evaded === 1 && over.v === 51 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +2 and a chased tick -1 to 51, got ${JSON.stringify(over)}`);
   const hurt = await encounter({ hit: true });
   ok(hurt.over && hurt.over.evaded === 0 && !/evaded/.test(hurt.over.why ?? ''), `a hit in the encounter cancels evaded: ${JSON.stringify(hurt.over)}`);
   ok(hurt.over.v < 44, `... and C is still low at chase_over, got ${hurt.over.v}`);

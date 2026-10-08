@@ -912,7 +912,7 @@ export class ExplorerBrain {
     {
       // Regen pulls C toward the start (after REGEN_WAIT quiet ticks), every tick; pressed (a chaser within 2 steps, sword down) is not the engage hold or a stunned ghost.
       this.#confide('regen');
-      if (sit.threats.visible.length && !csArmed && !csEngaging && sit.threats.visible.some((v) => v.chasing && v.distance <= PRESSED_RANGE && !csStunned.has(v.id))) this.#confide('pressed');
+      if (sit.threats.visible.length && !csEngaging && sit.threats.visible.some((v) => v.chasing && !csStunned.has(v.id))) this.#confide('pressed');
     }
     this.#syncConfidence(); // memory.progress.confidence.now follows sightings too, not only events
     await this.#save();
