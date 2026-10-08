@@ -1564,7 +1564,8 @@ function renderConfidence() {
   const stat = $('confidence-stat');
   if (!stat) return;
   const fromMemory = memory?.progress?.confidence;
-  const c = lastConfidence ?? (fromMemory ? { value: fromMemory.value, band: (CONFIDENCE_BANDS.find(([lo]) => fromMemory.value >= lo) ?? [0, 'shaken'])[1], delta: 0 } : null);
+  const memC = fromMemory ? (fromMemory.now ?? fromMemory.value) : null; // C as of the last save (the history score on older saves)
+  const c = lastConfidence ?? (fromMemory ? { value: memC, band: (CONFIDENCE_BANDS.find(([lo]) => memC >= lo) ?? [0, 'shaken'])[1], delta: 0 } : null);
   stat.hidden = !c;
   if (!c) return;
   const v = Math.max(0, Math.min(100, Number(c.value) || 0));

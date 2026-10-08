@@ -223,6 +223,7 @@ export function validateMemory(m) {
   if ('confidence' in p) { // present only with the confidence toggle on
     const c = p.confidence;
     if (!c || typeof c !== 'object' || !isNum(c.value) || c.value < 0 || c.value > 100) fail('progress.confidence.value');
+    if ('now' in c && (!isNum(c.now) || c.now < 0 || c.now > 100)) fail('progress.confidence.now'); // C (capability + history) as of the last save
     for (const k of ['strikes', 'blocked', 'evaded', 'pressed']) {
       if (!Number.isInteger(c.counts?.[k]) || c.counts[k] < 0 || c.counts[k] > LIMITS.confidenceCount) fail(`progress.confidence.counts.${k}`);
     }
