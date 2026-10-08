@@ -127,10 +127,10 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   const cap0 = (L, M, n, w, extra = {}) => capability({ lives: L, maxLives: M, ghosts: g2(n), ...extra }, w);
   const C0 = (L, M, n, w) => combine(cap0(L, M, n, w), 50, L, M);
   // (a) the section 2.2 table (rows: lives left of max; columns: 0..4 ghosts of 2 hp), history neutral
-  const T05 = { '2/2': [67, 67, 50, 33, 17], '3/3': [70, 70, 58, 45, 33], '4/4': [70, 70, 60, 50, 40], '1/2': [45, 45, 25, 0, 0] };
-  const T035 = { '2/2': [67, 67, 55, 43, 32], '3/3': [70, 70, 61, 53, 44], '4/4': [70, 70, 63, 56, 49], '1/2': [45, 45, 33, 15, 0] };
-  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'unsure'], '3/3': ['sure', 'sure', 'even', 'even', 'even'], '4/4': ['sure', 'sure', 'even', 'even', 'even'], '1/2': ['even', 'even', 'unsure', 'shaken', 'shaken'] };
-  const B05 = { '2/2': ['sure', 'sure', 'even', 'unsure', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'unsure'], '4/4': ['sure', 'sure', 'even', 'even', 'even'], '1/2': ['even', 'even', 'shaken', 'shaken', 'shaken'] };
+  const T05 = { '2/2': [75, 75, 50, 25, 0], '3/3': [75, 75, 58, 42, 25], '4/4': [75, 75, 63, 50, 38], '1/2': [38, 38, 13, 0, 0] };
+  const T035 = { '2/2': [75, 75, 58, 40, 23], '3/3': [75, 75, 63, 52, 40], '4/4': [75, 75, 66, 58, 49], '1/2': [38, 38, 20, 3, 0] };
+  const B035 = { '2/2': ['sure', 'sure', 'even', 'even', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'even'], '4/4': ['sure', 'sure', 'sure', 'even', 'even'], '1/2': ['unsure', 'unsure', 'shaken', 'shaken', 'shaken'] };
+  const B05 = { '2/2': ['sure', 'sure', 'even', 'shaken', 'shaken'], '3/3': ['sure', 'sure', 'even', 'even', 'shaken'], '4/4': ['sure', 'sure', 'even', 'even', 'unsure'], '1/2': ['unsure', 'unsure', 'shaken', 'shaken', 'shaken'] };
   ok(W_PER_EXTRA === 0.35 && W_PER_EXTRA_SAFE === 0.5, 'W_PER_EXTRA 0.35, W_PER_EXTRA_SAFE 0.5');
   ok(cap0(2, 2, 3) === cap0(2, 2, 3, W_PER_EXTRA), 'default wPerExtra is W_PER_EXTRA');
   for (const [w, T, B] of [[0.5, T05, B05], [0.35, T035, B035]]) {
@@ -144,10 +144,10 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
     }
   }
   ok(C0(2, 2, 3, 0.35) >= 40 && C0(2, 2, 3, 0.5) < 40, 'three 2-hp ghosts at 2 lives: even at 0.35, unsure at 0.5');
-  ok(combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 1) }, 0.5), 50, 2, 2) === 54 && combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 3) }, 0.5), 50, 2, 2) === 46, 'two 1-hp ghosts 54, two 3-hp ghosts 46 (w 0.5)');
+  ok(combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 1) }, 0.5), 50, 2, 2) === 56 && combine(capability({ lives: 2, maxLives: 2, ghosts: g2(2, 3) }, 0.5), 50, 2, 2) === 44, 'two 1-hp ghosts 56, two 3-hp ghosts 44 (w 0.5)');
   ok(combine(cap0(2, 2, 2, 0.5), 68, 2, 2) === 68 && combine(cap0(2, 2, 2, 0.5), 80, 2, 2) === 80, 'history shifts C: H 68 / 80 with two ghosts at 2 lives read 68 / 80 (w 0.5)');
-  ok(cap0(2, 2, 1, 0.5, { steady: false }) === 50 && cap0(2, 2, 1, 0.5) === 67, 'non-steady: the first ghost costs too (assumption)');
-  ok(cap0(2, 2, 0, 0.5, { steady: false }) === 67, 'no ghost known: R is the explorer\'s own strength');
+  ok(cap0(2, 2, 1, 0.5, { steady: false }) === 50 && cap0(2, 2, 1, 0.5) === 75, 'non-steady: the first ghost costs too (assumption)');
+  ok(cap0(2, 2, 0, 0.5, { steady: false }) === 75, 'no ghost known: R is the explorer\'s own strength');
   // (b) monotonicity over a grid
   for (const w of [0.35, 0.5]) for (const steady of [true, false]) for (const hp of [1, 2, 3, 5]) {
     for (let M = 1; M <= 6; M++) for (let L = 1; L <= M; L++) {

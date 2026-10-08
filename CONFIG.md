@@ -215,7 +215,7 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.cap.pressedRange` | 2 | 1..10 | live | no | Steps within which a chaser presses, for replay |
 | `explorer.confidence.capability.perExtraEnemy` | 0.35 | 0..2 | live | no | Expected lives lost per extra enemy, per claw point |
 | `explorer.confidence.capability.histSpan` | 30 | 1..100 | live | no | History shifts capability by at most this; sightings fade over it |
-| `explorer.confidence.capability.max` | 70 | 0..100 | live | no | Capability never exceeds this |
+| `explorer.confidence.capability.max` | 75 | 0..100 | live | no | Capability of an unhurt explorer, scaled by the share of lives left |
 | `explorer.confidence.capability.noSwordMax` | 20 | 0..100 | live | no | Capability without an attack skill never exceeds this |
 | `explorer.confidence.capability.hpBase` | 0.75 | 0..3 | live | no | Enemy weight base |
 | `explorer.confidence.capability.hpSlope` | 0.125 | 0..1 | live | no | Enemy weight added per strike needed |

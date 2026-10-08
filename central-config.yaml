@@ -161,7 +161,7 @@ explorer:
     capability:
       perExtraEnemy: 0.35 # Expected lives lost per extra enemy, per claw point
       histSpan: 30 # History shifts capability by at most this; sightings fade over it
-      max: 70 # Capability never exceeds this
+      max: 75 # Capability of an unhurt explorer, scaled by the share of lives left
       noSwordMax: 20 # Capability without an attack skill never exceeds this
       hpBase: 0.75 # Enemy weight base
       hpSlope: 0.125 # Enemy weight added per strike needed

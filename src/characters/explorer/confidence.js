@@ -173,7 +173,7 @@ export function applyTurn(state, turn, { lives, maxLives, armed = true, visible 
 export let W_PER_EXTRA = 0.35;
 export const W_PER_EXTRA_SAFE = 0.5;
 export let HIST_SPAN = 30; // a remembered sighting fades linearly to nothing over this many steps; h = clamp(H - 50, -30, +30)
-export let CAPABILITY_MAX = 70; // capability never exceeds this: the start is 70, not a lives-dependent 80+
+export let CAPABILITY_MAX = 75; // capability of an unhurt explorer; scaled by the share of lives left (lives / maxLives), so 75 at the start whatever the lives count
 export let NO_SWORD_MAX = 20; // without an attack skill R never exceeds this
 let HP_BASE = 0.75; // hpW(g) = 0.75 + 0.125 * min(5, strikes to dispel it): 1 strike 0.875, 2 strikes 1.0, 3 strikes 1.125
 let HP_SLOPE = 0.125;
@@ -197,9 +197,9 @@ export function capability({ lives, maxLives = lives, clawDamage = 1, swordDamag
     k += (g.weight ?? 1) * (HP_BASE + HP_SLOPE * strikes);
   }
   const W = clawDamage * wPerExtra * (steady ? Math.max(0, k - 1) : k);
-  // The unhurt baseline is 100 * lives / (lives + 1) but never above CAPABILITY_MAX (70 at the start whatever the lives); each point of W then
-  // costs 100 / (lives + 1), so enemies still lower capability at 4 lives instead of being hidden under a flat cap.
-  const R = clamp(Math.round(Math.min(CAPABILITY_MAX, 100 * lives / (lives + 1)) - 100 * W / (lives + 1)), 0, 100);
+  // The unhurt baseline is CAPABILITY_MAX times the share of lives left; each point of W (expected lives lost) costs 100 / maxLives,
+  // i.e. its share of the lives, so the numbers do not depend on how many lives the game starts with.
+  const R = clamp(Math.round(CAPABILITY_MAX * lives / maxLives - 100 * W / maxLives), 0, 100);
   return armed ? R : Math.min(R, NO_SWORD_MAX);
 }
 

@@ -137,11 +137,11 @@ for (const [maxLives, lives, want] of [[2, 1, 43], [3, 2, 43], [3, 1, 43], [9, 8
 
 // 5. evaded: a chasing sighting that ends with no hit and no dispel gives +4; a hit or a dispel in it cancels it.
 async function encounter({ hit = false } = {}) {
-  const run = build({ map: withGhost(ROOM, 10, 3), seed: 5, ghostSkills: 'none' }, { ask: stub({ mood: 'steady', tactic: 'run_away' }) });
+  const run = build({ map: withGhost(ROOM, 10, 3), seed: 5, ghostSkills: 'none' }, { ask: stub({ mood: 'bold', tactic: 'run_away' }) });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
   let over = null;
   await play(run, 40, async (turn, r, t) => {
-    if (t === 2) { // two ticks of chasing sighting, then the ghost is gone (a test hazard: it hides the ghost, nothing else)
+    if (t === 1) { // one tick of chasing sighting (bold's end_ticks is 1), then the ghost is gone (a test hazard: it hides the ghost, nothing else)
       if (hit) { r.game.maxHealth = 3; r.game.health = 2; await r.explorer.noteHit('a1'); }
       r.game.adversaries = [];
     }
@@ -151,7 +151,7 @@ async function encounter({ hit = false } = {}) {
 }
 {
   const { run, over } = await encounter();
-  ok(over && over.evaded === 1 && over.v === 51 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +2 and a chased tick -1 to 51, got ${JSON.stringify(over)}`);
+  ok(over && over.evaded === 1 && over.v === 52 && /evaded/.test(over.why), `chase_over after a chasing sighting, no hit: evaded +2 (a lone enemy with the sword ready does not press) to 52, got ${JSON.stringify(over)}`);
   const hurt = await encounter({ hit: true });
   ok(hurt.over && hurt.over.evaded === 0 && !/evaded/.test(hurt.over.why ?? ''), `a hit in the encounter cancels evaded: ${JSON.stringify(hurt.over)}`);
   ok(hurt.over.v < 44, `... and C is still low at chase_over, got ${hurt.over.v}`);

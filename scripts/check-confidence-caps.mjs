@@ -29,7 +29,7 @@ const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
 const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
-const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 70], [3, 2, 4, 50, 56]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
+const SPOTS = [[1, 2, 2, 50, 75], [2, 2, 2, 50, 58], [3, 2, 2, 50, 40], [1, 2, 4, 50, 75], [3, 2, 4, 50, 58]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
 const cells = { 1: [[9, 3]], 2: [[9, 3], [9, 2]], 3: [[9, 3], [9, 2], [9, 4]] };
 let combos = 0, checkedMenu = 0;
 for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]) for (const H of [20, 50, 80]) for (const mode of ['chase', 'patrol']) {
@@ -135,7 +135,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   r.game.adversaries.forEach((a) => { a.mode = "chase"; }); // no patrol->chase encounter trigger in the way
   await tick(r); // 4 lives, 3 enemies, H 70: C 76, high tier, bold
   r.memory.sentiment.id = 'fearless'; // a high-tier-only mood (bold is also offered in the mid tier)
-  r.game.health = 2; // C 63: the high tier closed
+  r.game.health = 3; // C 59: the high tier closed
   const triggers = [];
   for (let i = 0; i < 12 && !r.game.lost; i++) { const t = await tick(r); if (t.decision) triggers.push(t.decision.trigger); }
   const n = triggers.filter((x) => x === 'confidence').length;
@@ -207,7 +207,7 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   }
   // one ghost: today's lone-fight wording
   {
-    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 50 }, mood: 'steady' }));
+    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 30 }, mood: 'steady' })); // start 30: C 55, mid tier, where steady is offered
     ok(/Default: engage a lone enemy/.test(t) && /A single enemy you strike first costs little/.test(t), 'one enemy: the single-monster wording');
   }
   for (const g of [cells[3], [[9, 3], [9, 2], [9, 4], [10, 3]]]) {
