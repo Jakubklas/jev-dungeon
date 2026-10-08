@@ -3,7 +3,7 @@
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
 import { SENTIMENTS, effectiveGap, effectiveSentiment, effectiveProfile, CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
-import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn, WEIGHTS, capability, combine, allowedMoods, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
+import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, panicNext, capability, combine, allowedMoods, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -144,7 +144,7 @@ ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40.3, 'calm turn dri
 }
 
 // 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
-ok(JSON.stringify(Object.keys(createConfidence())) === '["value","counts","enc"]', 'default state has no w / model keys');
+ok(JSON.stringify(Object.keys(createConfidence())) === '["value","idle","counts","enc"]', 'default state has no w / model keys');
 ok(apply(createConfidence(), 'hit', 2, 3).value === 35, 'default weights: hit -15');
 let wv = createConfidence({ weights: { hit: -25, calm: 0 } });
 ok(wv.w.hit === -25 && wv.w.struck === WEIGHTS.struck, 'weights merge over the defaults');
@@ -259,6 +259,40 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(JSON.stringify(allowedMoods(50, {})) === JSON.stringify(JSON.parse(JSON.stringify(allowedMoods(50, {})))), 'allowedMoods returns plain JSON');
   console.log('capability table, C at H 50 (rows lives/max, columns 0..4 ghosts of 2 hp):');
   for (const [w, T] of [[0.5, T05], [0.35, T035]]) for (const k of Object.keys(T)) console.log(`  w ${w}  ${k}: ${T[k].join(' ')}`);
+}
+
+// 13. PLAN-moods: regen (0.25 toward 50, only after REGEN_WAIT quiet ticks), tiers, panic
+{
+  let r = apply(at(20), 'hit', 2, 2); // 5, idle 0
+  ok(r.value === 5 && r.idle === 0, 'a change restarts the wait');
+  for (let i = 0; i < REGEN_WAIT; i++) r = apply(r, 'regen', 2, 2);
+  ok(r.value === 5 && r.idle === REGEN_WAIT, `no regen during the first ${REGEN_WAIT} ticks`);
+  r = apply(r, 'regen', 2, 2);
+  ok(r.value === 5.25, 'regen +0.25 from below once the wait is over');
+  r = apply(r, 'struck', 2, 2);
+  ok(r.value === 11.25 && r.idle === 0, 'an event restarts the wait');
+  let hi = { ...at(95), idle: REGEN_WAIT };
+  hi = apply(hi, 'regen', 2, 2);
+  ok(hi.value === 94.75, 'regen -0.25 from above');
+  ok(apply({ ...at(50), idle: 99 }, 'regen', 2, 2).value === 50, 'regen stops at 50');
+  ok(apply({ ...at(49.9), idle: 99 }, 'regen', 2, 2).value === 50, 'regen never overshoots 50');
+  ok(apply({ ...at(95), idle: 99 }, 'blocked', 2, 2).value === 95 && apply({ ...at(95), idle: 99 }, 'blocked', 2, 2).idle === 99, 'an event that leaves C unchanged keeps the wait');
+  ok(apply({ ...at(5), idle: 99 }, 'regen', 2, 2).idle === 100, 'regen does not restart its own wait');
+  let t = { ...at(15), idle: REGEN_WAIT };
+  let n = 0;
+  while (t.value < 25) { t = apply(t, 'regen', 2, 2); n++; }
+  ok(n === 40, `15 to 25 takes 40 regen ticks after the wait: ${n}`);
+  ok(JSON.stringify(JSON.parse(JSON.stringify(r))) === JSON.stringify(r), 'regen state round-trips through JSON');
+  ok(apply(createConfidence({ model: 'beta' }), 'regen', 2, 2).value === 50, 'beta ignores regen');
+  // tiers: low <= 35, mid 36..75, high > 75, with 5 points of hysteresis
+  ok(tierOf(35) === 'low' && tierOf(36) === 'mid' && tierOf(75) === 'mid' && tierOf(76) === 'high', 'tier edges 35/36 and 75/76');
+  ok(tierOf(40, 'low') === 'low' && tierOf(41, 'low') === 'mid', 'low tier kept up to 40');
+  ok(tierOf(71, 'high') === 'high' && tierOf(70, 'high') === 'mid', 'high tier kept down to 71');
+  ok(tierOf(40, 'mid') === 'mid' && tierOf(71, 'mid') === 'mid', 'hysteresis only holds the tier already in');
+  // panic: enter below 20, leave at 25
+  ok(!panicNext(20, false) && panicNext(19.75, false), 'panic enters below 20');
+  ok(panicNext(24.75, true) && !panicNext(25, true), 'panic ends only at 25 or more');
+  ok(!panicNext(22, false) && panicNext(22, true), 'panic hysteresis between 20 and 25');
 }
 
 // 10. purity: no imports, no Math.random, no Date

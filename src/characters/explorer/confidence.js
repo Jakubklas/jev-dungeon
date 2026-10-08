@@ -16,6 +16,8 @@
 //             EVADE_CEILING; closes the encounter
 //   pressed   a chaser within 2 steps with the sword not ready: -2 per tick, at most -8 per encounter
 //   calm      a step with no adversary in sight: +0.3, only while C < CALM_TARGET (repairs, never exceeds it)
+//   regen     PLAN-moods: 0.25 toward 50 from either side, but only after REGEN_WAIT ticks with no change to C
+//             (any other event that moves C restarts the wait); the caller sends one per tick
 // Every change ends with C clamped to 0..100 and to the lives cap.
 
 export const START = 50;
@@ -27,6 +29,13 @@ export const D_EVADED = 4;
 export const D_PRESSED = -2;
 export const PRESSED_MAX = 8; // per encounter
 export const D_CALM = 0.3;
+export const REGEN = 0.25; // PLAN-moods: per tick, toward START, from above and below
+export const REGEN_WAIT = 10; // ticks since C last changed before regen starts
+export const TIER_LOW_MAX = 35; // low tier: C <= 35, mid 36..75, high > 75
+export const TIER_HIGH_MIN = 76;
+export const TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, high down to 71)
+export const PANIC_ENTER = 20; // panic starts below this
+export const PANIC_EXIT = 25; // and ends only at or above this
 export const CALM_TARGET = 50;
 export const BLOCK_CEILING = 65;
 export const EVADE_CEILING = 65;
@@ -42,7 +51,7 @@ export const PRESSED_RANGE = 2; // steps, for applyTurn
 // The default event weights as one object, so C4's sweep can swap them (createConfidence({ weights })).
 export const WEIGHTS = { hit: D_HIT, struck: D_STRUCK, dispelled: D_DISPELLED, blocked: D_BLOCKED, evaded: D_EVADED, pressed: D_PRESSED, calm: D_CALM };
 
-const EVENTS = new Set(['hit', 'struck', 'dispelled', 'blocked', 'evaded', 'pressed', 'calm']);
+const EVENTS = new Set(['hit', 'struck', 'dispelled', 'blocked', 'evaded', 'pressed', 'calm', 'regen']);
 
 const round2 = (v) => Math.round(v * 100) / 100; // keeps 0.3 steps free of float drift
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -56,7 +65,7 @@ const freshEnc = () => ({ chased: false, hurt: false, killed: false, pressed: 0 
 // (PLAN-confidence-mood phase 3); with the lives cap applied by the first event, never by the constructor.
 export function createConfidence({ weights = null, model = null, start = START } = {}) {
   return {
-    value: start, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc(),
+    value: start, idle: 0, counts: { strikes: 0, blocked: 0, evaded: 0, pressed: 0 }, enc: freshEnc(),
     ...(weights ? { w: { ...WEIGHTS, ...weights } } : {}),
     ...(model === 'beta' ? { model: 'beta', beta: { landed: 0, taken: 0 } } : {}),
   };
@@ -79,6 +88,7 @@ export function apply(state, event, lives, maxLives) {
   const w = state.w ?? WEIGHTS;
   const beta = state.model === 'beta' ? { ...state.beta } : null;
   let v = state.value;
+  const idle = state.idle ?? 0;
   const upTo = (d, ceiling) => (v >= ceiling ? v : Math.min(ceiling, v + d)); // never pulls a higher C down
   switch (type) {
     case 'hit': v += w.hit; enc.hurt = true; if (beta) beta.taken += 1; break;
@@ -90,11 +100,15 @@ export function apply(state, event, lives, maxLives) {
       const d = Math.min(-w.pressed, PRESSED_MAX - enc.pressed);
       enc.pressed += d; v -= d; counts.pressed += 1; break;
     }
+    case 'regen': if (idle >= REGEN_WAIT) v = v < START ? Math.min(START, v + REGEN) : Math.max(START, v - REGEN); break;
     case 'calm': if (v < CALM_TARGET) v = Math.min(CALM_TARGET, v + w.calm); break;
   }
   if (beta) v = 100 * (beta.landed + 2) / (beta.landed + beta.taken + 4); // the posterior replaces every weighted change
+  const value = clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100);
+  // regen counts the quiet ticks and never restarts its own wait; any other event restarts it when it moved C
+  const nextIdle = type === 'regen' ? idle + 1 : value !== state.value ? 0 : idle;
   return {
-    value: clamp(round2(Math.min(v, cap(lives, maxLives))), 0, 100), counts, enc,
+    value, idle: nextIdle, counts, enc,
     ...(state.w ? { w: state.w } : {}), ...(beta ? { model: 'beta', beta } : {}),
   };
 }
@@ -116,6 +130,18 @@ export function closeEncounter(state, lives, maxLives) {
 // (default: none) only matters when the caller passes it.
 export function calm(state, lives = 2, maxLives = 2) {
   return apply(state, 'calm', lives, maxLives);
+}
+
+// PLAN-moods tiers. `prev` is the tier held so far (hysteresis at both edges); null starts from C alone.
+export function tierOf(C, prev = null) {
+  if (C <= TIER_LOW_MAX || (prev === 'low' && C <= TIER_LOW_MAX + TIER_HYST)) return 'low';
+  if (C >= TIER_HIGH_MIN || (prev === 'high' && C >= TIER_HIGH_MIN - TIER_HYST)) return 'high';
+  return 'mid';
+}
+
+// Panic starts below PANIC_ENTER and ends only at PANIC_EXIT or more (no flicker at the edge).
+export function panicNext(C, wasPanic = false) {
+  return wasPanic ? C < PANIC_EXIT : C < PANIC_ENTER;
 }
 
 export function band(C) {
