@@ -1,9 +1,9 @@
 // Checks for src/characters/explorer/confidence.js (PLAN-confidence C1): cap table, clamps, ceilings,
-// calm drift, bands, neutral-zone identity, a quiet game's range, determinism, JSON round-trip, purity.
+// bands, neutral-zone identity, a quiet game's range, determinism, JSON round-trip, purity.
 // Free, no Jev.
 import { readFileSync } from 'node:fs';
-import { SENTIMENTS, effectiveGap, effectiveSentiment, effectiveProfile, CONFIDENCE_SENTENCE } from '../src/characters/explorer/brain.js';
-import { createConfidence, apply, cap, calm, band, gaps, engageOpen, applyTurn, WEIGHTS, capability, combine, allowedMoods, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
+import { SENTIMENTS } from '../src/characters/explorer/brain.js';
+import { createConfidence, apply, cap, band, applyTurn, WEIGHTS, REGEN, REGEN_WAIT, tierOf, panicNext, capability, combine, allowedMoods, defaultMood, tierOfMood, sightWeight, W_PER_EXTRA, W_PER_EXTRA_SAFE, HIST_SPAN, NO_SWORD_MAX } from '../src/characters/explorer/confidence.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
@@ -23,9 +23,9 @@ for (let m = 1; m <= 9; m++) {
 
 // 2. clamp after a hit
 ok(apply(at(95), 'hit', 1, 2).value === 45, 'hit from 95 on the last life clamps to 45');
-ok(apply(at(50), 'hit', 2, 3).value === 35, 'hit from 50: 35');
-ok(apply(at(50), 'hit', 1, 2).value === 35, 'hit from 50 on last life: 35 (under the cap)');
-ok(apply(at(10), 'hit', 1, 2).value === 0, 'hit never goes below 0');
+ok(apply(at(50), 'hit', 2, 3).value === 43, 'hit from 50: 43');
+ok(apply(at(50), 'hit', 1, 2).value === 43, 'hit from 50 on last life: 43 (under the cap)');
+ok(apply(at(5), 'hit', 1, 2).value === 0, 'hit never goes below 0');
 ok(apply(at(100), 'dispelled', 2, 2).value === 100, 'never above 100');
 ok(apply(at(95), 'struck', 1, 2).value === 45, 'cap applies after a gain too');
 
@@ -34,31 +34,16 @@ let s = at(64);
 for (let i = 0; i < 5; i++) { s = apply(s, 'evaded', 2, 2); s = apply(s, 'blocked', 2, 2); }
 ok(s.value === 65, `evaded/blocked stop at 65, got ${s.value}`);
 ok(apply(at(78), 'evaded', 2, 2).value === 78 && apply(at(78), 'blocked', 2, 2).value === 78, 'above 65 evaded/blocked leave C alone');
-ok(apply(at(50), 'evaded', 2, 2).value === 54 && apply(at(50), 'blocked', 2, 2).value === 53, 'evaded +4, blocked +3');
+ok(apply(at(50), 'evaded', 2, 2).value === 52 && apply(at(50), 'blocked', 2, 2).value === 53, 'evaded +2, blocked +3');
 
-// 4. calm drift: only below 50, never above
-ok(apply(at(35), 'calm', 2, 2).value === 35.3, 'calm +0.3 below 50');
-ok(apply(at(49.9), 'calm', 2, 2).value === 50, 'calm stops at 50');
-ok(apply(at(50), 'calm', 2, 2).value === 50 && apply(at(70), 'calm', 2, 2).value === 70, 'no calm drift at or above 50');
+// 4. (calm drift removed: PLAN-moods regen is section 13)
 s = at(35);
-let n = 0;
-while (s.value < 40) { s = calm(s); n++; }
-ok(n >= 16 && n <= 17, `about 17 calm steps from 35 to engage-open, got ${n}`);
-for (let v = 0; v <= 100; v += 5) {
-  const c = calm(at(v)).value;
-  ok(c >= v && (v >= 50 ? c === v : c <= 50), `calm at ${v}: ${c}`);
-}
 
 // 5. bands
 const B = [[0, 'shaken'], [29.9, 'shaken'], [30, 'unsure'], [39.9, 'unsure'], [40, 'even'], [64.9, 'even'], [65, 'sure'], [79.9, 'sure'], [80, 'dominant'], [100, 'dominant']];
 for (const [v, b] of B) ok(band(v) === b, `band(${v}) = ${band(v)}, want ${b}`);
 
-// 6. gaps / engageOpen: identity over the neutral zone, steps outside it
-for (let v = 40; v < 80; v += 0.5) ok(gaps(v) === 0 && engageOpen(v), `neutral zone identity at ${v}`);
-ok(gaps(39.9) === 1 && gaps(30) === 1 && gaps(29.9) === 2 && gaps(0) === 2 && gaps(80) === -1 && gaps(100) === -1, 'gap steps');
-ok(!engageOpen(39.9) && engageOpen(40), 'engage threshold 40');
-
-// 7. a quiet game (no hit, no kill) stays within 42..65
+// 7. a quiet game (no hit, no kill) stays within 40..65 (evaded is +2 now, so pressed encounters recover more slowly)
 let seed = 7;
 const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 let quietBad = 0;
@@ -66,25 +51,25 @@ for (let g = 0; g < 200; g++) {
   let q = createConfidence();
   for (let t = 0; t < 300; t++) {
     const r = rnd();
-    q = apply(q, r < 0.4 ? 'calm' : r < 0.6 ? 'pressed' : r < 0.8 ? 'evaded' : 'blocked', 2, 2);
-    if (q.value < 42 || q.value > 65) quietBad++;
+    q = apply(q, r < 0.4 ? 'regen' : r < 0.6 ? 'pressed' : r < 0.8 ? 'evaded' : 'blocked', 2, 2);
+    if (q.value < 40 || q.value > 65) quietBad++;
     if (rnd() < 0.05) q = { ...q, enc: { chased: false, hurt: false, killed: false, pressed: 0 } }; // a new encounter
   }
 }
-ok(quietBad === 0, `quiet games left 42..65 ${quietBad} times`);
+ok(quietBad === 0, `quiet games left 40..65 ${quietBad} times`);
 s = createConfidence();
 for (let i = 0; i < 10; i++) s = apply(s, 'pressed', 2, 2);
 ok(s.value === 42, `pressed capped at -8 per encounter: ${s.value}`);
 
 // 8. determinism, no mutation, JSON round-trip, unknown event
-const run = () => { let x = createConfidence(); for (const e of ['struck', 'hit', 'calm', 'dispelled', 'evaded', 'pressed', 'blocked']) x = apply(x, e, 2, 3); return x; };
+const run = () => { let x = createConfidence(); for (const e of ['struck', 'hit', 'regen', 'dispelled', 'evaded', 'pressed', 'blocked']) x = apply(x, e, 2, 3); return x; };
 ok(JSON.stringify(run()) === JSON.stringify(run()), 'deterministic');
 const frozen = JSON.stringify(at(50));
 apply(at(50), 'hit', 2, 2);
 ok(JSON.stringify(at(50)) === frozen, 'apply does not mutate');
 const r1 = run();
 const r2 = JSON.parse(JSON.stringify(r1));
-ok(JSON.stringify(r2) === JSON.stringify(r1) && apply(r2, 'calm', 2, 3).value === apply(r1, 'calm', 2, 3).value, 'JSON round-trip');
+ok(JSON.stringify(r2) === JSON.stringify(r1) && apply(r2, 'regen', 2, 3).value === apply(r1, 'regen', 2, 3).value, 'JSON round-trip');
 let threw = false;
 try { apply(at(50), 'bogus', 2, 2); } catch { threw = true; }
 ok(threw, 'unknown event throws');
@@ -94,16 +79,16 @@ const ch = [{ id: 'a1', distance: 5, mode: 'chase' }];
 const ctx = { lives: 2, maxLives: 2 };
 const struck = { id: 'a1', type: 'struck', hp: 1 };
 let t = applyTurn(createConfidence(), { skill_events: [struck], events: [struck] }, { ...ctx, visible: ch });
-ok(t.value === 56, `struck turn counted once: ${t.value}`);
+ok(t.value === 55, `struck turn counted once: ${t.value}`);
 t = applyTurn(createConfidence(), { skill_events: [{ id: 'a1', type: 'dispelled' }], events: [{ id: 'a1', type: 'dispelled' }] }, { ...ctx, visible: [] });
-ok(t.value === 62 && t.enc.killed, `dispelled turn: ${t.value}`);
+ok(t.value === 58 && t.enc.killed, `dispelled turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'hit', at: [1, 1], health: 1 }] }, { lives: 1, maxLives: 2, visible: ch });
-ok(t.value === 35 && t.enc.hurt, `hit turn: ${t.value}`);
+ok(t.value === 43 && t.enc.hurt, `hit turn: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ id: 'a1', type: 'blocked' }] }, { ...ctx, visible: ch });
 ok(t.value === 53, `blocked turn: ${t.value}`);
 t = applyTurn(createConfidence(), {}, { ...ctx, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { ...ctx, visible: [] });
-ok(t.counts.evaded === 1 && t.value === 54, `evaded: ${t.value}`);
+ok(t.counts.evaded === 1 && t.value === 52, `evaded: ${t.value}`);
 t = applyTurn(createConfidence(), { events: [{ type: 'hit' }] }, { lives: 1, maxLives: 2, visible: ch });
 t = applyTurn(t, { decision: { trigger: 'chase_over' } }, { lives: 1, maxLives: 2, visible: [] });
 ok(t.counts.evaded === 0 && !t.enc.hurt, 'hurt encounter is not evaded; encounter closed');
@@ -114,41 +99,15 @@ ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false }).v
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: true }).value === 50, 'armed: not pressed');
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, engaging: true }).value === 50, 'engaging: not pressed');
 ok(applyTurn(createConfidence(), {}, { ...ctx, visible: close, armed: false, stunned: ['a1'] }).value === 50, 'stunned: not pressed');
-ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40.3, 'calm turn drift');
-
-// 11. gate table (C3): C from 10 to 95 gives the gap delta and engage open/closed; the effective profile templates the mood lines.
-{
-  const want = (C) => (C < 30 ? 2 : C < 40 ? 1 : C < 80 ? 0 : -1);
-  for (let C = 10; C <= 95; C += 1) {
-    ok(gaps(C) === want(C), `gaps(${C}) = ${gaps(C)}, want ${want(C)}`);
-    ok(engageOpen(C) === (C >= 40), `engageOpen(${C})`);
-    for (const [id, s] of Object.entries(SENTIMENTS)) {
-      const g = effectiveGap(s.min_gap, C);
-      ok(g === Math.max(s.min_gap + want(C), want(C) < 0 ? 2 : 0), `${id} effective gap at C ${C}: ${g}`);
-      ok(g >= 2, `${id} gap never below 2 (C ${C})`);
-      const e = effectiveSentiment(id, C);
-      ok(e.min_gap === g, `${id} effectiveSentiment gap at C ${C}`);
-      if (want(C) === 0) ok(e === s, `${id}: neutral zone returns the SENTIMENTS entry itself (C ${C})`);
-      for (const k of ['priority', 'move_priority']) {
-        const m = /at least (\d+) steps/.exec(e[k]);
-        if (m) ok(Number(m[1]) === g, `${id}.${k} says ${m[1]}, effective gap ${g} (C ${C})`);
-        else ok(e[k] === s[k], `${id}.${k} has no gap number and stays unchanged`);
-      }
-    }
-  }
-  ok(effectiveGap(3, null) === 3 && effectiveSentiment('wary', null) === SENTIMENTS.wary, 'C null (toggle off) is the identity');
-  ok(effectiveProfile({ sentiment: { id: 'bold' } }, 35).min_gap === 3 && effectiveProfile({ sentiment: { id: 'bold' } }, 85).min_gap === 2, 'effectiveProfile: bold 2 -> 3 at 35, stays 2 at 85 (floor)');
-  ok(effectiveProfile({ sentiment: { id: 'wary' } }, 20).min_gap === 6 && effectiveProfile({ sentiment: { id: 'wary' } }, 85).min_gap === 3, 'effectiveProfile: wary 4 -> 6 at 20, 3 at 85');
-  ok(effectiveProfile({}, 50) === SENTIMENTS.steady, 'effectiveProfile without a mood falls back to steady');
-  ok(CONFIDENCE_SENTENCE.length < 160, 'the sentence stays short');
-}
+ok(applyTurn(at(40), {}, { ...ctx, visible: [] }).value === 40 && applyTurn(at(40), {}, { ...ctx, visible: [] }).idle === 1, 'a quiet turn counts toward the regen wait');
+ok(applyTurn({ ...at(40), idle: REGEN_WAIT }, {}, { ...ctx, visible: close }).value === 40.25, 'regen runs with an enemy in sight too');
 
 // 11. C4 arms: the default state shape is unchanged; weights override; the beta model is the posterior
-ok(JSON.stringify(Object.keys(createConfidence())) === '["value","counts","enc"]', 'default state has no w / model keys');
-ok(apply(createConfidence(), 'hit', 2, 3).value === 35, 'default weights: hit -15');
-let wv = createConfidence({ weights: { hit: -25, calm: 0 } });
+ok(JSON.stringify(Object.keys(createConfidence())) === '["value","idle","counts","enc"]', 'default state has no w / model keys');
+ok(apply(createConfidence(), 'hit', 2, 3).value === 43, 'default weights: hit -7');
+let wv = createConfidence({ weights: { hit: -25 } });
 ok(wv.w.hit === -25 && wv.w.struck === WEIGHTS.struck, 'weights merge over the defaults');
-ok(apply(wv, 'hit', 2, 3).value === 25 && apply(apply(wv, 'hit', 2, 3), 'calm', 2, 3).value === 25, 'custom hit weight, calm 0');
+ok(apply(wv, 'hit', 2, 3).value === 25 && apply(apply(wv, 'hit', 2, 3), 'regen', 2, 3).value === 25, 'custom hit weight (regen waits)');
 ok(apply(wv, 'hit', 2, 3).w === wv.w, 'weights survive apply');
 let bt = createConfidence({ model: 'beta' });
 ok(bt.value === 50, 'beta starts at 50');
@@ -156,8 +115,8 @@ bt = apply(bt, 'hit', 2, 3);
 ok(Math.abs(bt.value - 40) < 0.01, `beta after one hit is 2/5: ${bt.value}`);
 bt = apply(apply(bt, 'struck', 2, 3), 'dispelled', 2, 3);
 ok(Math.abs(bt.value - 100 * 4 / 7) < 0.01, `beta after hit, 2 landed is 4/7: ${bt.value}`);
-const bt2 = apply(apply(bt, 'calm', 2, 3), 'pressed', 2, 3);
-ok(bt2.value === bt.value, 'beta ignores calm and pressed');
+const bt2 = apply(apply(bt, 'regen', 2, 3), 'pressed', 2, 3);
+ok(bt2.value === bt.value, 'beta ignores regen and pressed');
 ok(apply(createConfidence({ model: 'beta' }), 'hit', 1, 2).value === 40 && apply(apply(createConfidence({ model: 'beta' }), 'struck', 1, 2), 'struck', 1, 2).value === 45, 'beta obeys the lives cap');
 ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta state round-trips through JSON');
 
@@ -216,33 +175,24 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(combine(0, 0, 2, 2) === 0 && combine(100, 100, 2, 2) === 100 && combine(50, 200, 2, 2) === 80, 'combine: floor 0, ceiling 100, h limited to +30');
   for (let L = 1; L <= 4; L++) for (let n = 0; n <= 4; n++) ok(cap0(L, 4, n, 0.35, { armed: false }) <= NO_SWORD_MAX, `no attack skill: R <= 20 (L ${L} n ${n})`);
   ok(NO_SWORD_MAX === 20 && cap0(2, 2, 3, 0.35, { armed: false }) === Math.min(20, cap0(2, 2, 3, 0.35)) && cap0(2, 2, 0, 0.35, { armed: false }) === 20, 'no sword: min(R, 20)');
-  // (d) allowedMoods
+  // (d) allowedMoods: the three tiers of PLAN-moods (low wary/guarded, mid cautious/steady/greedy, high bold/fearless)
+  const LOW = 'wary,guarded', MID = 'cautious,steady,greedy', HIGH = 'bold,fearless';
   const ORDER = Object.keys(SENTIMENTS);
-  ok(JSON.stringify(ORDER) === '["wary","steady","greedy","bold"]', `SENTIMENTS order ${ORDER}`);
-  const idx = (l) => l.map((m) => ORDER.indexOf(m));
-  const want = (C) => (C <= 35 ? ['wary'] : []).concat(['steady'], C >= 30 ? ['greedy'] : [], C >= 40 ? ['bold'] : []);
+  ok(JSON.stringify(ORDER) === '["panic","wary","guarded","cautious","steady","greedy","bold","fearless"]', `SENTIMENTS order ${ORDER}`);
   for (let C = 0; C <= 100; C++) {
     const l = allowedMoods(C, {});
-    ok(JSON.stringify(l) === JSON.stringify(want(C)), `allowedMoods(${C}) = ${l}`);
-    ok(l.includes('steady') && JSON.stringify(idx(l)) === JSON.stringify([...idx(l)].sort((a, b) => a - b)), `steady present and SENTIMENTS order at ${C}`);
+    ok(l.join() === (C <= 35 ? LOW : C <= 75 ? MID : HIGH), `allowedMoods(${C}) = ${l}`);
+    ok(!l.includes('panic'), `panic is never offered (${C})`);
     ok(allowedMoods(C).join() === l.join(), `ctx is optional (${C})`);
-    for (const cur of ORDER) {
-      const h = allowedMoods(C, { current: cur });
-      ok(h.includes('steady'), `steady present with current ${cur} at ${C}`);
-      const th = { wary: C <= 40, greedy: C >= 25, bold: C >= 35 };
-      if (cur !== 'steady') ok(h.includes(cur) === th[cur], `hysteresis: ${cur} at C ${C}: ${h}`);
-      for (const m of ORDER) if (m !== cur) ok(h.includes(m) === l.includes(m), `hysteresis only keeps the current mood (${m} at ${C}, current ${cur})`);
-    }
-    for (const ex of ['lastLife', 'swordDown', 'noSword']) {
-      const e = allowedMoods(C, { [ex]: true });
-      ok(e.includes('wary') && e.includes('steady'), `exception ${ex} adds wary at ${C}`);
-      if (ex !== 'noSword') ok(e.includes('bold') === l.includes('bold') && e.includes('greedy') === l.includes('greedy'), `exception ${ex} changes only wary (${C})`);
-    }
-    ok(!allowedMoods(C, { noSword: true }).includes('bold'), `bold absent without an attack skill (${C})`);
-    ok(!allowedMoods(C, { noSword: true, current: 'bold' }).includes('bold'), `bold absent without an attack skill even as the current mood (${C})`);
+    // hysteresis: the tier of the current mood is kept 5 points past its edge
+    ok(allowedMoods(C, { current: 'wary' }).join() === (C <= 40 ? LOW : C <= 75 ? MID : HIGH), `low tier kept to 40 (C ${C})`);
+    ok(allowedMoods(C, { current: 'panic' }).join() === allowedMoods(C, { current: 'wary' }).join(), `panic holds the low tier like wary (${C})`);
+    ok(allowedMoods(C, { current: 'bold' }).join() === (C <= 35 ? LOW : C >= 71 ? HIGH : MID), `high tier kept down to 71 (C ${C})`);
+    ok(allowedMoods(C, { current: 'steady' }).join() === l.join(), `a mid mood adds no hysteresis (${C})`);
+    for (const ex of ['lastLife', 'swordDown']) ok(allowedMoods(C, { [ex]: true }).join() === LOW, `${ex} forces the low tier at ${C}`);
   }
-  ok(allowedMoods(70, {}).join() === 'steady,greedy,bold' && allowedMoods(37, {}).join() === 'steady,greedy' && allowedMoods(32, {}).join() === 'wary,steady,greedy' && allowedMoods(20, {}).join() === 'wary,steady', 'section 4 table rows');
-  ok(allowedMoods(70, { lastLife: true }).join() === 'wary,steady,greedy,bold', 'last life: wary comes back, bold stays (C itself is capped at 45)');
+  ok(defaultMood(['wary', 'guarded']) === 'guarded' && defaultMood(['cautious', 'steady', 'greedy']) === 'steady' && defaultMood(['bold', 'fearless']) === 'bold', 'defaultMood: guarded / steady / bold');
+  ok(tierOfMood('panic') === 'low' && tierOfMood('fearless') === 'high' && tierOfMood('nope') === null, 'tierOfMood');
   // (e) sightWeight
   ok(sightWeight(0) === 1 && sightWeight(15) === 0.5 && sightWeight(30) === 0 && sightWeight(31) === 0 && sightWeight(500) === 0, 'sightWeight: 1, 0.5, 0, 0');
   ok(HIST_SPAN === 30, 'HIST_SPAN 30');
@@ -259,6 +209,40 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(JSON.stringify(allowedMoods(50, {})) === JSON.stringify(JSON.parse(JSON.stringify(allowedMoods(50, {})))), 'allowedMoods returns plain JSON');
   console.log('capability table, C at H 50 (rows lives/max, columns 0..4 ghosts of 2 hp):');
   for (const [w, T] of [[0.5, T05], [0.35, T035]]) for (const k of Object.keys(T)) console.log(`  w ${w}  ${k}: ${T[k].join(' ')}`);
+}
+
+// 13. PLAN-moods: regen (0.25 toward 50, only after REGEN_WAIT quiet ticks), tiers, panic
+{
+  let r = apply(at(20), 'hit', 2, 2); // 13, idle 0
+  ok(r.value === 13 && r.idle === 0, 'a change restarts the wait');
+  for (let i = 0; i < REGEN_WAIT; i++) r = apply(r, 'regen', 2, 2);
+  ok(r.value === 13 && r.idle === REGEN_WAIT, `no regen during the first ${REGEN_WAIT} ticks`);
+  r = apply(r, 'regen', 2, 2);
+  ok(r.value === 13.25, 'regen +0.25 from below once the wait is over');
+  r = apply(r, 'struck', 2, 2);
+  ok(r.value === 18.25 && r.idle === 0, 'an event restarts the wait');
+  let hi = { ...at(95), idle: REGEN_WAIT };
+  hi = apply(hi, 'regen', 2, 2);
+  ok(hi.value === 94.75, 'regen -0.25 from above');
+  ok(apply({ ...at(50), idle: 99 }, 'regen', 2, 2).value === 50, 'regen stops at 50');
+  ok(apply({ ...at(49.9), idle: 99 }, 'regen', 2, 2).value === 50, 'regen never overshoots 50');
+  ok(apply({ ...at(95), idle: 99 }, 'blocked', 2, 2).value === 95 && apply({ ...at(95), idle: 99 }, 'blocked', 2, 2).idle === 99, 'an event that leaves C unchanged keeps the wait');
+  ok(apply({ ...at(5), idle: 99 }, 'regen', 2, 2).idle === 100, 'regen does not restart its own wait');
+  let t = { ...at(15), idle: REGEN_WAIT };
+  let n = 0;
+  while (t.value < 25) { t = apply(t, 'regen', 2, 2); n++; }
+  ok(n === 40, `15 to 25 takes 40 regen ticks after the wait: ${n}`);
+  ok(JSON.stringify(JSON.parse(JSON.stringify(r))) === JSON.stringify(r), 'regen state round-trips through JSON');
+  ok(apply(createConfidence({ model: 'beta' }), 'regen', 2, 2).value === 50, 'beta ignores regen');
+  // tiers: low <= 35, mid 36..75, high > 75, with 5 points of hysteresis
+  ok(tierOf(35) === 'low' && tierOf(36) === 'mid' && tierOf(75) === 'mid' && tierOf(76) === 'high', 'tier edges 35/36 and 75/76');
+  ok(tierOf(40, 'low') === 'low' && tierOf(41, 'low') === 'mid', 'low tier kept up to 40');
+  ok(tierOf(71, 'high') === 'high' && tierOf(70, 'high') === 'mid', 'high tier kept down to 71');
+  ok(tierOf(40, 'mid') === 'mid' && tierOf(71, 'mid') === 'mid', 'hysteresis only holds the tier already in');
+  // panic: enter below 20, leave at 25
+  ok(!panicNext(20, false) && panicNext(19.75, false), 'panic enters below 20');
+  ok(panicNext(24.75, true) && !panicNext(25, true), 'panic ends only at 25 or more');
+  ok(!panicNext(22, false) && panicNext(22, true), 'panic hysteresis between 20 and 25');
 }
 
 // 10. purity: no imports, no Math.random, no Date

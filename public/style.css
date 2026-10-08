@@ -190,6 +190,10 @@ ul:empty { display: none; }
 [data-sentiment="greedy"] { --senti: #f4b43e; }
 [data-sentiment="steady"] { --senti: #64c3a9; }
 [data-sentiment="wary"] { --senti: #b38fe3; }
+[data-sentiment="panic"] { --senti: #ff4d6d; }
+[data-sentiment="guarded"] { --senti: #8fa6e3; }
+[data-sentiment="cautious"] { --senti: #7fc7d9; }
+[data-sentiment="fearless"] { --senti: #ff8a3d; }
 .bubble.explorer[data-sentiment] { border-color: color-mix(in srgb, var(--accent) 55%, var(--senti)); }
 .senti-tag {
   display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 9px; line-height: 14px; vertical-align: 1px;

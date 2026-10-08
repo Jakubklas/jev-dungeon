@@ -5,12 +5,11 @@
 //     spot values from the plan's tables (W 0.35)
 //  2. a scripted Jev at DOMINANT history (H 80) with 2 ghosts in sight is never offered wary, picks bold, engages and dispels
 //     both with no death at 2 lives (real health 2), follow and walk-in
-//  3. hysteresis: the same C offers bold to a brain whose mood is bold and not to one whose mood is steady
+//  3. hysteresis (pure rule in check-confidence.mjs 12d)
 //  4. the `confidence` trigger fires at most once per encounter per direction
 //  5. out of sight a closed mood is swapped to steady silently: a policy, no event, no request
 //  6. fog twin: a hidden never-seen ghost leaves C, the options and every request byte-identical
 //  7. text: no word 'outnumbered' in any caps-mode request; the claims (stakes, default engage) only under the #fightOn gate;
-//     with caps off none of the caps wording appears
 // Free, no Jev. Run from dungeon-game: node scripts/check-confidence-caps.mjs
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,11 +19,14 @@ import { clawDecide, mulberry32, openGroups, playDuel } from './lib/duel-harness
 import { newTestGame } from '../src/turn.js';
 import { allowedMoods, capability, combine } from '../src/characters/explorer/confidence.js';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
+import { KnownWorld } from '../src/characters/explorer/known-world.js';
+import { tacticFeasibility } from '../src/characters/explorer/perception.js';
+import { blocksOnlyRoute } from '../src/characters/explorer/encounter.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
 const answer = (c) => ({ choice: c, probabilities: { [c]: 1 }, confidence: 1 });
-const ORDER = ['wary', 'steady', 'greedy', 'bold'];
+const ORDER = ['wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];
 
 // ---- 1. the matrix ----
 const SPOTS = [[1, 2, 2, 50, 67], [2, 2, 2, 50, 55], [3, 2, 2, 50, 43], [1, 2, 4, 50, 80], [3, 2, 4, 50, 66]]; // ghosts, hp 2, lives, H -> C (plan 2.2 with W 0.35)
@@ -45,10 +47,11 @@ for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]
   const sent = reqs.find((r) => r.kind === 'sentiment');
   const tag = `${n} ghosts hp ${hp} lives ${L} H ${H} ${mode}`;
   combos++;
+  if (C < 20) { ok(!sent, `${tag}: C ${C} is panic, entered by code with no sentiment request`); continue; }
   if (!sent) { ok(false, `${tag}: no sentiment request`); continue; }
   const ids = Object.keys(sent.questions.sentiment.criteria).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   ok(JSON.stringify(ids) === JSON.stringify(want), `${tag}: moods ${ids} want ${want} (C ${C})`);
-  ok(ids.length === want.length && ids.includes('steady'), `${tag}: option count ${ids.length}`);
+  ok(ids.length === want.length, `${tag}: option count ${ids.length}`);
   ok(String(sent.state.self.confidence).startsWith(`${Math.floor(C)} `), `${tag}: self.confidence ${sent.state.self.confidence}, C ${C}`);
   const menu = first?.decision?.tactic?.options;
   if (menu) {
@@ -122,26 +125,8 @@ async function tick(run) {
 }
 const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r) => Object.keys(r.questions.sentiment.criteria).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)));
 
-// ---- 3. hysteresis: C 35 offers bold only to a brain whose mood is already bold ----
-// 3 ghosts hp 2, H 27 (h -21): lives 4 -> C 45, lives 3 -> C 36, lives 2 -> C 22.
-{
-  const logA = [];
-  const a = make({ H: 29, log: logA });
-  await tick(a); // lives 4, C 45: bold offered and picked
-  ok(logA.some((r) => r.kind === 'sentiment' && 'bold' in r.questions.sentiment.criteria), 'hysteresis: bold offered at C 45');
-  ok(a.memory.sentiment.id === 'bold', `hysteresis: bold picked at C 45 (got ${a.memory.sentiment.id})`);
-  a.game.health = 3; // C 36: past the threshold by 5, the current mood stays
-  const n0 = logA.length;
-  for (let i = 0; i < 4; i++) await tick(a);
-  const decided = logA.slice(n0).filter((r) => r.kind === 'sentiment');
-  ok(decided.every((r) => 'bold' in r.questions.sentiment.criteria), 'hysteresis: bold stays offered to a bold brain at C 36');
-  ok(!logA.slice(n0).some((r) => /Your confidence changed/.test(JSON.stringify(r.questions))), 'hysteresis: no confidence trigger inside the band');
-  const logB = [];
-  const b = make({ H: 29, lives: 3, log: logB, pick: (k) => (k.includes('steady') ? 'steady' : k[0]) });
-  await tick(b); // lives 3, C 35, mood steady: bold is not offered
-  const k = sentimentKeys(logB)[0];
-  ok(k && !k.includes("bold") && !k.includes("wary") && k.includes("greedy"), `hysteresis: a steady brain at C 36 is offered greedy and neither wary nor bold (got ${k})`);
-}
+// ---- 3. hysteresis: the tier edges keep the current mood's tier 5 points past the edge; that is a pure rule, checked for every C in
+// check-confidence.mjs section 12(d) (allowedMoods), and exercised end to end by the tier swaps in sections 4 and 5 below.
 
 // ---- 4. the confidence trigger: once per encounter per direction ----
 {
@@ -196,48 +181,80 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
 {
   const bodies = [];
   const first = async (o) => { const sent = []; await playDuel({ maxTicks: 1, onAsk: (r) => { bodies.push(r.body); sent.push(r); }, ...o }); return sent; };
-  const stakes = /usually costs at most one life/;
+  const stakes = /each dispel removes an enemy for good/;
   const dflt = /Default: engage while the sword is ready \(you act first; hold off the nearest\)/;
   const text = (sent) => sent.map((r) => JSON.stringify(r.questions)).join('\n');
   for (const [name, o, wantClaim] of [
     ['2 ghosts', { ghosts: cells[2] }, true],
     ['3 ghosts', { ghosts: cells[3] }, true],
-    ['3 ghosts at speed 1', { ghosts: cells[3], settings: { speed: 1 } }, false],
-    ['4 ghosts', { ghosts: [[9, 3], [9, 2], [9, 4], [10, 3]] }, false],
-    ['2 ghosts hp 4', { ghosts: cells[2], ghostHp: 4 }, false],
-    ['2 ghosts, claw damage 2 at 2 lives', { ghosts: cells[2], health: 2, settings: { clawDamage: 2 } }, false],
-    ['2 ghosts, stun 1 (not steady)', { ghosts: cells[2], settings: { stunTicks: 1 } }, false],
-    ['2 ghosts, sword cooldown 2 (not steady)', { ghosts: cells[2], settings: { swordCooldown: 2 } }, false],
+    ['3 ghosts at speed 1 (no numeric gate)', { ghosts: cells[3], settings: { speed: 1 } }, true],
+    ['4 ghosts (no numeric gate)', { ghosts: [[9, 3], [9, 2], [9, 4], [10, 3]] }, true],
+    ['2 ghosts hp 4 (no numeric gate)', { ghosts: cells[2], ghostHp: 4 }, true],
+    ['2 ghosts, claw damage 2 at 2 lives (one claw is the last life: low tier)', { ghosts: cells[2], health: 2, settings: { clawDamage: 2 } }, false],
+    ['2 ghosts, stun 1 (no numeric gate)', { ghosts: cells[2], settings: { stunTicks: 1 } }, true],
+    ['2 ghosts, sword cooldown 2 (no numeric gate)', { ghosts: cells[2], settings: { swordCooldown: 2 } }, true],
     ['2 ghosts at C below 40', { ghosts: cells[2], confidence: { caps: true, start: 20 }, health: 2 }, false],
   ]) {
     const t = text(await first({ confidence: { caps: true, start: 80 }, ghostHp: 2, health: 4, ...o }));
     ok(stakes.test(t) === wantClaim, `claim gate (${name}): stakes sentence ${stakes.test(t) ? 'present' : 'absent'}, want ${wantClaim ? 'present' : 'absent'}`);
-    ok(!/outnumbered/.test(t), `no 'outnumbered' (${name})`);
+    ok(!/\d\+? (adversar|enem|monster|ghost)/i.test(t), `no counts on enemies (${name})`);
   }
-  // the default line on a decision tick with the tactic question (steady mood, 2 ghosts, fight on)
+  // steady: the default engage line is for a single or hurt monster, not for two full-health ones
   {
-    const sent = await first({ ghosts: cells[2], ghostHp: 2, health: 4, confidence: { caps: true, start: 80 }, mood: 'steady' });
-    ok(sent.some((r) => dflt.test(JSON.stringify(r.questions))), 'default engage line for 2 ghosts (steady, fight on)');
-    ok(!sent.some((r) => /Default: engage a lone adversary/.test(JSON.stringify(r.questions))), 'no lone-adversary default line with 2 ghosts');
+    const sent = await first({ ghosts: cells[2], ghostHp: 2, health: 4, confidence: { caps: true, start: 50 }, mood: 'steady' });
+    ok(!sent.some((r) => dflt.test(JSON.stringify(r.questions))), 'steady, two healthy enemies: no default engage line');
   }
   // one ghost: today's lone-fight wording
   {
-    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 80 }, mood: 'steady' }));
-    ok(/Default: engage a lone adversary/.test(t) && /A lone adversary you can strike first/.test(t), "one ghost keeps today's lone-fight wording in caps mode");
+    const t = text(await first({ ghosts: cells[1], ghostHp: 2, health: 2, confidence: { caps: true, start: 50 }, mood: 'steady' }));
+    ok(/Default: engage a lone enemy/.test(t) && /A single enemy you strike first costs little/.test(t), 'one enemy: the single-monster wording');
   }
   for (const g of [cells[3], [[9, 3], [9, 2], [9, 4], [10, 3]]]) {
     await playDuel({ ghosts: g, ghostHp: 2, health: 4, maxTicks: 25, confidence: { caps: true, start: 50 }, onAsk: (r) => bodies.push(r.body) });
   }
-  ok(bodies.length > 20 && !bodies.some((b) => /outnumbered/.test(b)), `no 'outnumbered' in ${bodies.length} caps-mode requests`);
-  // caps off: none of the caps wording, and the old text is intact
-  const off = [];
-  await playDuel({ ghosts: cells[2], ghostHp: 2, health: 4, maxTicks: 6, onAsk: (r) => off.push(r.body) });
-  const offText = off.join('\n');
-  ok(/outnumbered/.test(offText), 'caps off: the old wary text still says outnumbered');
-  ok(!/Only the moods your confidence allows|it decides which moods are offered|usually costs at most one life|self\.confidence/.test(offText), 'caps off: no caps wording, no self.confidence');
-  const sentBody = off.map((b) => JSON.parse(b)).find((b) => b.questions.sentiment);
-  ok(Object.keys(sentBody?.questions.sentiment.criteria ?? {}).length === 4, 'caps off: 4 moods');
-  ok(ORDER.every((id) => id in SENTIMENTS), 'SENTIMENTS unchanged');
+  ok(bodies.length > 20 && !bodies.some((b) => /\d\+? (adversar|enem|monster|ghost)/i.test(b)), `no counts on enemies in ${bodies.length} requests`);
+  ok(ORDER.every((id) => id in SENTIMENTS), 'the four moods are still in SENTIMENTS (commit 3 replaces them)');
+}
+
+// ---- 8. panic (PLAN-moods): entered by code below C 20, no sentiment call, run_away only, a whisper cannot override it, ends at C 25 ----
+{
+  const log = [];
+  const run = make({ H: 0, maxLives: 2, lives: 2, ghosts: [[9, 3], [9, 2], [9, 4]], log });
+  run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+  await tick(run);
+  ok(run.memory.sentiment.id === 'panic', `three chasing enemies at 2 lives and a beaten history: panic (got ${run.memory.sentiment.id})`);
+  ok(!log.some((r) => r.kind === 'sentiment'), 'panic is entered without a sentiment call');
+  const menus = log.map((r) => Object.keys(r.questions.tactic?.criteria ?? {})).filter((m) => m.length);
+  ok(menus.every((m) => m.every((id) => ['run_away', 'race_to_exit', 'engage'].includes(id))), `panic offers only run_away / race_to_exit / engage: ${JSON.stringify(menus)}`);
+  ok(menus.length > 0 && menus.every((m) => m.includes('run_away')), 'run_away is always on the panic menu');
+  ok(!/\blives?\b/i.test(SENTIMENTS.panic.priority + SENTIMENTS.panic.move_priority + SENTIMENTS.panic.skill_priority + SENTIMENTS.panic.note), 'panic text never mentions lives');
+  // a whisper does not apply while panicking
+  await run.explorer.setDirective('walk to the east wall', { steps: 20 });
+  const n0 = log.length;
+  await tick(run);
+  ok(log.slice(n0).every((r) => !r.state.directive), 'a directive is not sent to Jev while panicking');
+  ok(run.memory.sentiment.id === 'panic', 'still panic');
+  // the threat gone: C climbs back (the remembered sightings fade), panic ends only at 25 or more, by code
+  run.game.adversaries = [];
+  let left = null;
+  for (let i = 0; i < 80 && !left; i++) { await tick(run); if (run.memory.sentiment.id !== 'panic') left = i; }
+  ok(left !== null, 'panic ends once C is back at 25');
+  ok(run.memory.sentiment.id !== 'panic' && ['wary', 'guarded', 'cautious', 'steady', 'greedy'].includes(run.memory.sentiment.id), `panic hands over to a calm mood (${run.memory.sentiment.id})`);
+}
+{
+  // engage is on the panic menu only when the enemies shut the only way out
+  const open = make({ rows: OPEN, ghosts: [[9, 3]], lives: 2, maxLives: 2 });
+  const w1 = new KnownWorld(open.game);
+  open.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+  ok(!blocksOnlyRoute(w1, [{ pos: [9, 3] }]) , 'an open room is never blocked');
+  ok(!('engage' in tacticFeasibility(w1, 1, { armed: true, panic: true })), 'open room: no engage in panic');
+  const hall = make({ rows: ['#'.repeat(24), '#'.repeat(24), '#@' + '.'.repeat(21) + '#', '#'.repeat(24), '#'.repeat(24)], ghosts: [[4, 2]], lives: 2, maxLives: 2 });
+  hall.game.adversaries.forEach((a) => { a.mode = 'chase'; });
+  const w2 = new KnownWorld(hall.game);
+  ok(blocksOnlyRoute(w2, [{ pos: [4, 2] }]), 'a long hall with the enemy between the explorer and the unexplored end is blocked');
+  ok('engage' in tacticFeasibility(w2, 1, { armed: true, panic: true }), 'blocked: engage is on the panic menu');
+  ok(!('engage' in tacticFeasibility(w2, 1, { armed: false, panic: true })), 'no sword: no engage even when blocked');
+  ok(Object.keys(tacticFeasibility(w2, 1, { armed: true, panic: true })).every((id) => ['run_away', 'race_to_exit', 'engage'].includes(id)), 'panic menu holds no subtle tactics');
 }
 
 rmSync(dir, { recursive: true, force: true });

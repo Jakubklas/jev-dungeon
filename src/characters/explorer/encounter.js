@@ -201,10 +201,23 @@ const result = (world, f) => ({
   steps: f.steps,
   exits: f.exits,
   theirs: f.theirs,
-  why: `Escape spot to the ${compass(world.pos, f.cell)}, ${plural(f.steps, 'step')} away; the nearest adversary is about ${plural(f.theirs, 'step')} from it.`,
+  why: `Escape spot to the ${compass(world.pos, f.cell)}, ${plural(f.steps, 'step')} away; the nearest enemy is about ${plural(f.theirs, 'step')} from it.`,
 });
 
 // A cell is open-room space when it sits in a 2x2 block of known floor.
+// PLAN-moods panic: true when the enemies in sight shut every known way out: a frontier cell or the seen portal is reachable over
+// known floor, but not without entering a cell next to (or on) a visible enemy. With no way out known at all it is false (nothing to
+// fight for). Known floor and visible enemies only.
+export function blocksOnlyRoute(world, threats) {
+  const near = new Set();
+  for (const th of threats) for (const c of [th.pos, ...neighbours(th.pos)]) near.add(key(c));
+  near.delete(key(world.pos));
+  const portal = world.seenTreasure();
+  const goalIn = (dist) => (portal && dist.has(portal)) || dist.order.some((c) => isFrontier(world, c));
+  if (!goalIn(knownDistances(world, world.pos, null, null, null, true))) return false; // nothing known to run toward: not "blocked"
+  return !goalIn(knownDistances(world, world.pos, null, (c) => !near.has(key(c)), null, true));
+}
+
 export function isRoomCell(world, p) {
   for (const [dx, dy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
     const block = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([ox, oy]) => [p[0] + dx + ox, p[1] + dy + oy]);
@@ -255,7 +268,7 @@ const HOLD_GAP = 2;
 // the explorer knows of.
 function fightFacts(th, { damage, only, steady = false }, alone) {
   const n = Math.max(1, Math.ceil(th.hp / damage));
-  return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it${n <= 2 && steady && alone ? '; expect at most one claw at you' : ''}.` +
+  return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it.` +
     `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}`;
 }
 export function engageTarget(world, threats, { stunned = null, fight = null } = {}) {
@@ -326,7 +339,7 @@ export function encounterFacts(world, threats) {
   const facts = {
     space,
     gap_now: gapNow,
-    speed: `Every step straight away from an adversary gains about ${Math.round((1 - ADVERSARY_SPEED) * 10) / 10} of a step.`,
+    speed: `Every step straight away from an enemy gains about ${Math.round((1 - ADVERSARY_SPEED) * 10) / 10} of a step.`,
     slip_past: survey.slip
       ? `Best known route past it toward unexplored space: ` +
         `${plural(survey.slip.steps, 'step')}, closest approach ${gapWords(survey.slip.gap)}.`
@@ -335,14 +348,14 @@ export function encounterFacts(world, threats) {
       ? `Nearest cell out of its sight: ${plural(survey.hide.steps, 'step')} to the ${compass(here, survey.hide.cell)}, closest approach on the way ${gapWords(survey.hide.gap)}.`
       : `No known cell out of its sight within ${HIDE_MAX_STEPS} steps can be reached before it closes in.`,
     run_away: run
-      ? `Best escape spot: ${plural(run.steps, 'step')} to the ${compass(here, run.cell)}, about ${plural(run.theirs, 'step')} from the adversary, ${plural(run.exits, 'exit')} there.`
+      ? `Best escape spot: ${plural(run.steps, 'step')} to the ${compass(here, run.cell)}, about ${plural(run.theirs, 'step')} from the enemy, ${plural(run.exits, 'exit')} there.`
       : 'Nowhere known to run to.',
     dead_ends: dead.length ? `${dead.length} of ${plural(legal, 'move')} lead${dead.length === 1 ? 's' : ''} into a known dead end (${dead.join(', ')}).` : 'No move leads into a known dead end.',
   };
   if (exitCell) {
     facts.exit = survey.exit
-      ? `The portal is ${plural(survey.exit.steps, 'step')} away; on that path the adversary gets no closer than ${gapWords(survey.exit.gap)}.`
-      : 'The portal is seen, but no known path reaches it without running into the adversary.';
+      ? `The portal is ${plural(survey.exit.steps, 'step')} away; on that path the enemy gets no closer than ${gapWords(survey.exit.gap)}.`
+      : 'The portal is seen, but no known path reaches it without running into the enemy.';
   }
   return { facts, survey, area, threats };
 }

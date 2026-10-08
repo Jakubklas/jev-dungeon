@@ -23,7 +23,7 @@ import {
   compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, reachableFrontier, sameCell, step, wouldReveal,
 } from './known-map.js';
 import {
-  encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
+  blocksOnlyRoute, encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
   threatDistance, threatsOf,
 } from './encounter.js';
 
@@ -37,17 +37,17 @@ export const APPROACHES = {
   collect_coins: { text: 'Go for the best seen pile of coins: coins are the score, so a detour for them can pay.', thought: 'Coins! Worth the detour.', needsCoins: true },
   go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
   slip_past: {
-    text: 'Slip past the adversary: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
+    text: 'Slip past the enemy: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
   },
-  run_away: { text: 'Run away from the adversary: get away from it, keep escape routes open, and avoid dead ends.', thought: 'Run away!', tactic: true, brief: 'Run away: get clear and keep escape routes open.' },
+  run_away: { text: 'Run away from the enemy: get away from it, keep escape routes open, and avoid dead ends.', thought: 'Run away!', tactic: true, brief: 'Run away: get clear and keep escape routes open.' },
   engage: {
-    text: 'Engage: fight the adversary with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
+    text: 'Engage: fight the enemy with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
     thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
   },
-  hide: { text: "Duck out of sight: reach a known cell outside the adversary's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
-  race_to_exit: { text: 'Race the adversary to the seen portal along the known path, staying out of its reach.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Race it to the seen portal along the known path.' },
-  carry_on: { text: 'The adversary is patrolling and has not seen the explorer: keep exploring, but stay out of its sight.', thought: "It hasn't seen me, keep going.", tactic: true, brief: 'It has not seen you: keep exploring out of its sight.' },
+  hide: { text: "Duck out of sight: reach a known cell outside the enemy's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
+  race_to_exit: { text: 'Race the enemy to the seen portal along the known path, staying out of its reach.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Race it to the seen portal along the known path.' },
+  carry_on: { text: 'The enemy is patrolling and has not seen the explorer: keep exploring, but stay out of its sight.', thought: "It hasn't seen me, keep going.", tactic: true, brief: 'It has not seen you: keep exploring out of its sight.' },
 };
 export const TACTICS = Object.keys(APPROACHES).filter((id) => APPROACHES[id].tactic);
 export const isTactic = (id) => Boolean(APPROACHES[id]?.tactic);
@@ -140,7 +140,7 @@ export function nearbyPiles(world, reach) {
 // closest edge of the known map.
 function noThreatFallback(world, dist) {
   const best = pick(reachableFrontier(world, dist), (f) => -f.steps * 1000 + wouldReveal(world, f.cell));
-  return best ? { ...best, why: `No adversary in sight right now; closest edge of the known map, ${plural(best.steps, 'step')} away.` } : null;
+  return best ? { ...best, why: `No enemy in sight right now; closest edge of the known map, ${plural(best.steps, 'step')} away.` } : null;
 }
 
 // Known cells to keep exploration targets out of (a Set of cell keys, for approachTarget's `avoid`),
@@ -208,7 +208,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
       if (!threats.length) return approachTarget(world, 'go_to_exit');
       const safe = safeDistances(world, threats, minGap, true);
       if (!safe.has(exitCell)) return null;
-      return { cell: [...exitCell], steps: safe.get(exitCell), why: `The portal is ${plural(safe.get(exitCell), 'step')} away by a known path that keeps the adversary at least ${plural(minGap, 'step')} off.` };
+      return { cell: [...exitCell], steps: safe.get(exitCell), why: `The portal is ${plural(safe.get(exitCell), 'step')} away by a known path that keeps the enemy at least ${plural(minGap, 'step')} off.` };
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
     if (approachId === 'engage') return engageTarget(world, threats, { stunned, fight });
@@ -225,18 +225,18 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
       const g = goals.slip;
       if (!g) return null;
       const to = 'toward unexplored space';
-      return { ...g, why: `Route past the adversary ${to}, ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}, keeping at least ${plural(minGap, 'step')} between you.` };
+      return { ...g, why: `Route past the enemy ${to}, ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}, keeping at least ${plural(minGap, 'step')} between you.` };
     }
     if (approachId === 'hide') {
       const g = goals.hide;
       if (!g) return null;
-      return { ...g, why: `Cell out of the adversary's sight, ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}, reached while keeping at least ${plural(minGap, 'step')} between you.` };
+      return { ...g, why: `Cell out of the enemy's sight, ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}, reached while keeping at least ${plural(minGap, 'step')} between you.` };
     }
     // carry_on
     const g = goals.frontier;
     if (!g) return null;
     const hidden = hiddenFromAll(world, threats, g.cell);
-    return { ...g, why: `Edge of the known map ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}${hidden ? ', out of the adversary\'s sight' : ''}.` };
+    return { ...g, why: `Edge of the known map ${plural(g.steps, 'step')} to the ${compass(world.pos, g.cell)}${hidden ? ', out of the enemy\'s sight' : ''}.` };
   }
 
   if (approachId === 'collect_coins') return coinTarget(world, dist, avoid);
@@ -293,7 +293,7 @@ function hereKind(world) {
 // `armed`: the explorer holds a ready attack skill; engage is offered only then (it ignores the minimum gap:
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
-export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null } = {}) {
+export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
   const enc = encounterFacts(world, threats);
@@ -310,10 +310,11 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   };
   add('slip_past', s.slip && s.slip.gap >= minGap);
   add('run_away', true);
-  add('engage', armed);
+  add('engage', armed && (!panic || blocksOnlyRoute(world, threats))); // panic fights only an enemy that shuts the only way out
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);
   add('carry_on', threats.every((th) => !th.chasing) && s.frontier && s.frontier.gap >= minGap);
+  if (panic) for (const id of Object.keys(out)) if (!['run_away', 'race_to_exit', 'engage'].includes(id)) delete out[id]; // panic: run, or take the portal, nothing subtler
   return out;
 }
 
@@ -366,7 +367,7 @@ export function leaveFacts(world, sit) {
   const { visible, remembered } = sit.threats;
   return `You hold ${plural(world.coins, 'coin')}; ` +
     (piles.length ? `${plural(piles.length, 'seen coin')} left${near === undefined ? '' : `, nearest ${plural(near, 'step')} away`}; ` : 'no coins seen; ') +
-    `portal ${t}; ${world.health} of ${world.maxHealth} lives; ${visible.length} ${visible.length === 1 ? 'adversary' : 'adversaries'} in sight, ${remembered.length} remembered; ${plural(sit.surroundings.frontier_cells, 'unexplored edge')}.`;
+    `portal ${t}; ${world.health} of ${world.maxHealth} lives; ${visible.length} ${visible.length === 1 ? 'enemy' : 'enemies'} in sight, ${remembered.length} remembered; ${plural(sit.surroundings.frontier_cells, 'unexplored edge')}.`;
 }
 
 // Landmarks (memory.landmarks) made relative to the explorer's position, recomputed every tick.
@@ -440,14 +441,14 @@ function visitSentence(n) {
 
 // What stepping onto an adversary does: only a bump (PLAN-skills D3). A touch costs nothing; the knock goes
 // to the adversary, not to the explorer's lives.
-const bumpSentence = () => 'Steps into the adversary: only bumps it back, no life lost.';
+const bumpSentence = () => 'Steps into the enemy: only bumps it back, no life lost.';
 
 // What an adversary next to you can do: strike with its claw (costs a life; the last one ends the game), or
 // nothing while the hit protection after an earlier hit lasts. Fog-safe: no cooldown or hit points of the ghost.
 function clawSentence(world) {
-  if (world.graceLeft > 0) return 'An adjacent adversary can strike you, but no life is lost while your hit protection lasts.';
-  if (world.health <= 1) return 'An adjacent adversary can strike you: costs your last life and the game is lost.';
-  return `An adjacent adversary can strike you (costs 1 life, ${world.health - 1} of ${world.maxHealth} left).`;
+  if (world.graceLeft > 0) return 'An adjacent enemy can strike you, but no life is lost while your hit protection lasts.';
+  if (world.health <= 1) return 'An adjacent enemy can strike you: costs your last life and the game is lost.';
+  return `An adjacent enemy can strike you (costs 1 life, ${world.health - 1} of ${world.maxHealth} left).`;
 }
 
 // Threat sentences for one move, one per visible adversary.
@@ -459,7 +460,7 @@ function threatSentences(world, threats, dest, minGap) {
       continue;
     }
     const where = threats.length > 1 ? ` to the ${compass8(world.pos, th.pos)}` : '';
-    const who = th.chasing ? `the chasing adversary${where}` : `an adversary${where}`;
+    const who = th.chasing ? `the chasing enemy${where}` : `an enemy${where}`;
     const before = threatDistance(th, world.pos), after = threatDistance(th, dest);
     const gap = `(${plural(after, 'step')} between you after this${after < minGap ? `, below your minimum gap of ${minGap}` : ''})`;
     if (after > before) facts.push(`Moves away from ${who} ${gap}.`);
@@ -481,7 +482,7 @@ function sightingSentence(world, sightings, here, dest) {
   }
   const before = best?.dist.get(here);
   if (before !== undefined) {
-    const who = best.r.chasing ? 'a chasing adversary' : 'an adversary';
+    const who = best.r.chasing ? 'a chasing enemy' : 'an enemy';
     const spot = `where ${who} was last seen ${plural(world.steps - best.r.step, 'step')} ago (${plural(best.after, 'step')} from that spot after this)`;
     if (best.after < before) return `Heads toward ${spot}.`;
     if (best.after > before) return `Moves away from ${spot}.`;
@@ -495,7 +496,7 @@ function sightingSentence(world, sightings, here, dest) {
     if (!s.r.chasing || world.steps - s.r.step > ZONE_RECENT || after === undefined || now === undefined || after >= now) continue;
     if (!back || world.steps - s.r.step < world.steps - back.r.step) back = { ...s, after };
   }
-  return back ? `Heads back toward where a chasing adversary was ${plural(world.steps - back.r.step, 'step')} ago (${plural(back.after, 'step')} from that spot after this).` : null;
+  return back ? `Heads back toward where a chasing enemy was ${plural(world.steps - back.r.step, 'step')} ago (${plural(back.after, 'step')} from that spot after this).` : null;
 }
 
 // Facts about standing still: nothing is revealed and the position (and every distance) stays put,
@@ -506,7 +507,7 @@ function stayFacts(world, approachId, threats, minGap, holding = false) {
   const facts = ['Stands still: reveals nothing.'];
   for (const th of threats) {
     const d = threatDistance(th, world.pos);
-    const who = th.chasing ? 'the chasing adversary' : 'an adversary';
+    const who = th.chasing ? 'the chasing enemy' : 'an enemy';
     facts.push(`${who[0].toUpperCase()}${who.slice(1)} keeps moving (${plural(d, 'step')} away${d < minGap ? `, below your minimum gap of ${minGap}` : ''}).`);
   }
   if (!threats.length) facts.push('Makes no progress toward the target.');
@@ -593,7 +594,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     if (approachId !== 'go_to_exit') {
       if (!target) {
         targetFacts.push(isTactic(approachId)
-          ? (threats.length ? 'The tactic has no workable target from here.' : 'No adversary in sight right now.')
+          ? (threats.length ? 'The tactic has no workable target from here.' : 'No enemy in sight right now.')
           : 'No target left: everything reachable is explored.');
       } else {
         const before = toTarget.get(here), after = toTarget.get(dest);
