@@ -155,7 +155,7 @@ explorer:
       hysteresis: 5 # A tier is kept this far past its edge
       midMin: 50 # Confidence from this is the mid tier; below it is midlow, which offers retreats
     panic:
-      enter: 20 # Panic starts below this confidence
+      enter: 15 # Panic starts below this confidence
       exit: 25 # Panic ends at or above this confidence
     cap:
       lastLife: 45 # Highest confidence on the last life
