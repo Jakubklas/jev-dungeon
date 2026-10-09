@@ -65,10 +65,15 @@ export function configureWorld({ lightRadius, sightRange, minSize, maxSize, live
 export const DIRS, STAY;
 export function rng(seed)                       // -> () => float in [0,1)   (mulberry32)
 export function generateDungeon(seed = randomSeed()) // -> Dungeon
-//   Dungeon = { seed, width, height, tiles: string[], start: [x,y], treasure: [x,y] | null, rooms: [{x,y,w,h}], props, decor }
+//   Dungeon = { seed, width, height, tiles: string[], start: [x,y], treasure: [x,y] | null, rooms: [{x,y,w,h, role?, order?}], props, decor, layout? }
 //   (props/decor: see "props and wall decor" below; a testbed arena also sets `testbed: true`.)
-//   Room count and corridor network scale with area. The floor is fully connected and has loops. The treasure is in a room,
-//   at a path distance of at least 60% of the farthest reachable cell. Same seed gives the same dungeon.
+//   LAYOUT ('linear' default | 'maze', knob world.layout, configureWorld({ layout })) picks the generator; width and height come first either way.
+//   maze: room count and corridor network scale with area. The floor is fully connected and has loops. The treasure is in a room,
+//   at a path distance of at least 60% of the farthest reachable cell.
+//   linear: a winding main path of rooms over a patch grid, start in the first room, the portal in the last; 2-5 dead-end side rooms
+//   and at most one loop around a single path room; organic rooms, corridors 1-4 wide. rooms[i] is the room's bounding box plus
+//   role ('start'|'path'|'portal'|'side') and order (index on the main path); layout = { kind: 'linear', patches, links } is hidden
+//   state (spawning and checks only, never explorer code). Same seed and layout give the same dungeon.
 //   `treasure` is `null` only in a testbed arena with no chest.
 export function isFloor(dungeon, [x,y])          // -> bool (real tiles; for adversary movement, never for explorer perception)
 export function floorDistances(dungeon, from)    // -> Map<key, steps> over real floor (adversary pathing)
@@ -88,7 +93,7 @@ export class Game {
   //   block /* null | { effectiveness, until_step }: the shield stance */,
   //   strikes /* [{ by, from /* attacker's cell when it struck */, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
   //   skillRand /* block-roll RNG, null until the first roll */,
-  //   winBy /* null | 'chest' | 'cleared': how the game was won ('cleared' = the last adversary was dispelled, resolve.js) */,
+  //   winBy /* null | 'chest' | 'cleared': how the game was won ('cleared' = the last adversary was dispelled, resolve.js; only in an arena with no portal: where a portal exists only the portal wins) */,
   //   coinPiles /* [[x, y]] one entry per coin on the floor (duplicates = a bigger pile); replaced, never spliced */,
   //   coins /* the explorer's coin total */, coinRand /* coin-drop RNG, null until the first roll */
   // coinPiles starts as a copy of dungeon.coins (src/coins.js spawnCoins; [] when absent, e.g. hand-built maps).
@@ -149,9 +154,10 @@ export function spawnAdversaries(dungeon)        // -> Adversary[]. Seeded via r
 // src/coins.js
 export let FLOOR_PER_COIN = 60, MAX_COINS = 30; configureCoins({ floorPerCoin, maxCoins })
 export function spawnCoins(dungeon, { count } = {})  // -> [[x, y]] one coin per cell, min(MAX_COINS, round(floor/FLOOR_PER_COIN)) unless count is given,
-                                                  //    round-robin over shuffled rooms, never on start/chest/small prop. Seeded via rng(seed ^ 0x5be0cd19).
+                                                  //    round-robin over shuffled rooms (linear layout: side rooms take two per round), never on start/chest/small prop. Seeded via rng(seed ^ 0x5be0cd19).
 //   count = min(MAX_ADVERSARIES, max(1, round(floorCells / FLOOR_PER_ADVERSARY))) (defaults 12 and 150). They spawn in rooms at a path distance of at least 20 from start
-//   and never in the start's sight, spread round-robin over the rooms. With the adversaryCharacters toggle on, characters are then assigned by
+//   and never in the start's sight, spread round-robin over the rooms. Linear layout: the portal room always gets one, each side room one with
+//   chance 1/2, the rest over the main-path rooms, denser toward the portal, none in the start room (same stream). With the adversaryCharacters toggle on, characters are then assigned by
 //   assignCharacters(dungeon.seed, count, 'mixed') on its own stream rng(seed ^ 0x6a09e667), after every spawn rng() call (same cells for every seed).
 export { viewOf as adversaryView }               // (game, adversary) -> the ghost's cached AdversaryView (mode 'limited' only while limitedActive())
 export function seesExplorer(game, adversary)    // -> bool (SIGHT_RANGE + hasLineOfSight, symmetric)
@@ -435,7 +441,7 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 
 ## Turn (v3)
 
-`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `cleared` (the dispelled ghost was the last one: the game is won; `id` 'explorer', `at`), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`), `alerted` (with `by`) and `routed` (monster morale: morale collapsed, so the monster breaks off; adds `morale`, and a `brain_off` with reason `routed: ...` follows). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
+`playTurn` returns `{ ...ExplorerTurn, events, lost, caughtBy, adversaryTurns: [{ id, dir, decision|null, keep_hunting: number|null, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used }, stunned? }] }`. The event types are `spotted`, `lost_sight`, `hit` (a claw strike took a life; adds `health`), `caught`, `bump` (a touch), `blocked` (a shield stopped a strike), `strike` (`{ id, type, cells, result }`, from either side), `struck` (the explorer hit a ghost; adds `hp`), `dispelled` (a ghost reached 0 hp and left the game), `cleared` (the dispelled ghost was the last one in an arena with no portal: the game is won; `id` 'explorer', `at`), `coin_drop` (a dispelled ghost left a coin; `at`), `coin` (the explorer picked up coins; `at`, `gained`, `total`), `brain_on`, `brain_off` (with `reason`), `alerted` (with `by`) and `routed` (monster morale: morale collapsed, so the monster breaks off; adds `morale`, and a `brain_off` with reason `routed: ...` follows). `struck` and `dispelled` come from `resolveAttack` and are not yet in the turn's `events` (see AGENTS open issues).
 
 # v4: encounter tactics + sentiment (the explorer stops reflexively running)
 
