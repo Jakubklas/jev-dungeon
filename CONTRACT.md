@@ -71,7 +71,7 @@ export function generateDungeon(seed = randomSeed()) // -> Dungeon
 //   maze: room count and corridor network scale with area. The floor is fully connected and has loops. The treasure is in a room,
 //   at a path distance of at least 60% of the farthest reachable cell.
 //   linear: a winding main path of rooms over a patch grid, start in the first room, the portal in the last; 2-5 dead-end side rooms
-//   and at most one loop around a single path room; organic rooms, corridors 1-4 wide. rooms[i] is the room's bounding box plus
+//   and at most one loop around a single path room; organic rooms, corridors 3-6 wide. rooms[i] is the room's bounding box plus
 //   role ('start'|'path'|'portal'|'side') and order (index on the main path); layout = { kind: 'linear', patches, links } is hidden
 //   state (spawning and checks only, never explorer code). Same seed and layout give the same dungeon.
 //   `treasure` is `null` only in a testbed arena with no chest.

@@ -1,7 +1,8 @@
 // Checks for the linear layout (LAYOUT 'linear' in src/dungeon.js): one winding path of rooms from the start to
 // the portal, dead-end side rooms and at most one loop that bypasses a single room. Read from the finished tiles,
 // over 200 seeds plus the size extremes: determinism, wall ring, reachability, room roles and order, the path
-// cannot be skipped, side rooms are dead ends, the portal has its 3x3 clear, and corridors vary in width.
+// cannot be skipped, side rooms are dead ends, the portal has its 3x3 clear, and corridors vary in width and are
+// at least 3 wide end to end (a 3x3 square travels each one; solid props, which come later, are not counted).
 // Run from the dungeon-game directory: node scripts/check-layout.mjs [seeds] [--quiet]. Free, no Jev.
 
 process.env.JEV_CONFIG = 'none';
@@ -123,6 +124,34 @@ function verifyLinear(d) {
     for (let y = p.y; y < p.y + p.h && !leak; y++) for (let x = p.x; x < p.x + p.w; x++) if (seen[y * W + x]) { leak = true; break; }
     if (leak) errs.push(`side room ${j} is not a dead end`);
   }
+  // Corridors are wide: a KxK square (K = 3, or less beside a room too small for it) travels from each linked room's
+  // box to the other's inside the two patches and their strip. Solid props are floor here: they are not corridor shape.
+  const solid = new Set((d.props ?? []).filter((p) => p.solid).map((p) => `${p.x},${p.y}`));
+  const open = (x, y) => tiles[y]?.[x] === '.' || solid.has(`${x},${y}`);
+  for (const [a, b] of links) {
+    const ra = rooms[a], rb = rooms[b], pa = patches[a], pb = patches[b];
+    const K = Math.max(1, Math.min(3, ra.w - 1, ra.h - 1, rb.w - 1, rb.h - 1));
+    const R = { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y) };
+    R.w = Math.max(pa.x + pa.w, pb.x + pb.w) - R.x; R.h = Math.max(pa.y + pa.h, pb.y + pb.h) - R.y;
+    const fits = (x, y) => {
+      if (x < R.x || y < R.y || x + K > R.x + R.w || y + K > R.y + R.h) return false;
+      for (let dy = 0; dy < K; dy++) for (let dx = 0; dx < K; dx++) if (!open(x + dx, y + dy)) return false;
+      return true;
+    };
+    const inBox = (r, x, y) => x >= r.x && y >= r.y && x + K <= r.x + r.w && y + K <= r.y + r.h;
+    const seen = new Set(), q = [];
+    for (let y = ra.y; y < ra.y + ra.h; y++) for (let x = ra.x; x < ra.x + ra.w; x++) if (inBox(ra, x, y) && fits(x, y)) { seen.add(`${x},${y}`); q.push([x, y]); }
+    let through = false;
+    for (let h = 0; h < q.length && !through; h++) {
+      const [x, y] = q[h];
+      if (inBox(rb, x, y)) through = true;
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+        if (!seen.has(`${nx},${ny}`) && fits(nx, ny)) { seen.add(`${nx},${ny}`); q.push([nx, ny]); }
+      }
+    }
+    if (!through) errs.push(`corridor ${a}-${b} narrower than ${K}`);
+  }
+
   // Path length start -> portal.
   let dist = 0;
   {

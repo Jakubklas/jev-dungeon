@@ -184,11 +184,14 @@ function carve(rand, width, height) {
 // rooms and at most one short loop. The map is cut into a coarse grid of patches with 2 wall cells between them;
 // each room and everything it owns is carved inside its own patch, and a corridor only crosses the strip between
 // two linked patches, so the room graph on the finished tiles is exactly the graph chosen here: the shape
-// distortions (organic rooms, winding corridors 1-4 wide) can never add a shortcut. A failed attempt is retried
-// with weaker distortion; the last attempt (plain rectangles, straight 1-wide corridors) always succeeds.
+// distortions (organic rooms, winding corridors 3-6 wide, a little narrower than the rooms they join) can never add a
+// shortcut. A failed attempt is retried with weaker distortion; the last attempt (plain rectangles, straight corridors
+// of the narrowest width) always succeeds.
 const LINEAR_ATTEMPTS = 12;
 const SPINE_SHARE = 0.6; // share of the patch grid the main path covers
 const SPINE_BUDGET = 6000; // search nodes for the self-avoiding walk
+const CORRIDOR_MIN = 3; // corridor brush width range (cells), capped below the smaller room it joins
+const CORRIDOR_MAX = 6;
 
 function generateLinear(seed, rand, width, height) {
   for (let attempt = 0; attempt < LINEAR_ATTEMPTS; attempt++) {
@@ -298,12 +301,13 @@ function buildLinear(rand, width, height, strength) {
 
   // 4. Rooms: a rectangle in its patch, then (with strength) lobes, edge noise and smoothing; the core stays floor.
   const grid = Array.from({ length: height }, () => Array(width).fill('#'));
-  const rooms = [], patches = [], cores = [];
+  const rooms = [], patches = [], cores = [], rects = [];
   for (const node of nodes) {
     const p = patchOf(node.cell);
     const big = node.role === 'portal';
     // Rooms fill well under their patch, so the corridors between them have room to wind; the portal room is bigger.
-    const lo = (side) => Math.max(3, Math.min(side, big ? Math.ceil(side * 0.65) : Math.max(ROOM_MIN, Math.ceil(side * 0.4))));
+    // At least 5 a side where the patch allows, so a 3-wide corridor is still narrower than the room it enters.
+    const lo = (side) => Math.max(3, Math.min(side, big ? Math.ceil(side * 0.65) : Math.max(ROOM_MIN, 5, Math.ceil(side * 0.5))));
     const hi = (side) => Math.max(lo(side), Math.min(side, big ? Math.ceil(side * 0.85) : Math.min(ROOM_MAX, Math.ceil(side * 0.75))));
     const rw = int(lo(p.w), hi(p.w)), rh = int(lo(p.h), hi(p.h));
     const rx = int(p.x, p.x + p.w - rw), ry = int(p.y, p.y + p.h - rh);
@@ -370,19 +374,21 @@ function buildLinear(rand, width, height, strength) {
     rooms.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, role: node.role, order: node.order });
     patches.push(p);
     cores.push([cx, cy]);
+    rects.push(Math.min(rw, rh));
   }
 
   // 5. Corridors: a walk with momentum and side-steps between two room cores, painted with a brush whose width
-  // drifts 1..4, kept inside the rectangle made of the two patches and the strip between them (no other patch).
+  // drifts between minW and maxW, kept inside the rectangle made of the two patches and the strip between them
+  // (no other patch). Wide enough for 2-3 characters abreast, but a cell narrower than the smaller of the two rooms.
   for (const [a, b] of links) {
     const pa = patches[a], pb = patches[b];
-    // Narrow patches get narrower corridors, or the corridors swallow the rooms.
-    const maxW = Math.max(1, Math.min(1 + Math.round(3 * strength), Math.floor(Math.min(pa.w, pa.h, pb.w, pb.h) / 3)));
+    const maxW = Math.max(1, Math.min(CORRIDOR_MAX, Math.min(rects[a], rects[b]) - 1));
+    const minW = Math.min(CORRIDOR_MIN, maxW);
     const R = { x0: Math.min(pa.x, pb.x), y0: Math.min(pa.y, pb.y), x1: Math.max(pa.x + pa.w, pb.x + pb.w) - 1, y1: Math.max(pa.y + pa.h, pb.y + pb.h) - 1 };
     const inR = (x, y) => x >= R.x0 && x <= R.x1 && y >= R.y0 && y <= R.y1;
     let [x, y] = cores[a];
     const [qx, qy] = cores[b];
-    let w = strength > 0 ? int(1, maxW) : 1;
+    let w = strength > 0 ? int(minW, maxW) : minW;
     const paint = () => {
       const o = -Math.floor((w - 1) / 2);
       for (let dy = o; dy < o + w; dy++) for (let dx = o; dx < o + w; dx++) if (inR(x + dx, y + dy)) grid[y + dy][x + dx] = '.';
@@ -393,10 +399,11 @@ function buildLinear(rand, width, height, strength) {
     for (let step = 0; x !== qx || y !== qy; step++) {
       const dx = qx - x, dy = qy - y;
       if (strength > 0 && step < cap && rand() < 0.25 * strength) {
-        // Side-step across the current heading.
+        // Side-step across the current heading, only while the whole brush stays inside R (a clipped brush pinches).
         const s = rand() < 0.5 ? -1 : 1;
-        if (axis === 0 && inR(x, y + s)) y += s;
-        else if (axis === 1 && inR(x + s, y)) x += s;
+        const o = -Math.floor((w - 1) / 2), e = s < 0 ? o - 1 : o + w;
+        if (axis === 0 && inR(x, y + e)) y += s;
+        else if (axis === 1 && inR(x + e, y)) x += s;
       } else {
         if ((axis === 0 && !dx) || (axis === 1 && !dy) || (strength > 0 && rand() < 0.2)) axis = dx && (!dy || rand() < Math.abs(dx) / (Math.abs(dx) + Math.abs(dy))) ? 0 : 1;
         if (axis === 0 && dx) x += Math.sign(dx);
@@ -404,7 +411,7 @@ function buildLinear(rand, width, height, strength) {
         else if (dx) x += Math.sign(dx);
         else y += Math.sign(dy);
       }
-      if (strength > 0 && rand() < 0.15) w = Math.max(1, Math.min(maxW, w + (rand() < 0.5 ? -1 : 1)));
+      if (strength > 0 && rand() < 0.15) w = Math.max(minW, Math.min(maxW, w + (rand() < 0.5 ? -1 : 1)));
       paint();
     }
   }
