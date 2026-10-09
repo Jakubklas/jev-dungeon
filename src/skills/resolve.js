@@ -53,9 +53,10 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
           game.coinPiles = [...game.coinPiles, at];
           events.push({ id: a.id, type: 'coin_drop', at });
         }
-        // Dispelling the last adversary wins the game. Only a dispel can do it: an arena that starts with
-        // none (numAdversaries 0) is not won on tick 0.
-        if (!game.adversaries.length && !game.won && !game.lost) {
+        // Dispelling the last adversary wins only in an arena with no portal (a chest-less testbed gym):
+        // where a portal exists, stepping through it is the only win. Only a dispel can do it: an arena
+        // that starts with none (numAdversaries 0) is not won on tick 0.
+        if (!game.dungeon.treasure && !game.adversaries.length && !game.won && !game.lost) {
           game.won = true;
           game.winBy = 'cleared';
           events.push({ id: 'explorer', type: 'cleared', at });
