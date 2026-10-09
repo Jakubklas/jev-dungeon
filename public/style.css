@@ -70,8 +70,7 @@ h1 {
   margin: -3px 0 0 -5px; background: inherit; border: inherit; border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-#status { color: var(--muted); min-height: 1.4em; margin: 10px 0 0; font-size: 13px; }
-#status.error { color: var(--warn); }
+#status { color: var(--warn); margin: 0; font-size: 13px; }
 
 .pane { display: flex; flex-direction: column; gap: 10px; }
 .pane > * { flex: none; }

@@ -48,8 +48,8 @@ function formatTime(ms) {
 }
 
 function setStatus(text, isError = false) {
-  $('status').textContent = text;
-  $('status').classList.toggle('error', isError);
+  $('status').textContent = isError ? text : '';
+  $('status').hidden = !isError;
 }
 
 // ?testbed&size=9x9&numAdversaries=2&props=few opens a small test arena instead of a dungeon

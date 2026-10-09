@@ -10,11 +10,6 @@
 </head>
 <body>
 <main>
-  <header>
-    <h1>Jev Dungeon</h1>
-    <p class="sub">Jev explores a dark dungeon one step at a time, looking for loot and the portal out, while adversaries roam the halls. Every visited cell lights up the area around it for good. Jev only hears about lit cells and adversaries it can see.</p>
-  </header>
-
   <div class="layout">
     <section class="board-col">
       <div class="board-wrap" id="board-wrap">
@@ -23,7 +18,6 @@
         <p id="route-cue" class="route-cue" role="status" aria-live="polite"></p>
         <canvas id="minimap" class="minimap" aria-label="Minimap of known cells"></canvas>
       </div>
-      <p id="status">Press Start to let Jev explore.</p>
       <form id="whisper" class="whisper" autocomplete="off">
         <label class="whisper-label" for="whisper-text">Whisper to Jev</label>
         <div class="whisper-row">
@@ -53,6 +47,8 @@
         <label class="check"><input id="reveal" type="checkbox"> Reveal map (debug)</label>
         <label class="check" title="Draw the hidden route spine on the board and minimap"><input id="route-debug" type="checkbox"> Route (debug)</label>
       </div>
+
+      <p id="status" role="alert" hidden></p>
 
       <div class="hud">
         <div class="stat" title="Lives left"><span>Lives</span><b id="hearts" class="hearts" aria-label="Lives">—</b></div>
