@@ -374,7 +374,7 @@ function buildLinear(rand, width, height, strength) {
     rooms.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, role: node.role, order: node.order });
     patches.push(p);
     cores.push([cx, cy]);
-    rects.push(Math.min(rw, rh));
+    rects.push(Math.min(rw, rh, x1 - x0 + 1, y1 - y0 + 1)); // noise can leave the room thinner than its rectangle
   }
 
   // 5. Corridors: a walk with momentum and side-steps between two room cores, painted with a brush whose width
