@@ -452,6 +452,7 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.strikeMs` | 800 | 100..4000 | live | no | Strike overlay duration, ms |
 | `ui.slashMs` | 340 | 50..2000 | live | no | Slash crescent duration, ms |
 | `ui.fireMs` | 1490 | 200..5000 | live | no | Fire strike blast duration (18 frames), ms |
+| `ui.fireCallMs` | 550 | 0..3000 | live | no | How long the explorer's 'Fire Strike!' shout shows before the blast, ms |
 | `ui.revealAlpha` | 0.42 | 0.1..1 | live | no | Opacity of cells and monsters shown by Reveal map |
 | `ui.bubbleIn` | 200 | 0..2000 | live | no | Thought bubble fade-in, ms |
 | `ui.bubbleOut` | 400 | 0..3000 | live | no | Thought bubble fade-out, ms |

@@ -87,6 +87,8 @@ const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const SHIELD_SLASH_MS = 260;      // the parry crescent: 6 frames like the sword's slash, a little quicker
 let SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
+let FIRE_CALL_MS = 550;          // the explorer shouts FIRE_SHOUT this long before the fire strike's step lands and the blast plays
+const FIRE_SHOUT = 'Fire Strike!';
 let FIRE_MS = 1490;             // the fire strike's blast: 18 sprite frames (fall, burst, burn, smoke), about 83 ms each
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
@@ -1339,7 +1341,8 @@ function currentApproaches() {
 let lastRemark = null;
 function updateThoughts(prime = false) {
   const list = currentApproaches();
-  for (const c of list) think(c.id, c.key, prime ? null : c.text, c.kind, c.tag);
+  const shouting = performance.now() < shoutUntil;
+  for (const c of list) if (!(shouting && c.id === '@')) think(c.id, c.key, prime ? null : c.text, c.kind, c.tag);
   const remark = game?.explorer?.remark;
   const text = typeof remark === 'string' && remark.trim() ? remark.trim() : null;
   if (text && text !== lastRemark && !prime) {
@@ -1352,8 +1355,22 @@ function updateThoughts(prime = false) {
   lastRemark = text;
 }
 
+// The explorer calls out its fire strike: the shout borrows its bubble like a remark, then the approach key is put
+// back. It holds the bubble until shoutUntil (the call plus the first half of the blast): a new approach line waits
+// for the next view after that instead of cutting the shout short.
+let shoutUntil = 0;
+function explorerShout(text) {
+  shoutUntil = performance.now() + FIRE_CALL_MS + FIRE_MS / 2;
+  const t = thoughts.get('@');
+  const approachKey = t?.key ?? null, approachTag = t?.tag ?? null;
+  think('@', `shout:${text}:${performance.now()}`, text, 'explorer');
+  const t2 = thoughts.get('@');
+  t2.key = approachKey; t2.tag = approachTag;
+}
+
 function clearThoughts() {
   lastRemark = null;
+  shoutUntil = 0;
   thoughts.clear();
   bubbleLayer.replaceChildren();
 }
@@ -2049,6 +2066,13 @@ async function loop() {
         break;
       }
 
+      // A fire strike is called out first: the shout shows on the board as it was before the step (the enemies still
+      // standing), then the step lands and the blast plays.
+      if (res.data.turn?.skill_decision?.used === 'fire_strike') {
+        explorerShout(FIRE_SHOUT);
+        await sleep(FIRE_CALL_MS);
+        if (myEpoch !== epoch) continue;
+      }
       game = res.data.game;
       memory = res.data.memory;
       renderTurn(res.data.turn);
@@ -2136,7 +2160,7 @@ async function loadUi() {
     const c = ui.constants ?? {};
     const num = (v, cur) => (Number.isFinite(v) ? v : cur);
     CAM_MS = num(c.camMs, CAM_MS); LOG_MAX = num(c.logMax, LOG_MAX); FADE_MS = num(c.fadeMs, FADE_MS); TWEEN_MS = num(c.tweenMs, TWEEN_MS);
-    BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS); FIRE_MS = num(c.fireMs, FIRE_MS);
+    BOB_MS = num(c.bobMs, BOB_MS); ANIM_MS = num(c.animMs, ANIM_MS); WALK_MS = num(c.walkMs, WALK_MS);     STRIKE_MS = num(c.strikeMs, STRIKE_MS); SLASH_MS = num(c.slashMs, SLASH_MS); FIRE_MS = num(c.fireMs, FIRE_MS); FIRE_CALL_MS = num(c.fireCallMs, FIRE_CALL_MS);
     REVEAL_ALPHA = num(c.revealAlpha, REVEAL_ALPHA); BUBBLE_IN = num(c.bubbleIn, BUBBLE_IN); BUBBLE_OUT = num(c.bubbleOut, BUBBLE_OUT);
     BLINK_MS = num(c.blinkMs, BLINK_MS); COIN_GLOW_MS = num(c.coinGlowMs, COIN_GLOW_MS);
     // The step delay is the slider's starting value; the player can still move it.
