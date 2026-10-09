@@ -61,8 +61,8 @@ const PAGE_ROWS = [
   { key: 'regenSteps', path: 'explorer.regen.steps', group: 'Explorer', label: 'Regen every', hint: 'Steps between natural heals. 0 = no regen.', doc: 'Steps between natural heals of a hurt explorer (0 = no regen)', type: 'range', min: 0, max: 200, step: 1, def: 30, when: 'live', page: false },
   { key: 'regenAmount', path: 'explorer.regen.amount', group: 'Explorer', label: 'Regen amount', hint: 'Lives healed per regen (fractions allowed).', doc: 'Lives healed per natural heal (fractions allowed, up to max lives)', type: 'range', min: 0, max: 3, step: 0.25, def: 0.5, when: 'live', page: false },
   { key: 'lightRadius', path: 'world.lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', doc: 'Cells each visited cell lights up', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },
-  { key: 'minSize', path: 'world.size.min', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', doc: 'Smallest map side', type: 'range', min: 25, max: 90, step: 1, def: 25, when: 'next' },
-  { key: 'maxSize', path: 'world.size.max', group: 'Map', label: 'Max map side', hint: 'Largest width or height.', doc: 'Largest map side', type: 'range', min: 25, max: 90, step: 1, def: 90, when: 'next' },
+  { key: 'minSize', path: 'world.size.min', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', doc: 'Smallest map side', type: 'range', min: 25, max: 150, step: 1, def: 25, when: 'next' },
+  { key: 'maxSize', path: 'world.size.max', group: 'Map', label: 'Max map side', hint: 'Largest width or height.', doc: 'Largest map side', type: 'range', min: 25, max: 150, step: 1, def: 90, when: 'next' },
   { key: 'roomArea', path: 'world.roomArea', group: 'Map', label: 'Cells per room', hint: 'Fewer cells = more, closer rooms (maze layout only).', doc: 'Floor cells per room: lower = more, closer rooms (maze layout only)', type: 'range', min: 120, max: 800, step: 10, def: 290, when: 'next' },
 ];
 

@@ -15,8 +15,8 @@ world:
     max: 6 # Cap on hearts per map (0 = none)
   lightRadius: 7 # Cells each visited cell lights up
   size:
-    min: 25 # Smallest map side
-    max: 90 # Largest map side
+    min: 40 # Smallest map side
+    max: 120 # Largest map side
   roomArea: 290 # Floor cells per room: lower = more, closer rooms
   rooms:
     min: 4 # Smallest room side, cells

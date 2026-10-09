@@ -132,8 +132,8 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.hearts.max` | 6 | 0..20 | next | no | Cap on hearts per map (0 = none) |
 | `world.coins.dropChance` | 0.6 | 0..1 | next | no | Chance a dispelled monster drops a coin (0-1) |
 | `world.lightRadius` | 7 | 3..12 | next | no | Cells each visited cell lights up |
-| `world.size.min` | 25 | 25..90 | next | no | Smallest map side |
-| `world.size.max` | 90 | 25..90 | next | no | Largest map side |
+| `world.size.min` | 25 | 25..150 | next | no | Smallest map side |
+| `world.size.max` | 90 | 25..150 | next | no | Largest map side |
 | `world.roomArea` | 290 | 120..800 | next | no | Floor cells per room: lower = more, closer rooms (maze layout only) |
 | `world.rooms.min` | 4 | 2..10 | next | no | Smallest room side, cells |
 | `world.rooms.max` | 15 | 4..30 | next | no | Largest room side, cells |

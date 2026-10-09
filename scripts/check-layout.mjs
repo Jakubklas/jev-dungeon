@@ -7,7 +7,8 @@
 process.env.JEV_CONFIG = 'none';
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
-const { generateDungeon, configureWorld, MIN_SIZE, MAX_SIZE } = await import('../src/dungeon.js');
+const world = await import('../src/dungeon.js'); // namespace: MIN_SIZE / MAX_SIZE are live bindings that configureWorld changes
+const { generateDungeon, configureWorld } = world;
 
 const SEEDS = Number(process.argv.find((a) => /^\d+$/.test(a))) || 200;
 const QUIET = process.argv.includes('--quiet');
@@ -155,7 +156,7 @@ function run(label, seeds) {
     const ms = performance.now() - t;
     stats.maps++; stats.ms += ms; stats.maxMs = Math.max(stats.maxMs, ms);
     if (JSON.stringify(generateDungeon(seed)) !== JSON.stringify(d)) fail(`${label} seed ${seed}: not deterministic`);
-    if (d.width < MIN_SIZE || d.width > MAX_SIZE || d.height < MIN_SIZE || d.height > MAX_SIZE) fail(`${label} seed ${seed}: size ${d.width}x${d.height}`);
+    if (d.width < world.MIN_SIZE || d.width > world.MAX_SIZE || d.height < world.MIN_SIZE || d.height > world.MAX_SIZE) fail(`${label} seed ${seed}: size ${d.width}x${d.height}`);
     const v = verifyLinear(d);
     for (const e of v.errs.slice(0, 3)) fail(`${label} seed ${seed} (${d.width}x${d.height}): ${e}`);
     if (v.errs.length) continue;
@@ -171,6 +172,10 @@ configureWorld({ minSize: 25, maxSize: 25 });
 run('25x25', Array.from({ length: 40 }, (_, i) => 1000 + i));
 configureWorld({ minSize: 90, maxSize: 90 });
 run('90x90', Array.from({ length: 20 }, (_, i) => 2000 + i));
+configureWorld({ minSize: 120, maxSize: 120 });
+run('120x120', Array.from({ length: 10 }, (_, i) => 2500 + i));
+configureWorld({ minSize: 40, maxSize: 120 });
+run('40..120', Array.from({ length: 30 }, (_, i) => 2600 + i));
 // Skinny maps: sides drawn independently, so look for seeds with one short and one long side.
 configureWorld({ minSize: 25, maxSize: 90 });
 const skinny = [];

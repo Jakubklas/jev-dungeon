@@ -77,7 +77,7 @@ property('dungeon: start and chest are distinct floor cells, and every floor cel
 const WORLD = { layout: LAYOUT, minSize: MIN_SIZE, maxSize: MAX_SIZE, roomMin: ROOM_MIN, roomMax: ROOM_MAX }; // restored after each run (live bindings)
 const linearArb = fc.record({
   seed: seedArb,
-  lo: fc.integer({ min: 25, max: 90 }), hi: fc.integer({ min: 25, max: 90 }),
+  lo: fc.integer({ min: 25, max: 120 }), hi: fc.integer({ min: 25, max: 120 }),
   roomMin: fc.integer({ min: 2, max: 10 }), roomMax: fc.integer({ min: 4, max: 30 }),
 });
 property('linear: walled, all floor reachable, portal clear, every path room on the only way (bar one loop)', fc.property(linearArb, ({ seed, lo, hi, roomMin, roomMax }) => {
