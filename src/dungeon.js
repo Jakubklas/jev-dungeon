@@ -20,6 +20,7 @@ export let EXPLORER_LIVES = 2; // lives the explorer starts with
 export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus loops; 'linear': one winding path of rooms to the portal, with side rooms
 export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
 export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
+export let HEART_RESPAWN = 200; // a picked-up heart comes back on its cell this many steps later (0 = never)
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 
 // Settings hook (src/settings.js). Light radius, lives, size range and room area only matter to a game
@@ -32,6 +33,7 @@ export function configureWorld(o) {
   if (o.lives !== undefined) EXPLORER_LIVES = o.lives;
   if (o.regenSteps !== undefined) REGEN_STEPS = o.regenSteps;
   if (o.regenAmount !== undefined) REGEN_AMOUNT = o.regenAmount;
+  if (o.heartRespawn !== undefined) HEART_RESPAWN = o.heartRespawn;
   if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
   if (o.roomMin !== undefined) ROOM_MIN = o.roomMin;
   if (o.roomMax !== undefined) ROOM_MAX = o.roomMax;
@@ -638,6 +640,8 @@ export class Game {
     this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
     this.coins = 0; // the explorer's total
     this.heartPiles = (dungeon.hearts ?? []).map((c) => [...c]); // floating hearts: stepping on one restores a life (applyMove); replaced, never spliced. Testbed `hearts` option only
+    this.heartsTaken = []; // picked-up hearts waiting to respawn: { cell: [x, y], due: step } (HEART_RESPAWN); replaced, never spliced
+    this.heartAt = null; // the step a heart was last picked up (Run.playTurn's `heart` event reads it)
     this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
     lightAround(this, this.pos);
@@ -699,8 +703,9 @@ export class Game {
   applyMove(dir) {
     if (dir === STAY && !this.won && !this.lost) {
       this.steps++;
+      const respawned = this.respawnHearts();
       const regen = this.regenerate();
-      return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won, regen };
+      return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won, regen, respawned };
     }
     if (this.won || this.lost || !this.legalMoves().includes(dir)) {
       return { moved: false, revealed: 0, revisit: false, won: this.won };
@@ -713,6 +718,7 @@ export class Game {
     this.facing = dir;
     this.steps++;
     this.trail.push([...next]);
+    const respawned = this.respawnHearts(); // before the pickup; one due on this very cell waits (respawnHearts)
     const revealed = lightAround(this, next);
     const here = this.coinPiles.filter((c) => same(c, next)).length;
     if (here) {
@@ -721,14 +727,30 @@ export class Game {
     }
     let healed = 0;
     if (this.health < this.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
+      const taken = this.heartPiles.filter((c) => same(c, next));
       this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
+      if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: this.steps + HEART_RESPAWN }))]; // replace: twin() shares the old array
+      this.heartAt = this.steps;
       healed = round2(Math.min(this.maxHealth, this.health + 1) - this.health); // a fractional health never goes above max
       this.health = round2(this.health + healed);
     }
     const regen = this.regenerate();
     this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
     if (this.won) this.winBy = 'chest';
-    return { moved: true, revealed, revisit, won: this.won, coins: here, healed, regen };
+    return { moved: true, revealed, revisit, won: this.won, coins: here, healed, regen, respawned };
+  }
+
+  // Picked-up hearts whose time has come go back on their own cell. One due on the explorer's cell
+  // waits until it stands elsewhere, so a heart never reappears under it. Called by applyMove after the
+  // step is counted and before the pickup (a stay counts too). Returns how many came back.
+  // The explorer is never told hearts respawn: it just sees one again once its cell is lit.
+  respawnHearts() {
+    if (!this.heartsTaken.length) return 0;
+    const back = this.heartsTaken.filter((h) => h.due <= this.steps && !same(h.cell, this.pos));
+    if (!back.length) return 0;
+    this.heartsTaken = this.heartsTaken.filter((h) => !back.includes(h)); // replace, never splice: twin() shares arrays
+    this.heartPiles = [...this.heartPiles, ...back.map((h) => [...h.cell])];
+    return back.length;
   }
 
   // Slow natural healing: every REGEN_STEPS steps a hurt, living explorer gets REGEN_AMOUNT lives back, up to max.

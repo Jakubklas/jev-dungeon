@@ -111,7 +111,7 @@ for (const k of R.KNOBS) {
 
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
-  regenSteps: D.REGEN_STEPS, regenAmount: D.REGEN_AMOUNT,
+  regenSteps: D.REGEN_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN,
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
   layout: D.LAYOUT,
   torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
@@ -233,11 +233,12 @@ check(S.view().values.minSize <= S.view().values.maxSize, 'an inconsistent file 
 
 // 6b. P1 knobs change the world as asked, and defaults change nothing
 check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'applying the defaults leaves every generated dungeon identical');
-writeFileSync(cfg, 'world: { layout: maze, rooms: { min: 6, max: 9, minCount: 4 }, props: { clusters: { max: 0 }, kinds: { fountain: { weight: 0 } } } }\nmonsters: { spawn: { minSteps: 12 } }\ntestbed: { size: { w: 7, h: 9 }, numAdversaries: 2, props: few }\n');
+writeFileSync(cfg, 'world: { layout: maze, hearts: { respawn: 50 }, rooms: { min: 6, max: 9, minCount: 4 }, props: { clusters: { max: 0 }, kinds: { fountain: { weight: 0 } } } }\nmonsters: { spawn: { minSteps: 12 } }\ntestbed: { size: { w: 7, h: 9 }, numAdversaries: 2, props: few }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();
 check(D.ROOM_MIN === 6 && D.ROOM_MAX === 9 && D.SPAWN_STEPS === 12 && ADV.MIN_SPAWN_STEPS === 12, 'world and spawn knobs reach dungeon.js and adversary.js');
+check(D.HEART_RESPAWN === 50, 'world.hearts.respawn reaches dungeon.js');
 check(CAT.CLUSTER_MAX === 0 && CAT.KINDS.fountain.weight === 0, 'prop knobs reach the catalog');
 const roomsOk = [21, 22, 23, 24, 25].every((seed) => generateDungeon(seed).rooms.every((r) => r.w >= 6 && r.w <= 9 && r.h >= 6 && r.h <= 9));
 check(roomsOk, 'room sizes follow world.rooms.min/max');
@@ -251,7 +252,7 @@ writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();
-check(D.ROOM_MIN === 4 && CAT.CLUSTER_MAX === 3 && CAT.KINDS.fountain.weight === 1 && TB.DEFAULTS.props === 'none' && D.SPAWN_STEPS === 20, 'removing the keys restores every default');
+check(D.ROOM_MIN === 4 && CAT.CLUSTER_MAX === 3 && CAT.KINDS.fountain.weight === 1 && TB.DEFAULTS.props === 'none' && D.SPAWN_STEPS === 20 && D.HEART_RESPAWN === 200, 'removing the keys restores every default');
 check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'and the dungeons are the baseline again');
 
 // 6c. P2: skills, kinds and character tables follow the file; bad lists are refused
