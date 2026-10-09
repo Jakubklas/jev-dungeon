@@ -199,7 +199,7 @@ function frozenThreats(world, remembered) {
 // `avoid` (optional Set from avoidZone): the exploration approaches skip frontier cells in it
 // while any other frontier cell exists.
 // `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage; `fight`: see tacticFeasibility.
-export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null, breakout = null, cornered = false } = {}) {
+export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null, breakout = null, cornered = false, entryOf = null } = {}) {
   // Only the leaving approaches may route through the portal; for all others it is a wall.
   const dist = knownDistances(world, world.pos, null, null, null, approachId === 'go_to_exit');
 
@@ -281,19 +281,39 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     return { ...near, why: `No fully known path to the portal yet; this edge of the known map is closest to it, ${plural(near.steps, 'step')} away.` };
   }
 
+  // Forward preference (progress.js forwardBand): with `entryOf` (the brain's known-path distance from its own start; this
+  // file reads nothing hidden), the exploration approaches choose among the forward edges whenever any has meaningful
+  // reveal. The avoid zone keeps precedence: the band is intersected with the edges outside it, and when the zone covers
+  // the whole band the choice falls back to the open edges as before. A kept goal that lies GOAL_BEHIND_MARGIN or more
+  // behind the forward edge is dropped as soon as an open forward edge exists, so a goal picked while the zone blocked
+  // the way ahead is re-evaluated the moment the zone lapses.
+  const explore = ['nearest_frontier', 'largest_unexplored', 'far_side'].includes(approachId) || !APPROACHES[approachId];
+  const open = avoid?.size ? frontier.filter((f) => !avoid.has(key(f.cell))) : frontier;
+  const cands = open.length ? open : frontier;
+  let pool = cands;
+  let goalBehind = false;
+  if (entryOf && explore && frontier.length) {
+    const { top, band } = forwardBand(frontier.map((f) => ({ ...f, reveal: wouldReveal(world, f.cell) })), entryOf);
+    const ahead = new Set([...band].map((f) => key(f.cell)));
+    const inBand = cands.filter((f) => ahead.has(key(f.cell)));
+    if (inBand.length) {
+      pool = inBand;
+      const gd = goal ? entryOf(goal) : undefined;
+      goalBehind = gd !== undefined && gd <= top - GOAL_BEHIND_MARGIN;
+    }
+  }
+
   // Keep an exploration destination through a temporary encounter. Reaching it may reveal
   // enough that it stops being a frontier; only then do we choose a new edge.
-  if (goal && !sameCell(goal, world.pos) && dist.has(goal) && isFrontier(world, goal) && !avoid?.has(key(goal))) {
+  if (goal && !goalBehind && !sameCell(goal, world.pos) && dist.has(goal) && isFrontier(world, goal) && !avoid?.has(key(goal))) {
     return { cell: [...goal], steps: dist.get(goal), why: `Chosen edge of the known map to the ${compass(world.pos, goal)}, ${plural(dist.get(goal), 'step')} away.` };
   }
   if (!frontier.length) return null;
-  const open = avoid?.size ? frontier.filter((f) => !avoid.has(key(f.cell))) : frontier;
-  const cands = open.length ? open : frontier;
 
   if (approachId === 'largest_unexplored') {
     // Score each edge by the dark space around it (fixed as the explorer walks), minus a
     // travel cost: walking towards the chosen edge makes it cheaper, so it stays chosen.
-    const best = pick(cands, (f) => wouldReveal(world, f.cell, LIGHT_RADIUS * 2) - 4 * f.steps);
+    const best = pick(pool, (f) => wouldReveal(world, f.cell, LIGHT_RADIUS * 2) - 4 * f.steps);
     return { ...best, why: `Edge of the largest dark region, to the ${compass(world.pos, best.cell)}, ${plural(best.steps, 'step')} away.` };
   }
 
@@ -304,12 +324,12 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     const cy = visited.reduce((s, v) => s + v[1], 0) / visited.length;
     // Minus a travel cost (one cell of distance per step) so the target doesn't flip
     // back and forth as that average drifts towards it.
-    const best = pick(cands, (f) => Math.round(Math.hypot(f.cell[0] - cx, f.cell[1] - cy) * 10) - 10 * f.steps);
+    const best = pick(pool, (f) => Math.round(Math.hypot(f.cell[0] - cx, f.cell[1] - cy) * 10) - 10 * f.steps);
     return { ...best, why: `Edge of the known map farthest from where the explorer has been, to the ${compass(world.pos, best.cell)}, ${plural(best.steps, 'step')} away.` };
   }
 
   // nearest_frontier (also the fallback for unknown ids): fewest steps, then most to reveal.
-  const best = pick(cands, (f) => -f.steps * 1000 + wouldReveal(world, f.cell));
+  const best = pick(pool, (f) => -f.steps * 1000 + wouldReveal(world, f.cell));
   return { ...best, why: `Closest edge of the known map, ${plural(best.steps, 'step')} away.` };
 }
 
@@ -602,10 +622,10 @@ export function describeMoves(world, approachId, opts = {}) {
 // The same facts split in two: `shared` (threats, sightings, portal, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
-export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, targetOverride = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false, breakout = null, noGapWarn = false } = {}) {
+export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, targetOverride = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false, breakout = null, noGapWarn = false, entryOf = null } = {}) {
   // A decision tick evaluates tactics once. Reuse that exact observed target for its move
   // options so the selected tactic cannot lose its target between the two prompt sections.
-  const target = targetOverride ?? (approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned, breakout }));
+  const target = targetOverride ?? (approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned, breakout, entryOf }));
   const warnGap = noGapWarn ? 0 : minGap; // cornered: no "below your minimum gap" warnings
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();

@@ -36,7 +36,7 @@ let FLOOR_PER_ADVERSARY = 150; // one adversary per this many floor cells (350 c
 let MAX_ADVERSARIES = 12;
 let PACK_ALERT = true; // a spotter calls in packmates (alertNearby)
 let TEAM_SIGHT = true; // a hunter tracks the explorer through a packmate's sight
-let TROLL_SHARE = 0.25; // chance a spawned monster is a troll (kinds.js)
+let TROLL_SHARE = 0.25; // relative troll weight within ghost + troll; derived kinds mirror these weights
 export let CHARACTERS_ON = false; // adversaryCharacters toggle: mixed characters at spawn, per-ghost patrol RNG, self.character in state
 export let MORALE_ON_SETTING = false; // monsterMorale toggle: every monster keeps a morale score (morale.js)
 export let LIMITED_ON = false; // limitedMap toggle: ghosts know their home zone + what they have seen, not the real map
@@ -96,9 +96,9 @@ export class Adversary {
   #hunt; // brain state (brain.js newHunt)
   #route = null; // cached patrol route, cells still to walk, next first
   #lastRequestBody = null; // exact body of the last Jev request, for auditing
-  #level = 2; // 1-3, fixed at spawn (kinds.js); scales hp and claw damage; 2 with levels off
+  #level = 2; // 1-4, fixed at spawn (kinds.js); fixed-level kinds retain their level with scaling off
   #clawDamage = 1; // lives one claw strike takes, resolved at construction
-  #kind; // monster kind id (kinds.js: 'ghost' | 'troll'), fixed at spawn
+  #kind; // monster kind id (kinds.js), fixed at spawn
   #character; // preset id (character.js), fixed at spawn
   #profile; // profileOf(traits) for that preset
   #home; // spawn cell: the centre of the patrol territory
@@ -109,10 +109,11 @@ export class Adversary {
   #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
   #stun = 0; // ticks of stun left: no step, no Jev call
 
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', level, hp, skills }) {
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character, kind = 'ghost', level, hp, skills }) {
     const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
-    if (level !== undefined && (!Number.isInteger(level) || level < 1 || level > 3)) throw new TypeError(`monster level must be 1, 2 or 3, got ${JSON.stringify(level)}`);
-    this.#level = levelsOn() ? (level ?? defaultLevel(kind)) : defaultLevel(kind); // levels off: every monster is level 2
+    if (level !== undefined && (!Number.isInteger(level) || level < 1 || level > 4)) throw new TypeError(`monster level must be 1, 2, 3 or 4, got ${JSON.stringify(level)}`);
+    this.#level = spec.fixedLevel ?? (levelsOn() ? (level ?? defaultLevel(kind)) : defaultLevel(kind)); // kind-fixed levels survive scaling off
+    character ??= spec.character ?? 'standard';
     this.id = id;
     this.pos = pos;
     this.mode = mode;
@@ -344,7 +345,7 @@ export function spawnAdversaries(dungeon) {
   const characters = CHARACTERS_ON ? assignSpawnCharacters(dungeon.seed, picked.length) : [];
   const kinds = assignKinds(dungeon.seed, picked.length, TROLL_SHARE);
   const levels = assignLevels(dungeon.seed, kinds); // its own stream, after the kinds
-  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i], level: levels[i] }));
+  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: kindOf(kinds[i]).character ?? characters[i] ?? 'standard', kind: kinds[i], level: levels[i] }));
 }
 
 // The numbers this ghost's code runs with. A standard ghost follows the live settings (today's behaviour);

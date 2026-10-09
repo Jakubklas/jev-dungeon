@@ -184,7 +184,7 @@ async function duel({ kind, level, lives, ticks = 12, levelsOn = true }) {
 {
   configureLevels({ levelsEnabled: true });
   const clawOf = (a) => a.skills.skills.find((k) => k.kind === 'attack').damage;
-  const want = { 'ghost1': 1, 'ghost2': 1, 'troll2': 2, 'troll3': 3 };
+  const want = { 'ghost1': 1, 'ghost2': 1, 'troll2': 2, 'troll3': 3, 'tree_giant4': 3, 'wolf2': 1 };
   // The server path: spawned monsters of 40 seeds.
   const seen = new Set();
   for (let seed = 1; seed <= 40; seed++) {
@@ -194,9 +194,9 @@ async function duel({ kind, level, lives, ticks = 12, levelsOn = true }) {
       check(a.clawDamage === clawOf(a) && a.clawDamage === want[k], `spawned ${k}: claw ${a.clawDamage} (skill ${clawOf(a)}, want ${want[k]})`);
     }
   }
-  check(['ghost1', 'ghost2', 'troll2', 'troll3'].every((k) => seen.has(k)), 'spawn covers ghost 1/2 and troll 2/3');
+  check(Object.keys(want).every((k) => seen.has(k)), 'spawn covers ghost 1/2 and troll 2/3');
   // The testbed path.
-  for (const [kind, level] of [['ghost', 1], ['ghost', 2], ['troll', 2], ['troll', 3]]) {
+  for (const [kind, level] of [['ghost', 1], ['ghost', 2], ['troll', 2], ['troll', 3], ['tree_giant', 4], ['wolf', 2]]) {
     for (const mode of ['testbed']) {
       const run = newTestGame({ map: ['#######', '#######', '#@A...#', '#######', '#######'], seed: 1, kinds: [kind], levels: [level] }, { ask: makeAsk([]) });
       const a = run.game.adversaries[0];

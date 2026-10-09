@@ -5,7 +5,7 @@ Settings live in `central-config.yaml` (`JEV_CONFIG=<path>` for another file). `
 
 ## monsters
 
-Ghosts and trolls: speed, packs, spawn, stats, characters.
+Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
@@ -109,12 +109,24 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.morale.bands.steady` | 40 | 0..100 | live | no | Morale from this up reads steady |
 | `monsters.morale.bands.wavering` | 30 | 0..100 | live | no | Morale from this up reads wavering |
 | `monsters.levels.enabled` | true | on/off | next | no | true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today) |
-| `monsters.levels.hpMult` | [0.5,1,1.5] | 3 numbers 0.1..10 | next | no | Multiplier on the kind hp at level 1/2/3 (rounded, at least 1) |
-| `monsters.levels.dmgMult` | [1,1,1.5] | 3 numbers 0.1..10 | next | no | Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1) |
+| `monsters.levels.hpMult` | [0.5,1,1.5,2] | 4 numbers 0.1..10 | next | no | Multiplier on the kind hp at level 1/2/3/4 (rounded, at least 1) |
+| `monsters.levels.dmgMult` | [1,1,1.5,1.5] | 4 numbers 0.1..10 | next | no | Multiplier on the kind claw damage at level 1/2/3/4 (rounded, at least 1) |
 | `monsters.levels.weights.ghost` | [1,1] | 2 numbers 0..100 | next | no | Relative spawn weight of a ghost at level 1/2 (all 0 = even) |
 | `monsters.levels.weights.troll` | [1,1] | 2 numbers 0..100 | next | no | Relative spawn weight of a troll at level 2/3 (all 0 = even) |
 | `monsters.levels.cautionClaws` | 1 | 1..10 | live | no | Too strong to fight: this many claws or fewer kill the explorer and one strike will not dispel it |
-| `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls) |
+| `monsters.kinds.tree_giant.hp` | 4 | 1..20 | next | no | Tree giant base hp before level scaling |
+| `monsters.kinds.tree_giant.clawDamage` | 2 | 1..6 | next | no | Tree giant base attack damage before level scaling |
+| `monsters.kinds.tree_giant.speed` | 0.45 | 0.1..1.5 | next | no | Tree giant movement share of global monster speed |
+| `monsters.kinds.tree_giant.stunTicks` | 0 | 0..6 | next | no | Tree giant stun ticks after a sword hit |
+| `monsters.kinds.tree_giant.clawCooldown` | 3 | 0..6 | next | no | Tree giant steps between attacks |
+| `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
+| `monsters.kinds.wolf.hp` | 3 | 1..20 | next | no | Wolf base hp before level scaling |
+| `monsters.kinds.wolf.clawDamage` | 1 | 1..6 | next | no | Wolf base attack damage before level scaling |
+| `monsters.kinds.wolf.speed` | 1.2 | 0.1..1.5 | next | no | Wolf movement share of global monster speed |
+| `monsters.kinds.wolf.stunTicks` | 1 | 0..6 | next | no | Wolf stun ticks after a sword hit |
+| `monsters.kinds.wolf.clawCooldown` | 1 | 0..6 | next | no | Wolf steps between attacks |
+| `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |
+| `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (wolves match ghost weight, tree giants use half troll weight) |
 | `monsters.kinds.troll.weight` | 0.25 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds |
 | `monsters.characters.mix` | "mixed" | "mixed" / "standard" / weights | next | no | Character mix of spawned monsters |
 | `monsters.characters.presets.<id>.<trait|style>` | (built-in presets) | traits 1..3, style text | next | no | Trait levels and style line of an existing character preset |
@@ -168,6 +180,9 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.props.kinds.storage_chest.weight` | 2 | 0..10 | next | no | How often storage_chest is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.fountain.weight` | 1 | 0..10 | next | no | How often fountain is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.forge.weight` | 1 | 0..10 | next | no | How often forge is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.ore.weight` | 2 | 0..10 | next | no | How often ore is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.statue.weight` | 1 | 0..10 | next | no | How often statue is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.candle_table.weight` | 1 | 0..10 | next | no | How often candle_table is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.pots.weight` | 3 | 0..10 | next | no | How often pots is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.skull.weight` | 2 | 0..10 | next | no | How often skull is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.tools.weight` | 2 | 0..10 | next | no | How often tools is picked, relative to its class (0 = never picked at random) |
@@ -178,6 +193,7 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.props.kinds.arch.weight` | 2 | 0..10 | next | no | How often arch is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.gate.weight` | 2 | 0..10 | next | no | How often gate is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.banner.weight` | 2 | 0..10 | next | no | How often banner is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.candle_nook.weight` | 2 | 0..10 | next | no | How often candle_nook is picked, relative to its class (0 = never picked at random) |
 
 ## player
 
@@ -200,6 +216,7 @@ The knight: lives and protection after a hit.
 | `explorer.lives` | 4 | 1..9 | next | yes | Lives the explorer starts with |
 | `explorer.regen.steps` | 30 | 0..200 | live | no | Steps between natural heals of a hurt explorer (0 = no regen) |
 | `explorer.regen.amount` | 0.5 | 0..3 | live | no | Lives healed per natural heal (fractions allowed, up to max lives) |
+| `explorer.progress.redirect` | true | on/off | next | no | true = a sustained retreat is redirected to the deepest known frontier; false = tracked only |
 | `explorer.skills` | ["sword_strike","shield_block","fire_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
 | `explorer.brain.reviewEvery` | 8 | 1..50 | live | no | Steps between approach reviews |
 | `explorer.brain.approachFailing` | 0.5 | 0..1 | live | no | approach_working below this switches the approach |
@@ -499,3 +516,23 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.thoughts.troll.caught` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Troll bubble lines for caught |
 | `ui.thoughts.explorer.weak_target` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Explorer remark lines on first sighting a weak target (in order) |
 | `ui.thoughts.explorer.too_strong` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Explorer remark lines on first sighting a too-strong monster (in order) |
+| `ui.thoughts.tree_giant.direct_pursuit` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for direct_pursuit |
+| `ui.thoughts.tree_giant.cut_off` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for cut_off |
+| `ui.thoughts.tree_giant.sweep_last_seen` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for sweep_last_seen |
+| `ui.thoughts.tree_giant.struck` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for struck |
+| `ui.thoughts.tree_giant.hit` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for hit |
+| `ui.thoughts.tree_giant.blocked` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for blocked |
+| `ui.thoughts.tree_giant.bump` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for bump |
+| `ui.thoughts.tree_giant.alerted` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for alerted |
+| `ui.thoughts.tree_giant.gave_up` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for gave_up |
+| `ui.thoughts.tree_giant.caught` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Tree giant bubble lines for caught |
+| `ui.thoughts.wolf.direct_pursuit` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for direct_pursuit |
+| `ui.thoughts.wolf.cut_off` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for cut_off |
+| `ui.thoughts.wolf.sweep_last_seen` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for sweep_last_seen |
+| `ui.thoughts.wolf.struck` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for struck |
+| `ui.thoughts.wolf.hit` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for hit |
+| `ui.thoughts.wolf.blocked` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for blocked |
+| `ui.thoughts.wolf.bump` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for bump |
+| `ui.thoughts.wolf.alerted` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for alerted |
+| `ui.thoughts.wolf.gave_up` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for gave_up |
+| `ui.thoughts.wolf.caught` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Wolf bubble lines for caught |

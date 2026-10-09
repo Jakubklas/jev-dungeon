@@ -1,6 +1,6 @@
-// Monster kinds: what an adversary IS (ghost, troll), apart from its personality (`character.js`, a preset of
+// Monster kinds: what an adversary IS, apart from its personality (`character.js`, a preset of
 // traits). A kind owns the attributes that differ per monster: hit points, skill loadout, and later lives, speed
-// and traits of its own. The troll is a ghost in everything but looks today; its row is where it will diverge.
+// and a dedicated personality when the kind calls for one.
 // Pure data plus one seeded draw; imports only the skill config and `rng`.
 import { rng } from '../../dungeon.js';
 import { skillConfig } from '../../skills/config.js';
@@ -21,6 +21,18 @@ export const KINDS = {
     stunTicks: () => skillConfig().trollStunTicks,
     tuning: () => ({ claw_strike: { damage: skillConfig().trollClawDamage, ...(skillConfig().trollClawCooldown == null ? {} : { cooldown: skillConfig().trollClawCooldown }) } }),
   },
+  tree_giant: {
+    id: 'tree_giant', name: 'Tree giant', fixedLevel: 4, character: 'ancient_guardian',
+    hp: () => skillConfig().treeGiantHp, speed: () => skillConfig().treeGiantSpeed,
+    get skills() { return skillConfig().treeGiantSkills; }, stunTicks: () => skillConfig().treeGiantStunTicks,
+    tuning: () => ({ claw_strike: { damage: skillConfig().treeGiantClawDamage, cooldown: skillConfig().treeGiantClawCooldown } }),
+  },
+  wolf: {
+    id: 'wolf', name: 'Wolf', fixedLevel: 2, character: 'pack_stalker',
+    hp: () => skillConfig().wolfHp, speed: () => skillConfig().wolfSpeed,
+    get skills() { return skillConfig().wolfSkills; }, stunTicks: () => skillConfig().wolfStunTicks,
+    tuning: () => ({ claw_strike: { damage: skillConfig().wolfClawDamage, cooldown: skillConfig().wolfClawCooldown } }),
+  },
 };
 export const KIND_IDS = Object.keys(KINDS);
 
@@ -34,32 +46,40 @@ export function kindOf(id) {
 // monster in order, so a monster's kind never depends on how many monsters exist and dungeons never change.
 export function assignKinds(seed, count, trollShare) {
   const rand = rng(seed ^ 0x7f4a7c15);
-  return Array.from({ length: count }, () => (rand() < trollShare ? 'troll' : 'ghost'));
+  const t = Math.min(1, Math.max(0, trollShare));
+  // Preserve the ghost:troll tuning; wolf mirrors ghost and the giant is half as common as troll.
+  const weights = [['ghost', 1 - t], ['troll', t], ['tree_giant', t / 2], ['wolf', 1 - t]];
+  const total = weights.reduce((sum, [, weight]) => sum + weight, 0);
+  return Array.from({ length: count }, () => {
+    let draw = rand() * total;
+    for (const [kind, weight] of weights) { if (draw < weight) return kind; draw -= weight; }
+    return weights.findLast(([, weight]) => weight > 0)[0];
+  });
 }
 
-// Testbed `kinds` value -> one kind id per monster: 'ghost' | 'troll' | 'mixed' (the spawn draw at 0.5) | a list, cycled.
+// Testbed `kinds` value -> one kind id per monster: 'ghost' | 'troll' | 'tree_giant' | 'wolf' | 'mixed' (the spawn draw at 0.5) | a list, cycled.
 export function kindsFor(spec, seed, count) {
   if (spec === 'mixed') return assignKinds(seed, count, 0.5);
   if (Array.isArray(spec)) return Array.from({ length: count }, (_, i) => spec[i % spec.length]);
   return Array.from({ length: count }, () => spec);
 }
 
-// ---- Levels (PLAN-levels.md): every monster has a level 1-3 that scales its hp and claw damage ----
+// ---- Levels (PLAN-levels.md): every monster has a level 1-4 that scales its hp and claw damage ----
 
-// The levels each kind can be drawn at. A constructor may be given any level 1-3 (tests); the draw stays in range.
-export const LEVEL_RANGE = Object.freeze({ ghost: Object.freeze([1, 2]), troll: Object.freeze([2, 3]) });
-export const LEVELS = Object.freeze([1, 2, 3]);
+// The levels each kind can be drawn at. A constructor may be given any level 1-4 (tests); the draw stays in range.
+export const LEVEL_RANGE = Object.freeze({ ghost: Object.freeze([1, 2]), troll: Object.freeze([2, 3]), tree_giant: Object.freeze([4, 4]), wolf: Object.freeze([2, 2]) });
+export const LEVELS = Object.freeze([1, 2, 3, 4]);
 
-// Central config (monsters.levels.*; runtime.js calls configureLevels). Off = every monster is level 2 with today's stats.
+// Central config (monsters.levels.*; runtime.js calls configureLevels). Off = kind base stats; fixed-level kinds retain their level.
 let LEVELS_ON = true;
-let HP_MULT = [0.5, 1, 1.5]; // by level 1/2/3
-let DMG_MULT = [1, 1, 1.5];
+let HP_MULT = [0.5, 1, 1.5, 2]; // by level 1/2/3/4
+let DMG_MULT = [1, 1, 1.5, 1.5];
 let WEIGHTS = { ghost: [1, 1], troll: [1, 1] }; // per level of LEVEL_RANGE[kind], low to high
 const tuple = (v, n) => Array.isArray(v) && v.length === n && v.every((x) => typeof x === 'number' && Number.isFinite(x));
 export function configureLevels(o) {
   if (o.levelsEnabled !== undefined) LEVELS_ON = Boolean(o.levelsEnabled);
-  if (tuple(o.levelHpMult, 3)) HP_MULT = [...o.levelHpMult];
-  if (tuple(o.levelDmgMult, 3)) DMG_MULT = [...o.levelDmgMult];
+  if (tuple(o.levelHpMult, 4)) HP_MULT = [...o.levelHpMult];
+  if (tuple(o.levelDmgMult, 4)) DMG_MULT = [...o.levelDmgMult];
   if (tuple(o.levelWeightGhost, 2)) WEIGHTS.ghost = [...o.levelWeightGhost];
   if (tuple(o.levelWeightTroll, 2)) WEIGHTS.troll = [...o.levelWeightTroll];
 }
@@ -83,7 +103,7 @@ export function assignLevels(seed, kinds) {
   return kinds.map((kind) => {
     const r = rand(); // drawn even when levels are off, so a toggle never shifts the stream
     const [lo, hi] = LEVEL_RANGE[kindOf(kind).id];
-    if (!LEVELS_ON) return defaultLevel(kind);
+    if (!LEVELS_ON || kindOf(kind).fixedLevel) return defaultLevel(kind);
     const w = WEIGHTS[kind].map((x) => Math.max(0, x));
     const total = w.reduce((a, b) => a + b, 0);
     if (!(total > 0)) return lo + Math.min(hi - lo, Math.floor(r * (hi - lo + 1))); // all weights 0: uniform
@@ -93,20 +113,20 @@ export function assignLevels(seed, kinds) {
   });
 }
 
-// Testbed `levels` value -> one level per monster: 'random' (assignLevels) | a number 1-3 | a list, cycled.
+// Testbed `levels` value -> one level per monster: 'random' (assignLevels) | a number 1-4 | a list, cycled.
 export function levelsFor(spec, seed, kinds) {
   if (spec === 'random') return assignLevels(seed, kinds);
-  if (Array.isArray(spec)) return kinds.map((_, i) => spec[i % spec.length]);
-  return kinds.map(() => spec);
+  if (Array.isArray(spec)) return kinds.map((kind, i) => kindOf(kind).fixedLevel ?? spec[i % spec.length]);
+  return kinds.map((kind) => kindOf(kind).fixedLevel ?? spec);
 }
 
 // A kind's hp and claw damage at a level: the kind base times the level's multiplier (min 1, rounded).
 // Levels off: the base, whatever the level. Speed and stun never change with level.
 export function levelStats(kind, level) {
   const spec = kindOf(kind);
-  if (!Number.isInteger(level) || level < 1 || level > 3) throw new TypeError(`monster level must be 1, 2 or 3, got ${JSON.stringify(level)}`);
+  if (!Number.isInteger(level) || level < 1 || level > 4) throw new TypeError(`monster level must be 1, 2, 3 or 4, got ${JSON.stringify(level)}`);
   const cfg = skillConfig();
-  const baseClaw = spec.id === 'troll' ? cfg.trollClawDamage : cfg.clawDamage;
+  const baseClaw = spec.tuning().claw_strike?.damage ?? cfg.clawDamage;
   if (!LEVELS_ON) return { hp: spec.hp(), clawDamage: baseClaw };
   return {
     hp: Math.max(1, Math.round(spec.hp() * HP_MULT[level - 1])),

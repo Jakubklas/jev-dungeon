@@ -28,6 +28,8 @@ const check = (ok, msg) => ok || fail(msg);
 {
   const snap = (id) => { const p = profileOf(traitsOf(id)); return [p.chaseRange, p.restTicks, p.maxSearchTicks, p.keepHuntingMin, p.sweepRadius, p.cutMax, p.homeRadius, p.alertSteps, p.answersCalls, p.makesCalls, p.preferredSearch].map(String).join('|'); };
   const expected = {
+    ancient_guardian: '7|0|32|0.3|14|36|14|8|false|false|cut_off',
+    pack_stalker: '7|0|32|0.3|10|24|null|40|true|true|null',
     standard: '7|3|18|0.5|10|24|24|24|true|true|null',
     aggressive: '7|0|18|0.5|6|12|24|24|true|true|sweep_last_seen',
     pursuer: '7|3|32|0.3|10|24|24|24|true|true|null',
@@ -38,7 +40,7 @@ const check = (ok, msg) => ok || fail(msg);
     territorial: '7|0|18|0.5|10|24|14|8|false|false|null',
     rover: '7|3|10|0.65|6|12|null|24|true|true|sweep_last_seen',
   };
-  check(PRESET_IDS.length === 9, '9 presets');
+  check(PRESET_IDS.length === 11, '11 presets (two kind-specific personalities)');
   for (const id of PRESET_IDS) check(snap(id) === expected[id], `${id} snapshot ${snap(id)} !== ${expected[id]}`);
 }
 

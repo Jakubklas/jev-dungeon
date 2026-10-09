@@ -8,6 +8,8 @@ export const RESERVED_TRAITS = ['caution']; // not in any preset; wakes keepDist
 
 // Order: aggression, persistence, horizon, roaming, pack. Style is the one sentence sent to Jev.
 export const PRESETS = {
+  ancient_guardian: { traits: [3, 3, 3, 1, 1], style: 'An ancient keeper of roots and stone; remembers trespassers, guards its grove and speaks with slow certainty.' },
+  pack_stalker: { traits: [3, 3, 2, 3, 3], style: 'A sharp-nosed hunter; follows the scent, howls to the pack and circles around prey before snapping.' },
   standard: { traits: [2, 2, 2, 2, 2], style: 'A steady hunter.' },
   aggressive: { traits: [3, 2, 1, 2, 2], style: 'Charges straight at the explorer and does not plan far ahead.' },
   pursuer: { traits: [2, 3, 2, 2, 2], style: 'Never lets go of a trail until it is stone cold.' },
@@ -21,7 +23,7 @@ export const PRESETS = {
 const DEFAULT_PRESETS = JSON.parse(JSON.stringify(PRESETS));
 export const defaultPresets = () => JSON.parse(JSON.stringify(DEFAULT_PRESETS)); // the built-in presets, whatever the central file says
 export const PRESET_IDS = Object.keys(PRESETS);
-export const SPECIAL_IDS = PRESET_IDS.filter((id) => id !== 'standard');
+export const SPECIAL_IDS = PRESET_IDS.filter((id) => !['standard', 'ancient_guardian', 'pack_stalker'].includes(id));
 
 export const WORDS = {
   aggression: ['hesitant', 'steady', 'fierce'],

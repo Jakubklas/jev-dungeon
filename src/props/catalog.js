@@ -12,6 +12,11 @@ export const KINDS = {
   // forge: the big furnace. Never part of a random cluster (single keeps it out of the multi-cell pools); it is
   // placed by place.js as one footprint of FORGE_SHAPES cells (4-6), or listed in the testbed with w/h. Glows.
   forge: { cls: 'solid', solid: true, single: true, footprint: true, weight: 1 },
+  // image props (public/props/image-art.js, converted from art-src/new-props/): ore rocks (10 looks), a statue (2 looks)
+  // and a candle table. The renderer picks a look per cell with a hash.
+  ore: { cls: 'solid', solid: true, weight: 2 },
+  statue: { cls: 'solid', solid: true, single: true, weight: 1 },
+  candle_table: { cls: 'solid', solid: true, single: true, weight: 1 }, // candles glow
   pots: { cls: 'small', solid: false, weight: 3 },
   skull: { cls: 'small', solid: false, weight: 2 },
   tools: { cls: 'small', solid: false, weight: 2 },
@@ -23,6 +28,7 @@ export const KINDS = {
   arch: { cls: 'decor', big: true, weight: 2 },
   gate: { cls: 'decor', big: true, weight: 2 },
   banner: { cls: 'decor', big: true, weight: 2 },
+  candle_nook: { cls: 'decor', big: true, weight: 2 }, // arched nook over a candle table, already isometric art (image-art.js)
 };
 
 const ids = (cls) => Object.keys(KINDS).filter((k) => KINDS[k].cls === cls);

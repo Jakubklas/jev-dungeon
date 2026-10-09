@@ -21,7 +21,8 @@ import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
-import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell, step as nextCell } from './known-map.js';
+import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, reachableFrontier, sameCell, step as nextCell, wouldReveal } from './known-map.js';
+import { RETREAT_COOLDOWN, RETREAT_THREAT_STEPS, closingOnGoal, forwardEdge, isRetreat, pushSample } from './progress.js';
 import { cornerFacts, holdGhost, knownLineOfSight, matchup, remarkLine, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
@@ -266,6 +267,23 @@ export class ExplorerBrain {
   // ({ cell, until } with the route cell and the last step it is kept to; route and full only).
   #corner = null;
   #route = null;
+  // Known-path progress (progress.js, DUNGEON_DIRECTION_PLAN section 4). Private, never in memory.json: the explorer's
+  // own start cell, the BFS from it over known floor (rebuilt only when the known map changed), the furthest
+  // entryDistance reached, the per-tick samples, and the step the last redirect fired. #forward = the cell a redirect
+  // or a finished detour committed the exploration goal to; #backtrack = true when that was the plain nearest frontier
+  // because nothing forward was left (informational). Walking toward the committed goal (known-path steps to it falling
+  // across the window) is never flagged as a retreat; walking away from it is.
+  #entry;
+  #entryDist = null;
+  #entryKey = '';
+  #entryDistance = 0;
+  #furthestEntry = 0;
+  #samples = [];
+  #retreatAt = -Infinity;
+  #retreats = 0;
+  #forward = null;
+  #backtrack = false;
+  #progressOn = true;
   // Cells a tactic must not target any more: set when a ping-pong made the tactic fail (the cells it
   // bounced between and the target that led there), so the re-decision is a different one. Cleared
   // when the encounter starts or ends.
@@ -306,12 +324,14 @@ export class ExplorerBrain {
   #capFired = new Set();
   #visibleIds = new Set();
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false } = {}) {
+  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
+    this.#progressOn = progress !== false; // measurement arm (scripts/measure-progress.mjs): false = track progress but never redirect
     this.#wExtra = confidence && typeof confidence === 'object' ? confidence.wPerExtra : undefined; // arm object only: the measurement compares W_PER_EXTRA 0.35 and 0.5
     this.#fixedMood = confidence?.fixedMood === true;
     this.#holdOn = hold; // 'multi' (default) also holds against 2-3 enemies; true = one enemy only, false = no hold (the duel checks that prove what the hold buys, P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
+    this.#entry = [...world.pos];
     this.#ask = ask ?? askReal;
     this.#memoryDir = memoryDir ?? MEMORY_DIR;
     const memory = createMemory({
@@ -646,6 +666,99 @@ export class ExplorerBrain {
     return target;
   }
 
+  // Known-path progress for this tick: entryDistance from the explorer's own start over known floor (BFS rebuilt only
+  // when the known map changed), the furthest reached, and one sample for the retreat window. Own start, own
+  // position and lit cells only. Also drops a committed forward goal that is reached, no longer an edge, or no longer
+  // ours (the approach changed).
+  #trackProgress() {
+    const world = this.#world;
+    const k = `${world.knownFloorCount()}|${world.seenTreasure() ? 1 : 0}`;
+    if (k !== this.#entryKey) { this.#entryDist = knownDistances(world, this.#entry); this.#entryKey = k; }
+    const d = this.#entryDist.get(world.pos);
+    if (d !== undefined) {
+      this.#entryDistance = d;
+      this.#furthestEntry = Math.max(this.#furthestEntry, d);
+    }
+    if (!this.#quiet()) this.#samples = [];
+    else if (d !== undefined) pushSample(this.#samples, { d, revisit: (world.visits[key(world.pos)] ?? 0) > 1, g: this.#forward ? knownDistances(world, world.pos).get(this.#forward) : undefined });
+    const f = this.#forward;
+    if (f && (sameCell(f, world.pos) || !isFrontier(world, f) || this.#approachGoal?.id !== this.#memory.approach.id || !sameCell(this.#approachGoal.cell, f))) {
+      if (this.#approachGoal && sameCell(this.#approachGoal.cell, f) && (sameCell(f, world.pos) || !isFrontier(world, f))) this.#approachGoal = null;
+      this.#forward = null;
+      this.#backtrack = false;
+    }
+  }
+
+  // Reachable frontier cells keeping clear of the avoid zone and the ping-pong exclusions while any other exists.
+  #openFrontier() {
+    const world = this.#world;
+    const all = reachableFrontier(world, knownDistances(world, world.pos));
+    const open = all.filter((f) => !this.#zone.has(key(f.cell)) && !this.#exclude?.has(key(f.cell)));
+    return open.length ? open : all;
+  }
+
+  // The nearest edge among the forward ones (entryDistance within FORWARD_SLACK of the furthest), or null.
+  #forwardTarget(frontier) {
+    const fwd = forwardEdge(frontier, (c) => this.#entryDist.get(c));
+    return pick(fwd, (f) => -f.steps * 1000 + wouldReveal(this.#world, f.cell));
+  }
+
+  // Commits the exploration goal of the current approach to `cell` (the existing goal machinery: approachTarget keeps it
+  // while it is a reachable edge outside the avoid zone, so Jev's move options follow it).
+  #commitForward(cell, backtrack) {
+    this.#approachGoal = { id: this.#memory.approach.id, cell: [...cell] };
+    this.#forward = [...cell];
+    this.#backtrack = backtrack;
+  }
+
+  // A coin or heart detour just ended: resume the forward edge. Only when it differs from the plain nearest edge, so a
+  // detour that ends beside the way on changes nothing.
+  #resumeForward() {
+    if (!this.#progressOn) return;
+    if (this.#world.seenTreasure()) return;
+    const frontier = this.#openFrontier();
+    const fwd = this.#forwardTarget(frontier);
+    const near = pick(frontier, (f) => -f.steps * 1000 + wouldReveal(this.#world, f.cell));
+    if (fwd && near && !sameCell(fwd.cell, near.cell)) this.#commitForward(fwd.cell, false);
+  }
+
+  // True when nothing is asking the explorer to be where it is: an exploration approach, no directive, no encounter,
+  // no pending decision, no coin question due, not leaving, nothing in sight and no sighting younger than
+  // RETREAT_THREAT_STEPS. While it is false the retreat window is cleared, so a detour or a fight is never counted as
+  // retreat afterwards.
+  #quiet() {
+    const world = this.#world;
+    const info = this.#encounter;
+    if (!['nearest_frontier', 'largest_unexplored', 'far_side'].includes(this.#memory.approach.id)) return false;
+    if (this.directive || info.active || info.pending || this.#coinDue || this.#leaving() || this.#leaveDue || exitSeen(world)) return false;
+    return !this.#visibleIds.size && !this.#remembered.some((r) => world.steps - r.step <= RETREAT_THREAT_STEPS);
+  }
+
+  // Retreat: entryDistance fell RETREAT_CELLS over RETREAT_WINDOW ticks on already-visited ground with nothing asking for
+  // it (no tactic, adversary in sight or recently remembered, directive, pending decision, portal run, heal, coin trip).
+  // Then the exploration goal goes to the forward edge; with none left (everything ahead explored) to the plain nearest edge,
+  // and that back-track is not flagged again while it is walked. Cooldown RETREAT_COOLDOWN steps.
+  #checkRetreat() {
+    if (!this.#progressOn) return;
+    const world = this.#world;
+    if (world.steps - this.#retreatAt < RETREAT_COOLDOWN || !isRetreat(this.#samples) || closingOnGoal(this.#samples)) return;
+    if (!this.#quiet()) return;
+    if (world.health < world.maxHealth && heartTarget(world, knownDistances(world, world.pos))) return;
+    const frontier = this.#openFrontier();
+    if (!frontier.length) return;
+    const fwd = this.#forwardTarget(frontier);
+    const target = fwd ?? pick(frontier, (f) => -f.steps * 1000 + wouldReveal(world, f.cell));
+    this.#commitForward(target.cell, !fwd);
+    this.#retreatAt = world.steps;
+    this.#retreats++;
+    this.#samples = [];
+  }
+
+  // Read-only view of the progress bookkeeping (checks and the UI; nothing here reaches Jev or memory.json).
+  get progress() {
+    return { entryDistance: this.#entryDistance, furthestEntry: this.#furthestEntry, retreats: this.#retreats, retreatAt: this.#retreatAt, forward: this.#forward && [...this.#forward], backtrack: this.#backtrack };
+  }
+
   #pinApproachGoal(id) {
     // `nearest_frontier` is intentionally re-evaluated: it is a local next-step policy, unlike
     // a far-side / largest-region expedition or a heart run, and must keep steering around a
@@ -665,6 +778,7 @@ export class ExplorerBrain {
     const prev = world.steps;
     this.#lastBodies = [];
     this.#observe();
+    this.#trackProgress();
     // A tactic goal that was reached is done: left in place it would pull the explorer back to it later.
     if (this.#tacticGoal && sameCell(this.#tacticGoal.cell, world.pos)) this.#tacticGoal = null;
     let policy = null;
@@ -674,6 +788,7 @@ export class ExplorerBrain {
     if (memory.approach.id === 'collect_coins' && !this.#target('collect_coins')) {
       changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
       this.#pinApproachGoal('nearest_frontier');
+      this.#resumeForward(); // the detour is over: pick up the forward edge, not whatever edge is nearest the detour cell
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
     }
@@ -682,6 +797,7 @@ export class ExplorerBrain {
     if (memory.approach.id === 'heal' && !this.#target('heal')) {
       changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
       this.#pinApproachGoal('nearest_frontier');
+      this.#resumeForward();
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'heal', to: 'nearest_frontier', reason: world.health >= world.maxHealth ? 'lives are full' : 'no seen heart left to reach' };
     } else if (!policy && !this.directive && !isTactic(memory.approach.id) && !['heal', 'go_to_exit'].includes(memory.approach.id) && !this.#leaving() &&
@@ -695,6 +811,7 @@ export class ExplorerBrain {
         policy = { from, to: 'heal', reason: `hurt (${world.health} of ${world.maxHealth} lives) and a heart is ${heart.steps} steps away` };
       }
     }
+    this.#checkRetreat();
     // A frontier can cease to be an edge after the last move revealed its surroundings. Commit a
     // replacement only for the current approach; candidate approaches in a review remain dynamic.
     if (!isTactic(memory.approach.id) && memory.approach.id !== 'go_to_exit' && !this.#goal() && !this.#remembered.some((r) => r.chasing)) this.#pinApproachGoal(memory.approach.id);

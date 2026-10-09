@@ -12,7 +12,7 @@ let fails = 0;
 const check = (ok, msg) => { if (!ok) { fails++; console.log(`FAIL: ${msg}`); } };
 globalThis.fetch = () => { throw new Error('fetch tripwire: kinds checks must not call Jev'); };
 
-check(KIND_IDS.join() === 'ghost,troll', 'kinds are ghost and troll');
+check(KIND_IDS.join() === 'ghost,troll,tree_giant,wolf', 'four supported monster kinds');
 check(kindOf('troll').name === 'Troll', 'kindOf troll');
 let threw = false; try { kindOf('toString'); } catch { threw = true; }
 check(threw, 'kindOf rejects an unknown id (also an Object.prototype name)');
@@ -42,12 +42,30 @@ for (let seed = 1; seed <= 30; seed++) {
   const half = spawnAdversaries(d);
   const cells = (l) => JSON.stringify(l.map((a) => a.pos));
   check(cells(none) === cells(all) && cells(none) === cells(half), `seed ${seed}: positions independent of trollShare`);
-  check(none.every((a) => a.kind === 'ghost') && all.every((a) => a.kind === 'troll'), `seed ${seed}: share 0 / 1`);
+  check(none.every((a) => ['ghost', 'wolf'].includes(a.kind)) && all.every((a) => ['troll', 'tree_giant'].includes(a.kind)), `seed ${seed}: share 0 / 1`);
   check(half.map((a) => a.kind).join() === assignKinds(seed, half.length, 0.5).join(), `seed ${seed}: spawn uses assignKinds`);
 }
 configureAdversaries({ trollShare: 0.25 });
 const prefix = assignKinds(7, 3, 0.5), longer = assignKinds(7, 9, 0.5);
 check(prefix.join() === longer.slice(0, 3).join(), 'a monster\'s kind does not depend on the monster count');
+
+// Spawn ratios over a large deterministic sample, plus dedicated stats and personalities.
+const counts = Object.fromEntries(KIND_IDS.map((kind) => [kind, 0]));
+for (const kind of assignKinds(47, 100000, 0.4)) counts[kind]++;
+check(Math.abs(counts.wolf / counts.ghost - 1) < 0.03, 'wolf spawn rate matches ghost');
+check(Math.abs(counts.tree_giant / counts.troll - 0.5) < 0.02, 'tree giant spawns half as often as troll');
+const giant = new Adversary({ id: 'giant', pos: [1, 1], kind: 'tree_giant', level: 1 });
+const wolf = new Adversary({ id: 'wolf', pos: [1, 1], kind: 'wolf', level: 4 });
+check(giant.level === 4 && wolf.level === 2, 'kind fixed levels override explicit levels');
+check(giant.hp === 8 && giant.clawDamage === 3 && giant.speed === 0.45 && claw(giant).cooldown === 3, 'giant is tough, slow and heavy-hitting');
+check(wolf.hp === 3 && wolf.clawDamage === 1 && wolf.speed === 1.2 && claw(wolf).cooldown === 1, 'wolf is quick with frequent lighter bites');
+check(giant.profile.homeRadius === 14 && giant.profile.maxSearchTicks === 32 && !giant.profile.makesCalls, 'giant is a persistent territorial loner');
+check(wolf.profile.makesCalls && wolf.profile.teamSight && wolf.profile.homeRadius === null, 'wolf hunts widely with its pack');
+check(new Adversary({ id: 'custom', pos: [1, 1], kind: 'wolf', character: 'timid' }).character === 'timid', 'explicit personality overrides the kind default');
+check(buildArena({ kinds: ['tree_giant', 'wolf'], numAdversaries: 2, levels: 1 }).adversaries.map((a) => `${a.level}:${a.character}`).join() === '4:ancient_guardian,2:pack_stalker', 'testbed gets kind defaults and fixed levels');
+check(buildArena({ kinds: 'wolf', characters: 'timid' }).adversaries[0].character === 'timid', 'testbed preserves explicit personality');
+const fixedView = newTestGame({ kinds: ['tree_giant', 'wolf'], numAdversaries: 2 }, { ask: () => ({}), decide: () => ({}) }).view().adversaries;
+check(fixedView[0].kind === 'tree_giant' && fixedView[0].level === 4 && fixedView[1].kind === 'wolf' && fixedView[1].level === 2, 'run view carries new kinds and fixed levels');
 
 // Testbed.
 const kindsOf = (cfg) => buildArena({ numAdversaries: 3, ...cfg }).adversaries.map((a) => a.kind).join();
@@ -85,7 +103,7 @@ check(run.view().adversaries[0].kind === 'troll', 'view().adversaries[].kind');
 // Levels (PLAN-levels). The draw over 500 seeds, stats per level, knobs and the Adversary are in check-config section 9;
 // the explorer side is check-levels. Here: the exports, the stream's independence, the spawn wiring and the view.
 {
-  check(Object.isFrozen(LEVEL_RANGE) && LEVEL_RANGE.ghost.join() === '1,2' && LEVEL_RANGE.troll.join() === '2,3' && LEVELS.join() === '1,2,3', 'LEVEL_RANGE ghost 1-2, troll 2-3');
+  check(Object.isFrozen(LEVEL_RANGE) && LEVEL_RANGE.ghost.join() === '1,2' && LEVEL_RANGE.troll.join() === '2,3' && LEVELS.join() === '1,2,3,4', 'LEVEL_RANGE ghost 1-2, troll 2-3');
   check(defaultLevel('ghost') === 2 && defaultLevel('troll') === 2, 'defaultLevel is 2 for both kinds');
   const ks = ['ghost', 'troll', 'ghost', 'troll', 'troll'];
   check(assignLevels(9, ks.slice(0, 3)).join() === assignLevels(9, ks).slice(0, 3).join(), 'a monster\'s level does not depend on the monster count');
@@ -95,7 +113,7 @@ check(run.view().adversaries[0].kind === 'troll', 'view().adversaries[].kind');
     check(st.hp >= 1 && st.clawDamage >= 1 && Number.isInteger(st.hp) && Number.isInteger(st.clawDamage), `levelStats ${kind} L${lv} is whole and at least 1`);
   }
   check(levelStats('troll', 3).hp > levelStats('troll', 2).hp && levelStats('ghost', 2).hp > levelStats('ghost', 1).hp, 'levelStats: hp rises with level');
-  for (const bad of [0, 4, 1.5, '2']) { threw = false; try { levelStats('ghost', bad); } catch { threw = true; } check(threw, `levelStats rejects level ${JSON.stringify(bad)}`); }
+  for (const bad of [0, 5, 1.5, '2']) { threw = false; try { levelStats('ghost', bad); } catch { threw = true; } check(threw, `levelStats rejects level ${JSON.stringify(bad)}`); }
   for (let seed = 1; seed <= 30; seed++) {
     const d = generateDungeon(seed);
     configureAdversaries({ trollShare: 0.5 });

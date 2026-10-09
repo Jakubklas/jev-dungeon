@@ -10,6 +10,7 @@ import { buildArena, explorerSkillSetOf } from './testbed.js';
 import { saveMemory } from './characters/explorer/memory.js';
 import { ExplorerBrain } from './characters/explorer/brain.js';
 import { KnownWorld } from './characters/explorer/known-world.js';
+import { buildRoute, RouteTracker } from './route.js';
 
 const DIR = new URL('../', import.meta.url); // dungeon-game/ (adversaries.json lives here)
 
@@ -34,14 +35,18 @@ export class Run {
   #stepping = false; // a playTurn is in flight: a directive sent now waits for the next step
   #pending = null; // { text, steps } to set, or { clear: true }, applied at the start of the next playTurn
   #lastInjectAt = -Infinity; // wall-clock ms of the last accepted directive (the cooldown)
+  #tracker = null; // spectator navigation (src/route.js): null without a portal; only view() reads it, never the explorer
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false } = {}) {
+  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
     this.game = new Game(dungeon);
     this.game.adversaries = adversaries;
     this.#decide = decide;
-    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold, confidence });
+    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold, confidence, progress });
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
+    const route = buildRoute(dungeon);
+    this.#tracker = route ? new RouteTracker(route) : null;
+    this.#tracker?.update(this.game);
   }
 
   get memory() {
@@ -138,6 +143,7 @@ export class Run {
     else if (hit) await this.explorer.noteHit(hit.id);
     // The explorer's own shield stopped a claw (the confidence model's +3). Its own cell, its own shield: fog-safe.
     if (!(game.lost && !wasLost)) for (const e of events) if (e.type === 'blocked') await this.explorer.noteBlocked();
+    this.#tracker?.update(game, { events, approach: this.explorer.memory?.approach?.id ?? null, directive: this.directive }); // spectator side reads explorer state; nothing flows back
     return { ...explorer, directive: this.directive, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns };
   }
 
@@ -160,6 +166,7 @@ export class Run {
       directive: this.directive, // the live player directive { text, from_step, until_step, steps_left } or null
       testbed: !!game.dungeon.testbed,
       heart_cells: game.heartPiles.map((c) => [...c]), // floating hearts (restore a life)
+      route: this.#tracker?.snapshot() ?? null, // spectator navigation (src/route.js): spine progress, direction state, next step, cue; null without a portal
     };
   }
 }

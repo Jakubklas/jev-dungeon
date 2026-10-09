@@ -129,7 +129,7 @@ export function configureAdversaries({ speed, chaseRange, maxSearchTicks, graceT
 export class Adversary {
   // Public fields, in this order. This is also its whole JSON shape (skills, facing, hp, stun are private, so still six keys) (adversaries are never spread or cloned).
   id /* 'a1' */, pos /* [x,y] */, mode /* 'patrol'|'chase'|'search' */, budget /* 0 */, lastSeen /* [x,y]|null */, goal /* [x,y]|null */
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', level /* 1-3, default defaultLevel(kind); throws otherwise */, hp = skillConfig().ghostHp, skills = 'ghost' })
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character, kind = 'ghost', level /* 1-4, default defaultLevel(kind); throws otherwise */, hp /* kind default */, skills /* kind default */ })
   //   character: a preset id from character.js; unknown id throws. skills: a SkillSet, a loadout-id list, or 'ghost' | 'none' (buildSkillSet).
   // Private state behind prototype accessors (not own properties, so JSON/Object.keys show only the six fields):
   get character                  // preset id, fixed at spawn ('standard' by default)
@@ -140,8 +140,8 @@ export class Adversary {
   get skills                     // the ghost's SkillSet (claw strike by default, no block)
   get facing / set facing        // 4-way: last step's direction or last strike's aim ('down' at spawn); a bad value throws
   get hp, get maxHp, get stun    // hit points, their maximum, stun ticks left
-  get kind                       // 'ghost' | 'troll' (kinds.js)
-  get level                      // 1-3, fixed at spawn (PLAN-levels); 2 with monsters.levels.enabled false
+  get kind                       // 'ghost' | 'troll' | 'tree_giant' | 'wolf' (kinds.js)
+  get level                      // 1-4, fixed at spawn; new kinds enforce level 4/2; old kinds default to 2 with scaling disabled
   get clawDamage                 // lives one of its claw strikes takes, resolved at construction (kind base times the level multiplier)
   tickStun()                     // -> bool: was stunned this tick (counts one tick down)
   takeHit(damage, fromPos, game = null)   // -> { hp, dispelled }. Loses hp; unless it hit 0, knocked 1 cell directly away from fromPos (floor, not fromPos) and stunned skillConfig().stunTicks, budget 0, route cleared. At 0 hp the caller removes it.
@@ -242,6 +242,22 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 `Turn = { ...ExplorerTurn, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns }`.
 
 `view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character, kind, facing, hp, max_hp, level, claw_damage, morale }], explorer: { remark /* string|null: what the explorer just said about a newly sighted weak / too-strong monster */ }, block /* null | { effectiveness, until_step }: the explorer's own shield stance */, grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. `publicView` also carries `facing` and `strikes` (`[{ by, from, cells, result }]` of this tick, from both sides). The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees now. `brain` is the adversary-brain view under "v3" below. `character`, `facing`, `hp`, `max_hp`, `level` and `claw_damage` are Reveal-only displays (the explorer never reads them); the UI hides strikes outside the explorer's sight unless Reveal is on.
+
+`view().route` (spectator-only, `src/route.js`; never sent to Jev, never read by explorer code) is `null` without a portal (testbed with `treasure: null`), else:
+```
+{ progress: number,   // 0..1, 3 decimals: distance / length
+  furthest: number,   // 0..1, the best progress so far
+  distance: number,   // spine cells from the start (attach index of the explorer's cell, by walking distance)
+  length: number,     // spine.length - 1, so distance === length is the portal
+  offset: number,     // walking cells off the spine (0 on it; > 3 reads as exploring)
+  state: 'advancing' | 'exploring' | 'backtracking' | 'stationary',
+  next_waypoint: [x, y] | null,   // up to 6 steps ahead along strictly decreasing walking distance to the portal; null on the portal
+  next_dir: 'up' | 'down' | 'left' | 'right' | null,   // the first of those steps
+  cue: string | null,             // 'Heading toward the entrance — portal is the other way.' while a retreat is cued
+  suppressed: 'over' | 'portal_known' | 'combat' | 'detour' | null,   // why a cue would be held back, in that priority order; 'detour' = approach heal / collect_coins or a player directive
+  waypoints: [[x, y], ...] }      // simplified spine (ends and corners), for the debug overlay
+```
+It is not part of the `playTurn()` return value.
 
 ## `src/skills/*` (shared)
 
@@ -437,7 +453,7 @@ Every adversary has its own Jev brain, and **the brain is on only while the adve
 
 ## `view().adversaries[]` (v3)
 
-`{ id, pos, mode, visible, character: string /* preset id */, kind: 'ghost'|'troll', facing, hp, max_hp, level: 1-3, claw_damage: number /* lives per claw */, morale: null | { value, tier, mood } /* monster morale; null with the toggle off; Reveal-only display, never read by the explorer */, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
+`{ id, pos, mode, visible, character: string /* preset id */, kind: 'ghost'|'troll'|'tree_giant'|'wolf', facing, hp, max_hp, level: 1-4, claw_damage: number /* lives per claw */, morale: null | { value, tier, mood } /* monster morale; null with the toggle off; Reveal-only display, never read by the explorer */, brain: { on: bool, approach: id|null, approach_text, approach_since, objective, latest_action: { choice, probabilities, confidence } | null, last_reason: string|null } }` (`brainView`: `probabilities` come from the private hunt state, the memory's `latest_action` has none)
 
 ## Turn (v3)
 
@@ -589,8 +605,13 @@ Jev reads only `self.morale` ("48 steady"), the mood's priority line, one `keep_
 
 # Enemy levels (PLAN-levels)
 
-`src/characters/adversary/kinds.js` exports: `KINDS`, `KIND_IDS`, `kindOf(id)`, `assignKinds(seed, count, trollShare)`, `kindsFor(spec, seed, count)`, and for levels `LEVEL_RANGE` (`{ ghost: [1, 2], troll: [2, 3] }`, frozen), `LEVELS` (`[1, 2, 3]`), `configureLevels(o)` / `levelsSnapshot()` (keys `levelsEnabled`, `levelHpMult`, `levelDmgMult`, `levelWeightGhost`, `levelWeightTroll`; fed by `config/runtime.js`), `levelsOn()`, `clawMult(level)`, `defaultLevel(kind)` (2 clamped into the range), `assignLevels(seed, kinds)` (stream `seed ^ 0x3c6ef372`, one draw per monster in order, levels off = all `defaultLevel`), `levelsFor(spec, seed, kinds)` (testbed `levels`: `'random'` | number | list cycled) and `levelStats(kind, level)` -> `{ hp, clawDamage }` (throws unless level is an integer 1-3; levels off = the kind base).
+`src/characters/adversary/kinds.js` exports: `KINDS`, `KIND_IDS`, `kindOf(id)`, `assignKinds(seed, count, trollShare)`, `kindsFor(spec, seed, count)`, and for levels `LEVEL_RANGE` (`{ ghost: [1, 2], troll: [2, 3], tree_giant: [4, 4], wolf: [2, 2] }`, frozen), `LEVELS` (`[1, 2, 3, 4]`), `configureLevels(o)` / `levelsSnapshot()` (keys `levelsEnabled`, `levelHpMult`, `levelDmgMult`, `levelWeightGhost`, `levelWeightTroll`; fed by `config/runtime.js`), `levelsOn()`, `clawMult(level)`, `defaultLevel(kind)` (2 clamped into the range), `assignLevels(seed, kinds)` (stream `seed ^ 0x3c6ef372`, one draw per monster in order, levels off = all `defaultLevel`), `levelsFor(spec, seed, kinds)` (testbed `levels`: `'random'` | number | list cycled) and `levelStats(kind, level)` -> `{ hp, clawDamage }` (throws unless level is an integer 1-4; levels off = the kind base).
 
 `Adversary` has `level` and `clawDamage` accessors (private state, still six public keys). `view().adversaries[]` has `level` and `claw_damage`; `view().explorer.remark` is `string|null`. Explorer side: `KnownWorld.visibleAdversaries()` carries `level` / `clawDamage`, `KnownWorld.levelsOn`; `encounter.js` exports `matchup(world, th, damage) -> 'weak'|'even'|'too_strong'` (strikes = ceil(hp/damage), claws = ceil(lives/clawDamage); weak: strikes 1 and claws > cautionClaws; too_strong: claws <= cautionClaws and strikes > 1; levels off or no level: 'even'), `remarkLine(kind, n)`, `explorerRemarkDefaults()` and `configureExplorerEncounter({ levelCautionClaws, the_weak_target, the_too_strong })`. Jev requests: `threats.visible[]` and `threats.remembered[]` entries gain `level` and `claw_lives` (levels on only; off, requests are byte-identical to the game without levels). Knobs: `monsters.levels.{enabled, hpMult, dmgMult, weights.ghost, weights.troll, cautionClaws}` and the text pools `ui.thoughts.explorer.{weak_target, too_strong}`. Testbed key `levels` (default 2).
 
 Explorer decision telemetry: `turn.decision.sentiment.options` lists the actual mood eligibility menu; `automatic` is true for code-selected panic or a sole eligible mood, false for a Jev choice. Returned probabilities are recorded separately. This telemetry does not enter Jev requests or persistent memory.
+
+
+Tree giants (`tree_giant`) always have level 4; wolves (`wolf`) always have level 2, including explicit testbed or constructor level overrides and when level scaling is disabled. Level multipliers now have four entries. With scaling enabled, the defaults give the giant 8 hp, a 3-life attack every 3 monster steps, speed 0.45 of global monster speed, and no hit stagger. Wolves have 3 hp, a 1-life bite every monster step, speed 1.2 of global monster speed, and one tick of hit stun. With scaling disabled each kind uses its configured base hp and damage while retaining its fixed level.
+
+Spawn weights are ghost `1 - trollShare`, wolf `1 - trollShare`, troll `trollShare`, tree giant `trollShare / 2`, normalized together. The existing ghost/troll YAML weights continue to derive `trollShare`; the same total monster cap and spawn-cell selection apply. Kind and level assignment use independent seeded streams and never change map generation or spawn cells. Tree giants default to `ancient_guardian` (fierce, persistent, long-term, stays home, loner); wolves default to `pack_stalker` (fierce, persistent, standard horizon, roams, pack hunter). These two presets are excluded from the random personality deck of ghosts and trolls. Explicit `characters` in a testbed or constructor overrides the kind default. Testbed `kinds` accepts both ids and `levels` accepts 1–4.

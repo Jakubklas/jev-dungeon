@@ -50,6 +50,13 @@ h1 {
   box-shadow: 3px 3px 0 var(--drop);
   image-rendering: pixelated; pointer-events: none;
 }
+.route-cue {
+  position: absolute; left: 50%; top: 10px; margin: 0; max-width: min(60%, 420px); transform: translateX(-50%);
+  padding: 5px 10px; font: 12px/1.35 var(--font); color: var(--ink); text-align: center;
+  background: rgba(8, 12, 26, .88); border: 2px solid var(--line-hi); box-shadow: 3px 3px 0 var(--drop);
+  opacity: 0; transition: opacity .4s steps(4); pointer-events: none;
+}
+.route-cue.on { opacity: 1; }
 .bubbles { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .bubble {
   position: absolute; left: 0; top: 0; max-width: 220px; width: max-content;
@@ -100,7 +107,12 @@ button:disabled { opacity: .45; cursor: default; }
 .meter-fill { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s steps(5); }
 .meter-fill[data-band="shaken"], .meter-fill[data-band="unsure"] { background: var(--warn); }
 .meter-fill[data-band="dominant"] { background: var(--safe); }
+.route-bar { position: relative; }
+.route-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; left: 0; background: var(--ink); }
+.meter-fill[data-state="backtracking"] { background: var(--warn); }
+.meter-fill[data-state="stationary"] { background: var(--muted); }
 .meter em { font-style: normal; color: var(--ink); text-transform: uppercase; letter-spacing: .06em; }
+.route-bar + em { font-size: 11px; letter-spacing: .02em; }
 .stat > span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .stat b { font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent); }
 .chip {

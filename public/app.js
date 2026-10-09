@@ -1,6 +1,6 @@
 // Browser side: draws the dungeon and runs the step loop. All game logic and every
 // Jev call live on the server; this file only asks for one step at a time.
-import { THOUGHTS, MOOD_THOUGHTS, TROLL_THOUGHTS } from './thoughts.js';
+import { THOUGHTS, MOOD_THOUGHTS, TROLL_THOUGHTS, TREE_GIANT_THOUGHTS, WOLF_THOUGHTS } from './thoughts.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
@@ -279,6 +279,15 @@ function fallbackSprites() {
     troll: spriteFrom(20, 24, 10, 23, [
       ['#3f4422', 3, 6, 14, 14], ['#7b8443', 6, 1, 8, 7], ['#ffc633', 8, 4, 2, 1], ['#ffc633', 12, 4, 2, 1], ['#2e4220', 5, 20, 4, 4], ['#2e4220', 11, 20, 4, 4],
     ]),
+    tree_giant: spriteFrom(44, 72, 22, 71, [
+      ['#1e0f05', 16, 4, 16, 64], ['#603312', 17, 6, 14, 55], ['#4a6a2c', 7, 0, 31, 18],
+      ['#93531f', 5, 25, 12, 9], ['#93531f', 31, 25, 10, 9], ['#df9b4a', 22, 19, 2, 2], ['#df9b4a', 28, 19, 2, 2],
+      ['#603312', 9, 62, 13, 10], ['#603312', 26, 62, 13, 10],
+    ]),
+    wolf: spriteFrom(27, 20, 13, 19, [
+      ['#414762', 4, 7, 17, 8], ['#9aa1bc', 19, 3, 7, 9], ['#666f95', 19, 0, 3, 5],
+      ['#666f95', 4, 14, 3, 6], ['#666f95', 17, 14, 3, 6], ['#ff3b30', 23, 5, 1, 1],
+    ]),
     chest: spriteFrom(14, 11, 7, 9, [
       ['#723c15', 1, 1, 12, 9], ['#97551d', 1, 1, 12, 3], ['#ffc633', 1, 4, 12, 1], ['#ffc633', 6, 4, 2, 3],
     ]),
@@ -291,7 +300,7 @@ let sprites = fallbackSprites();
 import('./sprites.js')
   .then((m) => {
     const got = m.buildSprites();
-    for (const k of ['knight', 'ghost', 'troll', 'chest', 'coin', 'heart', 'fire_strike']) if (got?.[k]?.canvas) sprites[k] = got[k];
+    for (const k of ['knight', 'ghost', 'troll', 'tree_giant', 'wolf', 'chest', 'coin', 'heart', 'fire_strike']) if (got?.[k]?.canvas) sprites[k] = got[k];
   })
   .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err));
 
@@ -312,6 +321,8 @@ import('./props/index.js')
 let solidProp = null;   // Uint8Array(W*H): 1 where a solid prop stands (tiles say '#' there)
 let floorProps = [];    // game.props with .phase
 let decorAt = new Map(); // y*W+x -> [decor] of that wall cell
+let isoDecor = [];       // decor whose art is already isometric (image-art.js): drawn as entities, not on the face
+const ISO_DECOR = new Set(['candle_nook']);
 const GLOW_COLOR = '#ffb458';
 function indexProps() {
   const { width: W, height: H } = game;
@@ -324,9 +335,19 @@ function indexProps() {
   }
   indexHeights();
   decorAt = new Map();
+  isoDecor = [];
   for (const d of game.decor ?? []) {
     const k = d.y * W + d.x;
     (decorAt.get(k) ?? decorAt.set(k, []).get(k)).push({ ...d, phase: hash(d.x, d.y, 5), blocks: 1 + Math.floor(hash(d.x, d.y, (Number(game.seed) | 0) ^ 0x7b19) * 2) });
+    if (ISO_DECOR.has(d.kind)) {
+      // Already-isometric decor (the candle nook) is drawn as an entity, and its wall run is always full height so
+      // the arch has a wall behind it. Visual only, like every wall height.
+      isoDecor.push({ ...d, phase: hash(d.x, d.y, 5) });
+      for (const t of [-1, 0, 1]) {
+        const [wx, wy] = d.face === 'L' ? [d.x + t, d.y] : [d.x, d.y + t];
+        if (wx >= 0 && wy >= 0 && wx < W && wy < H) wallBlocks[wy * W + wx] = MAX_BLOCKS;
+      }
+    }
   }
 }
 const isSolidProp = (x, y) => solidProp[y * game.width + x] === 1;
@@ -739,7 +760,8 @@ function drawScene(now) {
   if (propArt) {
     for (const p of floorProps) {
       if (p.w) { pushForge(ents, p, known, shown, reveal); continue; }
-      const art = propArt.floor[p.kind];
+      const looks = propArt.floorVariants[p.kind]; // ore, statue: one look per cell, from the cell's hash
+      const art = looks ? looks[Math.floor(p.phase * looks.length) % looks.length] : propArt.floor[p.kind];
       const lit = known(p.x, p.y);
       if (!art || !(lit || reveal)) continue;
       const px = isoX(p.x + .5, p.y + .5) - cx, py = isoY(p.x + .5, p.y + .5) - cy;
@@ -748,14 +770,24 @@ function drawScene(now) {
       ents.push({ depth: p.depth, order: -1, kind: 'prop', prop: p.kind, gx: p.x, gy: p.y, art: art[bandOf(s)], face: p.flip ? -1 : 1,
         phase: p.phase, alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
     }
+    // Iso wall decor: anchored on its wall cell's centre, sorted one diagonal later (after the neighbour wall it
+    // overhangs, before anything standing in front of it). Face R mirrors the face-L art.
+    for (const d of isoDecor) {
+      const art = propArt.floor[d.kind];
+      const lit = known(d.x, d.y); // like face decor: only once its wall is known
+      if (!art || !(lit || reveal)) continue;
+      const s = lit ? shown[d.y][d.x] : 0;
+      ents.push({ depth: d.x + d.y + 1, order: -2, kind: 'prop', prop: d.kind, gx: d.x, gy: d.y, art: art[bandOf(s)], face: d.face === 'L' ? 1 : -1,
+        phase: d.phase, alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
+    }
   }
   for (const ad of drawnAdversaries()) {
     const a = actors.get(ad.id);
     if (!a) continue;
     const [gx, gy] = actorPos(a, now);
-    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind === 'troll' ? 'troll' : 'ghost', face: a.face, stepAt: a.t0 || undefined,
+    ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind ?? 'ghost', face: a.face, stepAt: a.t0 || undefined,
       id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
-      maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, level: Math.min(3, Math.max(0, Math.floor(Number(ad.level)) || 0)), phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
+      maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, level: Math.min(4, Math.max(0, Math.floor(Number(ad.level)) || 0)), phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
   const me = actors.get('@');
   const [mx, my] = actorPos(me, now);
@@ -793,6 +825,8 @@ function drawScene(now) {
   while (ei < ents.length) drawEntity(ents[ei++], now, cx, cy);
   drawStrikes(cx, cy, now, known, reveal, 'edge');
   drawGlows(glows, now);
+  drawRouteSpine(cx, cy);
+  drawRouteChevron(cx, cy, now);
 }
 
 // Wall decor, right after its wall block (same band and alpha). Only faces that are drawn
@@ -1164,24 +1198,26 @@ function drawEntity(en, now, cx, cy) {
     heads.set(en.id, { x: px, y: py - spr.anchorY, alpha: 1 });
     return;
   }
-  // Ghost: hovering bob with a floor shadow that shrinks as it rises; red glow when chasing.
-  // A troll walks (no hover bob) and casts a wider shadow; its sprite is twice the ghost's height.
+  // Only ghosts hover. Grounded monsters cast shadows sized to their bodies.
   const troll = en.sub === 'troll';
+  const giant = en.sub === 'tree_giant';
+  const grounded = en.sub !== 'ghost';
+  const heightScale = giant ? 3 : troll ? 2 : 1;
   const wave = Math.sin(((now / BOB_MS) + en.phase) * Math.PI * 2);
-  const bob = troll ? 0 : Math.round(wave * BOB_PX);
+  const bob = grounded ? 0 : Math.round(wave * BOB_PX);
   b.globalAlpha = en.alpha;
   b.fillStyle = PALETTE.shadow;
-  pixelEllipse(px, py, troll ? 9 : 6 - (bob < 0 ? 1 : 0), troll ? 3 : 2);
+  pixelEllipse(px, py, giant ? 12 : troll ? 9 : 6 - (bob < 0 ? 1 : 0), grounded ? 3 : 2);
   if (en.chase) {
     const pulse = .75 + .25 * Math.sin(now / 180);
     b.fillStyle = PALETTE.enemy;
     for (const [rx, ry, a] of [[15, 12, .16], [12, 9, .2], [9, 7, .28]]) {
       b.globalAlpha = en.alpha * a * pulse;
-      pixelEllipse(px, py - (troll ? 20 : 10) + bob, troll ? Math.round(rx * 1.4) : rx, troll ? ry * 2 : ry);
+      pixelEllipse(px, py - 10 * heightScale + bob, Math.round(rx * (giant ? 1.7 : troll ? 1.4 : 1)), ry * heightScale);
     }
   }
   b.globalAlpha = 1;
-  const art = sprites[troll ? 'troll' : 'ghost'] ?? sprites.ghost;
+  const art = sprites[en.sub] ?? sprites.ghost;
   // Clamped at 0: a rAF timestamp can be a little older than the performance.now() a step was stamped with,
   // and a negative age would index walk[-1] (undefined) and throw, killing the frame loop.
   const sinceStep = en.stepAt === undefined ? Infinity : Math.max(0, now - en.stepAt);
@@ -1216,7 +1252,7 @@ function drawEntity(en, now, cx, cy) {
       b.fillStyle = i < en.hp ? PALETTE.enemy : '#2c3d72';
       b.fillRect(x0 + i * 4, pipY, 2, 2);
     }
-    // Level badge: one 2x2 pip per level (1-3) right of the hp bar, bone coloured, danger red at level 3.
+    // Level badge: one 2x2 pip per level (1-4) right of the hp bar, bone coloured, danger red at level 3.
     // Same fog rule as the bar (maxHp is 0 for a monster not drawn / not revealed). No level = no badge.
     if (en.level) {
       const bx = x0 + en.maxHp * 4 + 1;
@@ -1282,18 +1318,19 @@ function think(id, key, text, kind, tag = null) {
   }
 }
 
-// A troll roars on an event (struck, hit, ...). Shows its own text without touching the approach key, so the
+// Each monster kind speaks in its own voice on an event (struck, hit, ...). Shows its own text without touching the approach key, so the
 // approach line does not come back at the next view.
 function shout(id, type) {
-  const pool = TROLL_THOUGHTS[type];
-  if (!pool || game?.adversaries?.find((a) => a.id === id)?.kind !== 'troll') return;
+  const kind = game?.adversaries?.find((a) => a.id === id)?.kind;
+  const pool = MONSTER_THOUGHTS[kind]?.[type];
+  if (!pool) return;
   let t = thoughts.get(id);
   if (!t) {
     t = { key: null, tag: null, el: el('div', '', 'bubble adversary') };
     bubbleLayer.append(t.el);
     thoughts.set(id, t);
   }
-  const text = thoughtFor(id, type, null, null, 'troll');
+  const text = thoughtFor(id, type, null, null, kind);
   t.text = text;
   t.t0 = performance.now();
   t.ms = bubbleMs(text);
@@ -1304,11 +1341,12 @@ function shout(id, type) {
 // Short first-person lines per approach id (explorer and ghosts). One is picked at random each time a
 // bubble shows, never the one the same character showed last. Visual only: no server state, no rng().
 // Mood lines for the explorer (PLAN-moods): shown when the approach changes, picked at random like THOUGHTS.
-// Trolls do not think in sentences: grunts, roars and threats. Keyed by approach id (what the brain is doing) and
-// by event type (struck, hit, ...), see shout(). Visual only, like THOUGHTS.
+// Monster voices are keyed by approach id and combat event: troll roars, ancient tree warnings, wolf pack calls.
+// See shout() for event bubbles. Visual only, like THOUGHTS.
+const MONSTER_THOUGHTS = { troll: TROLL_THOUGHTS, tree_giant: TREE_GIANT_THOUGHTS, wolf: WOLF_THOUGHTS };
 const lastPick = new Map(); // character id -> last line shown
 function thoughtFor(charId, approachId, fallback, moodId = null, kind = null) {
-  const pool = (moodId && MOOD_THOUGHTS[moodId]) || (kind === 'troll' && TROLL_THOUGHTS[approachId]) || THOUGHTS[approachId];
+  const pool = (moodId && MOOD_THOUGHTS[moodId]) || MONSTER_THOUGHTS[kind]?.[approachId] || THOUGHTS[approachId];
   if (!pool) return fallback;
   const prev = lastPick.get(charId);
   const fresh = pool.filter((t) => t !== prev);
@@ -1400,6 +1438,122 @@ function drawBubbles(now) {
   }
 }
 
+// ---------- route guidance (spectator) ----------
+// view.route (null on an old server or a portal-less arena): a chevron by the knight toward the
+// next waypoint, a progress strip, a one-line cue, and (debug toggle only) the hidden spine.
+const ROUTE_COLOR = '#ffd98c', ROUTE_EDGE = '#0a1126'; // trail amber on the cold mortar tone
+const routeOf = () => {
+  const r = game?.route;
+  return r && typeof r === 'object' ? r : null;
+};
+const isCell = (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]);
+const routeDebugOn = () => $('route-debug').checked;
+
+function pxLine(c, x0, y0, x1, y1) { // 1 px Bresenham line on a 2D context
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    c.fillRect(x0, y0, 1, 1);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+// The portal's own visual wins once it is known, so no chevron then.
+function drawRouteChevron(cx, cy, now) {
+  const r = routeOf();
+  if (!r || !isCell(r.next_waypoint) || r.suppressed === 'portal_known' || r.suppressed === 'over' || game.over) return;
+  const me = actors.get('@');
+  if (!me) return;
+  const [gx, gy] = actorPos(me, now);
+  const dx = r.next_waypoint[0] + .5 - (gx + .5), dy = r.next_waypoint[1] + .5 - (gy + .5);
+  let sx = isoX(dx, dy), sy = isoY(dx, dy);
+  const len = Math.hypot(sx, sy);
+  if (len < 1) return;
+  sx /= len; sy /= len;
+  const bob = Math.floor(now / 260) % 2; // 2-frame idle, like the sprites
+  const px = Math.round(isoX(gx + .5, gy + .5)) - cx, py = Math.round(isoY(gx + .5, gy + .5)) - cy - 12; // knight's middle
+  const R = 20 + bob;
+  const tx = px + sx * R, ty = py + sy * R * .75;
+  const bx = tx - sx * 7, by = ty - sy * 5, wx = -sy * 6, wy = sx * 4;
+  b.save();
+  b.globalAlpha = .95;
+  for (const [ox, oy, col] of [[1, 0, ROUTE_EDGE], [-1, 0, ROUTE_EDGE], [0, 1, ROUTE_EDGE], [0, -1, ROUTE_EDGE], [0, 0, ROUTE_COLOR]]) {
+    b.fillStyle = col;
+    for (const k of [0, 1]) { // two lines 1 px apart: a 2 px stroke that survives the integer upscale
+      pxLine(b, tx + ox, ty + oy + k, bx + wx + ox, by + wy + oy + k);
+      pxLine(b, tx + ox, ty + oy + k, bx - wx + ox, by - wy + oy + k);
+    }
+  }
+  b.restore();
+}
+
+// Debug only: the spine reveals hidden map.
+function drawRouteSpine(cx, cy) {
+  const r = routeOf();
+  if (!r || !routeDebugOn() || !Array.isArray(r.waypoints)) return;
+  const pts = r.waypoints.filter(isCell).map(([x, y]) => [Math.round(isoX(x + .5, y + .5)) - cx, Math.round(isoY(x + .5, y + .5)) - cy]);
+  if (!pts.length) return;
+  b.save();
+  b.globalAlpha = .7;
+  b.fillStyle = PALETTE.brain;
+  for (let i = 1; i < pts.length; i++) pxLine(b, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+  for (const [x, y] of pts) b.fillRect(x - 1, y - 1, 3, 3);
+  b.restore();
+}
+
+function drawRouteMinimapSpine() {
+  const r = routeOf();
+  if (!r || !routeDebugOn() || !Array.isArray(r.waypoints)) return;
+  const pts = r.waypoints.filter(isCell);
+  if (!pts.length) return;
+  mctx.save();
+  mctx.strokeStyle = PALETTE.brain;
+  mctx.globalAlpha = .8;
+  mctx.lineWidth = 1;
+  mctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? mctx.lineTo : mctx.moveTo).call(mctx, (x + .5) * miniScale, (y + .5) * miniScale));
+  mctx.stroke();
+  mctx.restore();
+}
+
+// Progress strip and cue toast: DOM, refreshed from the frame loop only when the values change.
+let routeKey = '', cueText = null; // cueText: the cue of the current continuous non-null run
+function syncRoute() {
+  const r = routeOf();
+  const prog = r && Number.isFinite(r.progress) ? Math.min(1, Math.max(0, r.progress)) : null;
+  const fur = r && Number.isFinite(r.furthest) ? Math.min(1, Math.max(0, r.furthest)) : prog;
+  const state = r && typeof r.state === 'string' ? r.state : '';
+  const cue = r && typeof r.cue === 'string' && r.cue ? r.cue : null;
+  const key = `${prog}|${fur}|${state}|${cue}`;
+  if (key === routeKey) return;
+  routeKey = key;
+  $('route-stat').hidden = prog == null;
+  if (prog != null) {
+    $('route-fill').style.width = `${Math.round(prog * 100)}%`;
+    $('route-fill').dataset.state = state;
+    $('route-tick').style.left = `${Math.round(fur * 100)}%`;
+    $('route-state').textContent = state;
+    $('route-stat').title = `Route progress ${Math.round(prog * 100)}%, furthest ${Math.round(fur * 100)}%`;
+  }
+  const toast = $('route-cue');
+  if (cue) {
+    toast.textContent = cue; // text updates in place if it changes mid-run; no re-pop
+    toast.classList.add('on');
+    if (cueText == null) { // first frame of a run: log once
+      eventLog.unshift({ step: game?.steps ?? 0, text: cue, type: 'cue' });
+      eventLog.length = Math.min(eventLog.length, LOG_MAX);
+      renderDanger();
+    }
+  } else {
+    toast.classList.remove('on'); // keeps the old text while it fades out
+  }
+  cueText = cue;
+}
+
 // ---------- minimap ----------
 // Top-down. Known cells are painted once per change into a W x H offscreen image (1 px
 // per cell) on the same warm-to-navy ramp, then scaled up. Markers and the (rotated)
@@ -1469,6 +1623,7 @@ function drawMinimap() {
     const r = Math.max(2, s * .9);
     mctx.strokeRect((x + .5) * s - r, (y + .5) * s - r, r * 2, r * 2);
   }
+  drawRouteMinimapSpine();
   dot(game.pos, PALETTE.explorer, Math.max(2, s));
 
   // Viewport outline: the buffer's corners, inverse-projected to grid space.
@@ -2012,6 +2167,7 @@ function resetPane() {
   advLatency = null;
   approachesUsed = new Set();
   eventLog = [];
+  routeKey = ''; cueText = null; // a new game: the cue run starts over
   directive = game?.directive ?? null;
   renderWhisper();
   $('probs').replaceChildren();
@@ -2168,7 +2324,7 @@ async function loadUi() {
     BLINK_MS = num(c.blinkMs, BLINK_MS); COIN_GLOW_MS = num(c.coinGlowMs, COIN_GLOW_MS);
     // The step delay is the slider's starting value; the player can still move it.
     if (Number.isFinite(c.stepDelayMs)) { $('delay').value = c.stepDelayMs; $('delay-value').textContent = `${delayMs()} ms`; }
-    for (const [pool, target] of [['approach', THOUGHTS], ['mood', MOOD_THOUGHTS], ['troll', TROLL_THOUGHTS]]) Object.assign(target, ui.thoughts?.[pool] ?? {});
+    for (const [pool, target] of [['approach', THOUGHTS], ['mood', MOOD_THOUGHTS], ['troll', TROLL_THOUGHTS], ['tree_giant', TREE_GIANT_THOUGHTS], ['wolf', WOLF_THOUGHTS]]) Object.assign(target, ui.thoughts?.[pool] ?? {});
   } catch { /* keep the defaults */ }
 }
 
@@ -2308,6 +2464,7 @@ $('reload').onclick = reload;
 $('over-reload').onclick = reload;
 $('close').onclick = () => $('overlay').classList.remove('open');
 $('reveal').onchange = () => { miniDirty = true; };
+// The spine toggle needs no minimap rebuild: the polyline is drawn every frame.
 $('delay').oninput = () => { $('delay-value').textContent = `${delayMs()} ms`; };
 
 resizeBoard();
@@ -2321,6 +2478,7 @@ let lastFrame = performance.now();
     moveCamera(now - lastFrame);
     easeLight(now - lastFrame);
     lastFrame = now;
+    syncRoute();
     draw(now);
   } catch (err) {
     b.setTransform(1, 0, 0, 1, 0, 0); // a throw between save() and restore() would leak the transform
