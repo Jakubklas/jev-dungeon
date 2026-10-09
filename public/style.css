@@ -93,6 +93,7 @@ button:disabled { opacity: .45; cursor: default; }
 .hearts svg { width: 18px; height: 16px; image-rendering: pixelated; shape-rendering: crispEdges; }
 .hearts .full { fill: var(--enemy); }
 .hearts .empty { fill: var(--line-hi); }
+.hearts .on { fill: var(--enemy); }
 .stat[hidden] { display: none; }
 .meter { display: flex; flex-direction: column; gap: 3px; font-size: 12px !important; }
 .meter-bar { display: block; height: 8px; border: 2px solid var(--line-hi); background: var(--panel-2); }
