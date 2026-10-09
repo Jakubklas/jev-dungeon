@@ -8,7 +8,7 @@
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import fc from 'fast-check';
-import { generateDungeon, hasLineOfSight, floorDistances, isFloor, rng, MIN_SIZE, MAX_SIZE } from '../src/dungeon.js';
+import { generateDungeon, hasLineOfSight, floorDistances, isFloor, rng, configureWorld, MIN_SIZE, MAX_SIZE, ROOM_MIN, ROOM_MAX, LAYOUT } from '../src/dungeon.js';
 import { buildArena, TestbedError, TESTBED_MIN, TESTBED_MAX, TESTBED_MAX_ADVERSARIES } from '../src/testbed.js';
 
 const arg = (name) => {
@@ -70,6 +70,40 @@ property('dungeon: start and chest are distinct floor cells, and every floor cel
   const dist = floorDistances(d, d.start);
   return dist.size === floorCells(d).length && dist.has(`${d.treasure[0]},${d.treasure[1]}`);
 }));
+
+// --- linear layout (LAYOUT 'linear'; scripts/check-layout.mjs checks it in depth) ----------------
+
+// Any seed, any map-size and room-size knobs: a valid linear dungeon whose path rooms cannot be skipped.
+const WORLD = { layout: LAYOUT, minSize: MIN_SIZE, maxSize: MAX_SIZE, roomMin: ROOM_MIN, roomMax: ROOM_MAX }; // restored after each run (live bindings)
+const linearArb = fc.record({
+  seed: seedArb,
+  lo: fc.integer({ min: 25, max: 90 }), hi: fc.integer({ min: 25, max: 90 }),
+  roomMin: fc.integer({ min: 2, max: 10 }), roomMax: fc.integer({ min: 4, max: 30 }),
+});
+property('linear: walled, all floor reachable, portal clear, every path room on the only way (bar one loop)', fc.property(linearArb, ({ seed, lo, hi, roomMin, roomMax }) => {
+  configureWorld({ layout: 'linear', minSize: Math.min(lo, hi), maxSize: Math.max(lo, hi), roomMin, roomMax });
+  try {
+    const d = generateDungeon(seed);
+    if (JSON.stringify(d) !== JSON.stringify(generateDungeon(seed))) return false;
+    const { width: W, height: H, tiles, start, treasure, rooms, layout } = d;
+    for (let x = 0; x < W; x++) if (tiles[0][x] !== '#' || tiles[H - 1][x] !== '#') return false;
+    for (let y = 0; y < H; y++) if (tiles[y][0] !== '#' || tiles[y][W - 1] !== '#') return false;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (tiles[treasure[1] + dy][treasure[0] + dx] !== '.') return false;
+    if (floorDistances(d, start).size !== floorCells(d).length) return false;
+    const n = rooms.filter((r) => r.role !== 'side').length;
+    const inP = (p, [x, y]) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h;
+    const loopEnds = rooms.map((_, j) => layout.links.filter(([a, b]) => b === j && a < j).map(([a]) => a)).filter((e) => e.length === 2);
+    const bypassed = new Set(loopEnds.map((e) => Math.min(...e) + 1));
+    for (let r = 1; r < n - 1; r++) {
+      if (bypassed.has(r)) continue;
+      const closed = { ...d, tiles: tiles.map((row, y) => [...row].map((c, x) => (inP(layout.patches[r], [x, y]) ? '#' : c)).join('')) };
+      if (floorDistances(closed, start).has(`${treasure[0]},${treasure[1]}`)) return false;
+    }
+    return true;
+  } finally {
+    configureWorld(WORLD);
+  }
+}), 100);
 
 // --- line of sight -----------------------------------------------------------------------------
 
