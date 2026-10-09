@@ -38,6 +38,7 @@ export let TIER_HIGH_MIN = 70; // the start C (70) is already high: Jev begins c
 export let TIER_HYST = 5; // a tier is kept this far past its edge (low up to 40, midlow up to 54, mid down to 45, high down to 65)
 export let PANIC_ENTER = 20; // panic starts below this
 export let PANIC_EXIT = 25; // and ends only at or above this
+export let PANIC_LIVES = 1; // and only at or below this many lives (a heal above it ends panic)
 export let BLOCK_CEILING = 65;
 export let EVADE_CEILING = 65;
 export let LAST_LIFE_CAP = 45;
@@ -135,8 +136,10 @@ export function tierOf(C, prev = null) {
 // Tiers where pulling back (run_away, hide, race_to_exit) is on the tactic menu even while a forward tactic is open.
 export const retreatTier = (tier) => tier === 'low' || tier === 'midlow';
 
-// Panic starts below PANIC_ENTER and ends only at PANIC_EXIT or more (no flicker at the edge).
-export function panicNext(C, wasPanic = false) {
+// Panic starts below PANIC_ENTER with at most PANIC_LIVES lives, and ends at PANIC_EXIT or more (no flicker at the edge) or once
+// lives rise above PANIC_LIVES. `lives` defaults to 0 for callers that test the confidence edge alone.
+export function panicNext(C, wasPanic = false, lives = 0) {
+  if (lives > PANIC_LIVES) return false;
   return wasPanic ? C < PANIC_EXIT : C < PANIC_ENTER;
 }
 
@@ -263,6 +266,7 @@ export function configureConfidence(o) {
   if (o.confTierHyst !== undefined) TIER_HYST = o.confTierHyst;
   if (o.confPanicEnter !== undefined) PANIC_ENTER = o.confPanicEnter;
   if (o.confPanicExit !== undefined) PANIC_EXIT = o.confPanicExit;
+  if (o.confPanicLives !== undefined) PANIC_LIVES = o.confPanicLives;
   if (o.confLastLifeCap !== undefined) LAST_LIFE_CAP = o.confLastLifeCap;
   if (o.confCapFloor !== undefined) CAP_FLOOR = o.confCapFloor;
   if (o.confWPerExtra !== undefined) W_PER_EXTRA = o.confWPerExtra;
@@ -284,4 +288,4 @@ export function configureConfidence(o) {
   }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const confidenceSnapshot = () => ({ confStart: START, confHit: D_HIT, confStruck: D_STRUCK, confDispelled: D_DISPELLED, confBlocked: D_BLOCKED, confEvaded: D_EVADED, confCoin: D_COIN, confHeart: D_HEART, confBlockCeiling: BLOCK_CEILING, confEvadeCeiling: EVADE_CEILING, confRegen: REGEN, confRegenWait: REGEN_WAIT, confTierLowMax: TIER_LOW_MAX, confTierHighMin: TIER_HIGH_MIN, confTierMidMin: TIER_MID_MIN, confTierHyst: TIER_HYST, confPanicEnter: PANIC_ENTER, confPanicExit: PANIC_EXIT, confLastLifeCap: LAST_LIFE_CAP, confCapFloor: CAP_FLOOR, confWPerExtra: W_PER_EXTRA, confHistSpan: HIST_SPAN, confCapabilityMax: CAPABILITY_MAX, confUnhurtFloor: UNHURT_FLOOR, confNoSwordMax: NO_SWORD_MAX, confHpBase: HP_BASE, confHpSlope: HP_SLOPE, confHpStrikesMax: HP_STRIKES_MAX, confBandDominant: BANDS[0][0], confBandSure: BANDS[1][0], confBandEven: BANDS[2][0], confBandUnsure: BANDS[3][0], tierMoods_low: [...TIER_MOODS.low], tierMoods_midlow: [...TIER_MOODS.midlow], tierMoods_mid: [...TIER_MOODS.mid], tierMoods_high: [...TIER_MOODS.high] });
+export const confidenceSnapshot = () => ({ confStart: START, confHit: D_HIT, confStruck: D_STRUCK, confDispelled: D_DISPELLED, confBlocked: D_BLOCKED, confEvaded: D_EVADED, confCoin: D_COIN, confHeart: D_HEART, confBlockCeiling: BLOCK_CEILING, confEvadeCeiling: EVADE_CEILING, confRegen: REGEN, confRegenWait: REGEN_WAIT, confTierLowMax: TIER_LOW_MAX, confTierHighMin: TIER_HIGH_MIN, confTierMidMin: TIER_MID_MIN, confTierHyst: TIER_HYST, confPanicEnter: PANIC_ENTER, confPanicExit: PANIC_EXIT, confPanicLives: PANIC_LIVES, confLastLifeCap: LAST_LIFE_CAP, confCapFloor: CAP_FLOOR, confWPerExtra: W_PER_EXTRA, confHistSpan: HIST_SPAN, confCapabilityMax: CAPABILITY_MAX, confUnhurtFloor: UNHURT_FLOOR, confNoSwordMax: NO_SWORD_MAX, confHpBase: HP_BASE, confHpSlope: HP_SLOPE, confHpStrikesMax: HP_STRIKES_MAX, confBandDominant: BANDS[0][0], confBandSure: BANDS[1][0], confBandEven: BANDS[2][0], confBandUnsure: BANDS[3][0], tierMoods_low: [...TIER_MOODS.low], tierMoods_midlow: [...TIER_MOODS.midlow], tierMoods_mid: [...TIER_MOODS.mid], tierMoods_high: [...TIER_MOODS.high] });

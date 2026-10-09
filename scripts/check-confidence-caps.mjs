@@ -49,7 +49,7 @@ for (const n of [1, 2, 3]) for (const hp of [1, 2, 3]) for (const L of [2, 3, 4]
   const sent = reqs.find((r) => r.kind === 'sentiment');
   const tag = `${n} ghosts hp ${hp} lives ${L} H ${H} ${mode}`;
   combos++;
-  if (C < 20) { ok(!sent, `${tag}: C ${C} is panic, entered by code with no sentiment request`); continue; }
+  if (C < 20 && L <= 1) { ok(!sent, `${tag}: C ${C} is panic, entered by code with no sentiment request`); continue; }
   if (!sent) { ok(false, `${tag}: no sentiment request`); continue; }
   const ids = Object.keys(sent.questions.sentiment.criteria).sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b));
   ok(JSON.stringify(ids) === JSON.stringify(want), `${tag}: moods ${ids} want ${want} (C ${C})`);
@@ -237,17 +237,17 @@ const sentimentKeys = (log) => log.filter((r) => r.kind === 'sentiment').map((r)
   ok(ORDER.every((id) => id in SENTIMENTS), 'the four moods are still in SENTIMENTS (commit 3 replaces them)');
 }
 
-// ---- 8. panic (PLAN-moods): entered by code below C 20, no sentiment call, run_away only, a whisper cannot override it, ends at C 25 ----
+// ---- 8. panic (PLAN-moods): entered by code below C 20 at 1 life or less, no sentiment call, run_away only, a whisper cannot override it, ends at C 25 ----
 {
   const log = [];
-  const run = make({ H: 0, maxLives: 4, lives: 2, ghosts: [[9, 3], [9, 2], [9, 4]], log });
+  const run = make({ H: 0, maxLives: 4, lives: 1, ghosts: [[9, 3], [9, 2], [9, 4]], log });
   run.game.adversaries.forEach((a) => { a.mode = 'chase'; });
-  await tick(run);
-  ok(run.memory.sentiment.id === 'panic', `three chasing enemies at 2 lives and a beaten history: panic (got ${run.memory.sentiment.id})`);
+  const t0 = await tick(run);
+  ok(run.memory.sentiment.id === 'panic', `three chasing enemies at 1 life and a beaten history: panic (got ${run.memory.sentiment.id})`);
   ok(!log.some((r) => r.kind === 'sentiment'), 'panic is entered without a sentiment call');
   const menus = log.map((r) => Object.keys(r.questions.tactic?.criteria ?? {})).filter((m) => m.length);
   ok(menus.every((m) => m.every((id) => ['run_away', 'race_to_exit', 'engage'].includes(id))), `panic offers only run_away / race_to_exit / engage: ${JSON.stringify(menus)}`);
-  ok(menus.length > 0 && menus.every((m) => m.includes('run_away')), 'run_away is always on the panic menu');
+  ok(menus.every((m) => m.includes('run_away')) && t0.decision?.tactic?.choice === 'run_away', `run_away is on the panic menu and taken: ${JSON.stringify(menus)} ${t0.decision?.tactic?.choice}`);
   ok(!/\blives?\b/i.test(SENTIMENTS.panic.priority + SENTIMENTS.panic.move_priority + SENTIMENTS.panic.skill_priority + SENTIMENTS.panic.note), 'panic text never mentions lives');
   // a whisper does not apply while panicking
   await run.explorer.setDirective('walk to the east wall', { steps: 20 });

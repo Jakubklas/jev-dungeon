@@ -259,6 +259,7 @@ The knight: lives and protection after a hit.
 | `explorer.confidence.tiers.hysteresis` | 5 | 0..20 | live | no | A tier is kept this far past its edge |
 | `explorer.confidence.panic.enter` | 20 | 0..100 | live | no | Panic starts below this confidence |
 | `explorer.confidence.panic.exit` | 25 | 0..100 | live | no | Panic ends at or above this confidence |
+| `explorer.confidence.panic.maxLives` | 1 | 0..9 | live | no | Panic only at or below this many lives (and confidence under panic.enter); above it panic ends |
 | `explorer.confidence.cap.lastLife` | 45 | 0..100 | live | no | Highest confidence on the last life |
 | `explorer.confidence.cap.floor` | 0.3 | 0..1 | live | no | Share of the cap kept at one life of many |
 | `explorer.confidence.capability.perExtraEnemy` | 0.35 | 0..2 | live | no | Expected lives lost per extra enemy, per claw point |

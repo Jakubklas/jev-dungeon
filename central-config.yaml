@@ -89,7 +89,7 @@ world:
 # The knight: lives and protection after a hit.
 explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
-  lives: 4 # Lives the explorer starts with
+  lives: 5 # Lives the explorer starts with
   skills: [ sword_strike, shield_block, fire_strike ] # Skills the explorer starts with (at most 4; empty = none)
   brain:
     reviewEvery: 8 # Steps between approach reviews
@@ -157,6 +157,7 @@ explorer:
     panic:
       enter: 15 # Panic starts below this confidence
       exit: 15 # Panic ends at or above this confidence
+      maxLives: 1 # Panic only at or below this many lives (and confidence under panic.enter); above it panic ends
     cap:
       lastLife: 45 # Highest confidence on the last life
       floor: 0.3 # Share of the cap kept at one life of many
@@ -814,7 +815,7 @@ instances:
       coins:
         dropChance: 0.5
     explorer:
-      lives: 4
+      lives: 5
   gym/main:
     monsters:
       global:
