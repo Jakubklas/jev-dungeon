@@ -793,6 +793,8 @@ function drawScene(now) {
   while (ei < ents.length) drawEntity(ents[ei++], now, cx, cy);
   drawStrikes(cx, cy, now, known, reveal, 'edge');
   drawGlows(glows, now);
+  drawRouteSpine(cx, cy);
+  drawRouteChevron(cx, cy, now);
 }
 
 // Wall decor, right after its wall block (same band and alpha). Only faces that are drawn
@@ -1400,6 +1402,122 @@ function drawBubbles(now) {
   }
 }
 
+// ---------- route guidance (spectator) ----------
+// view.route (null on an old server or a portal-less arena): a chevron by the knight toward the
+// next waypoint, a progress strip, a one-line cue, and (debug toggle only) the hidden spine.
+const ROUTE_COLOR = '#ffd98c', ROUTE_EDGE = '#0a1126'; // trail amber on the cold mortar tone
+const routeOf = () => {
+  const r = game?.route;
+  return r && typeof r === 'object' ? r : null;
+};
+const isCell = (c) => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]);
+const routeDebugOn = () => $('route-debug').checked;
+
+function pxLine(c, x0, y0, x1, y1) { // 1 px Bresenham line on a 2D context
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    c.fillRect(x0, y0, 1, 1);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+// The portal's own visual wins once it is known, so no chevron then.
+function drawRouteChevron(cx, cy, now) {
+  const r = routeOf();
+  if (!r || !isCell(r.next_waypoint) || r.suppressed === 'portal_known' || r.suppressed === 'over' || game.over) return;
+  const me = actors.get('@');
+  if (!me) return;
+  const [gx, gy] = actorPos(me, now);
+  const dx = r.next_waypoint[0] + .5 - (gx + .5), dy = r.next_waypoint[1] + .5 - (gy + .5);
+  let sx = isoX(dx, dy), sy = isoY(dx, dy);
+  const len = Math.hypot(sx, sy);
+  if (len < 1) return;
+  sx /= len; sy /= len;
+  const bob = Math.floor(now / 260) % 2; // 2-frame idle, like the sprites
+  const px = Math.round(isoX(gx + .5, gy + .5)) - cx, py = Math.round(isoY(gx + .5, gy + .5)) - cy - 12; // knight's middle
+  const R = 20 + bob;
+  const tx = px + sx * R, ty = py + sy * R * .75;
+  const bx = tx - sx * 7, by = ty - sy * 5, wx = -sy * 6, wy = sx * 4;
+  b.save();
+  b.globalAlpha = .95;
+  for (const [ox, oy, col] of [[1, 0, ROUTE_EDGE], [-1, 0, ROUTE_EDGE], [0, 1, ROUTE_EDGE], [0, -1, ROUTE_EDGE], [0, 0, ROUTE_COLOR]]) {
+    b.fillStyle = col;
+    for (const k of [0, 1]) { // two lines 1 px apart: a 2 px stroke that survives the integer upscale
+      pxLine(b, tx + ox, ty + oy + k, bx + wx + ox, by + wy + oy + k);
+      pxLine(b, tx + ox, ty + oy + k, bx - wx + ox, by - wy + oy + k);
+    }
+  }
+  b.restore();
+}
+
+// Debug only: the spine reveals hidden map.
+function drawRouteSpine(cx, cy) {
+  const r = routeOf();
+  if (!r || !routeDebugOn() || !Array.isArray(r.waypoints)) return;
+  const pts = r.waypoints.filter(isCell).map(([x, y]) => [Math.round(isoX(x + .5, y + .5)) - cx, Math.round(isoY(x + .5, y + .5)) - cy]);
+  if (!pts.length) return;
+  b.save();
+  b.globalAlpha = .7;
+  b.fillStyle = PALETTE.brain;
+  for (let i = 1; i < pts.length; i++) pxLine(b, pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+  for (const [x, y] of pts) b.fillRect(x - 1, y - 1, 3, 3);
+  b.restore();
+}
+
+function drawRouteMinimapSpine() {
+  const r = routeOf();
+  if (!r || !routeDebugOn() || !Array.isArray(r.waypoints)) return;
+  const pts = r.waypoints.filter(isCell);
+  if (!pts.length) return;
+  mctx.save();
+  mctx.strokeStyle = PALETTE.brain;
+  mctx.globalAlpha = .8;
+  mctx.lineWidth = 1;
+  mctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? mctx.lineTo : mctx.moveTo).call(mctx, (x + .5) * miniScale, (y + .5) * miniScale));
+  mctx.stroke();
+  mctx.restore();
+}
+
+// Progress strip and cue toast: DOM, refreshed from the frame loop only when the values change.
+let routeKey = '', cueText = null; // cueText: the cue of the current continuous non-null run
+function syncRoute() {
+  const r = routeOf();
+  const prog = r && Number.isFinite(r.progress) ? Math.min(1, Math.max(0, r.progress)) : null;
+  const fur = r && Number.isFinite(r.furthest) ? Math.min(1, Math.max(0, r.furthest)) : prog;
+  const state = r && typeof r.state === 'string' ? r.state : '';
+  const cue = r && typeof r.cue === 'string' && r.cue ? r.cue : null;
+  const key = `${prog}|${fur}|${state}|${cue}`;
+  if (key === routeKey) return;
+  routeKey = key;
+  $('route-stat').hidden = prog == null;
+  if (prog != null) {
+    $('route-fill').style.width = `${Math.round(prog * 100)}%`;
+    $('route-fill').dataset.state = state;
+    $('route-tick').style.left = `${Math.round(fur * 100)}%`;
+    $('route-state').textContent = state;
+    $('route-stat').title = `Route progress ${Math.round(prog * 100)}%, furthest ${Math.round(fur * 100)}%`;
+  }
+  const toast = $('route-cue');
+  if (cue) {
+    toast.textContent = cue; // text updates in place if it changes mid-run; no re-pop
+    toast.classList.add('on');
+    if (cueText == null) { // first frame of a run: log once
+      eventLog.unshift({ step: game?.steps ?? 0, text: cue, type: 'cue' });
+      eventLog.length = Math.min(eventLog.length, LOG_MAX);
+      renderDanger();
+    }
+  } else {
+    toast.classList.remove('on'); // keeps the old text while it fades out
+  }
+  cueText = cue;
+}
+
 // ---------- minimap ----------
 // Top-down. Known cells are painted once per change into a W x H offscreen image (1 px
 // per cell) on the same warm-to-navy ramp, then scaled up. Markers and the (rotated)
@@ -1469,6 +1587,7 @@ function drawMinimap() {
     const r = Math.max(2, s * .9);
     mctx.strokeRect((x + .5) * s - r, (y + .5) * s - r, r * 2, r * 2);
   }
+  drawRouteMinimapSpine();
   dot(game.pos, PALETTE.explorer, Math.max(2, s));
 
   // Viewport outline: the buffer's corners, inverse-projected to grid space.
@@ -2012,6 +2131,7 @@ function resetPane() {
   advLatency = null;
   approachesUsed = new Set();
   eventLog = [];
+  routeKey = ''; cueText = null; // a new game: the cue run starts over
   directive = game?.directive ?? null;
   renderWhisper();
   $('probs').replaceChildren();
@@ -2308,6 +2428,7 @@ $('reload').onclick = reload;
 $('over-reload').onclick = reload;
 $('close').onclick = () => $('overlay').classList.remove('open');
 $('reveal').onchange = () => { miniDirty = true; };
+// The spine toggle needs no minimap rebuild: the polyline is drawn every frame.
 $('delay').oninput = () => { $('delay-value').textContent = `${delayMs()} ms`; };
 
 resizeBoard();
@@ -2321,6 +2442,7 @@ let lastFrame = performance.now();
     moveCamera(now - lastFrame);
     easeLight(now - lastFrame);
     lastFrame = now;
+    syncRoute();
     draw(now);
   } catch (err) {
     b.setTransform(1, 0, 0, 1, 0, 0); // a throw between save() and restore() would leak the transform

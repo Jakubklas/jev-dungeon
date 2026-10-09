@@ -243,6 +243,22 @@ export function newTestGame(config, opts = {})   // buildArena(config) -> Run. T
 
 `view()` = `{ ...game.publicView(), adversaries: [{ id, pos, mode, visible, brain, character, kind, facing, hp, max_hp, level, claw_damage, morale }], explorer: { remark /* string|null: what the explorer just said about a newly sighted weak / too-strong monster */ }, block /* null | { effectiveness, until_step }: the explorer's own shield stance */, grace_ticks, invulnerable /* grace > 0 */, over: won||lost, testbed }`. `publicView` also carries `facing` and `strikes` (`[{ by, from, cells, result }]` of this tick, from both sides). The full adversary list is included for the debug reveal toggle; `visible` = the explorer sees now. `brain` is the adversary-brain view under "v3" below. `character`, `facing`, `hp`, `max_hp`, `level` and `claw_damage` are Reveal-only displays (the explorer never reads them); the UI hides strikes outside the explorer's sight unless Reveal is on.
 
+`view().route` (spectator-only, `src/route.js`; never sent to Jev, never read by explorer code) is `null` without a portal (testbed with `treasure: null`), else:
+```
+{ progress: number,   // 0..1, 3 decimals: distance / length
+  furthest: number,   // 0..1, the best progress so far
+  distance: number,   // spine cells from the start (attach index of the explorer's cell, by walking distance)
+  length: number,     // spine.length - 1, so distance === length is the portal
+  offset: number,     // walking cells off the spine (0 on it; > 3 reads as exploring)
+  state: 'advancing' | 'exploring' | 'backtracking' | 'stationary',
+  next_waypoint: [x, y] | null,   // up to 6 steps ahead along strictly decreasing walking distance to the portal; null on the portal
+  next_dir: 'up' | 'down' | 'left' | 'right' | null,   // the first of those steps
+  cue: string | null,             // 'Heading toward the entrance — portal is the other way.' while a retreat is cued
+  suppressed: 'over' | 'portal_known' | 'combat' | 'detour' | null,   // why a cue would be held back, in that priority order; 'detour' = approach heal / collect_coins or a player directive
+  waypoints: [[x, y], ...] }      // simplified spine (ends and corners), for the debug overlay
+```
+It is not part of the `playTurn()` return value.
+
 ## `src/skills/*` (shared)
 
 Skills are an attack and a block for the explorer, and a claw strike for each ghost. All free to check (`scripts/check-skills.mjs`; the engage hold and its duels: `scripts/check-duels.mjs`, harness `scripts/lib/duel-harness.mjs`, API in its header: `playDuel(opts)` returns `{ strikes, claws, dispelled, ticks, hitsTaken, held, trace }`; `hold` is true | false | 'multi'; also exports `openGroups(count, n, kind)` and `corridorGroup(count, n, kind)` for 2-4 ghost layouts, and `health` sets the real lives). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
