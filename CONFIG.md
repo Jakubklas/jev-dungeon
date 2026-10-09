@@ -130,6 +130,7 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.coins.max` | 30 | 0..100 | next | no | Coins lying around at the start (0 = none) |
 | `world.hearts.roomsPerHeart` | 4 | 1..20 | next | no | One heart (restores a life) per this many rooms |
 | `world.hearts.max` | 6 | 0..20 | next | no | Cap on hearts per map (0 = none) |
+| `world.hearts.respawn` | 200 | 0..2000 | live | no | Steps after a pickup before a heart reappears on its cell (0 = never) |
 | `world.coins.dropChance` | 0.6 | 0..1 | next | no | Chance a dispelled monster drops a coin (0-1) |
 | `world.lightRadius` | 7 | 3..12 | next | no | Cells each visited cell lights up |
 | `world.size.min` | 25 | 25..150 | next | no | Smallest map side |

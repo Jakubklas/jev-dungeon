@@ -13,6 +13,7 @@ world:
   hearts:
     roomsPerHeart: 4 # One heart (restores a life) per this many rooms
     max: 6 # Cap on hearts per map (0 = none)
+    respawn: 200 # Steps after a pickup before a heart reappears on its cell (0 = never)
   lightRadius: 7 # Cells each visited cell lights up
   size:
     min: 40 # Smallest map side
