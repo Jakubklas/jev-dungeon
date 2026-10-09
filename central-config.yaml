@@ -706,44 +706,44 @@ ui:
     mood:
       # Bubble lines for the explorer in the panic mood (the built-in wording; edit to change it, delete to restore)
       panic:
-        - Out! Out! Out!
-        - Just get away from here!
-        - Nothing matters but the way out!
+        - "I need out!"
+        - "Too much. Keep running."
+        - "Where is the way out?"
       # Bubble lines for the explorer in the wary mood (the built-in wording; edit to change it, delete to restore)
       wary:
-        - Something's wrong. Keep my distance.
-        - I don't like this. Back off.
-        - "Find cover first, think later."
+        - "Something feels wrong."
+        - "I need some space."
+        - "Find cover. Breathe."
       # Bubble lines for the explorer in the guarded mood (the built-in wording; edit to change it, delete to restore)
       guarded:
-        - "Stay sharp, keep moving."
-        - "Eyes open, away from trouble."
-        - No detours. Careful progress.
+        - "Stay sharp."
+        - "Keep moving carefully."
+        - "No detours for now."
       # Bubble lines for the explorer in the cautious mood (the built-in wording; edit to change it, delete to restore)
       cautious:
-        - "Slow down, check the corners."
-        - Stay clear and slip past.
-        - Fight only if I'm cornered.
+        - "One careful step."
+        - "Slow down. Look around."
+        - "Keep a safe distance."
       # Bubble lines for the explorer in the steady mood (the built-in wording; edit to change it, delete to restore)
       steady:
-        - Stick to the plan.
-        - One room at a time.
-        - "If one shows up, I can handle it."
+        - "Stick to the plan."
+        - "One room at a time."
+        - "I feel ready."
       # Bubble lines for the explorer in the greedy mood (the built-in wording; edit to change it, delete to restore)
       greedy:
-        - I smell coins nearby.
-        - Worth a detour.
-        - Let's see what else is in here.
+        - "A little more gold..."
+        - "Worth a detour."
+        - "What else is in here?"
       # Bubble lines for the explorer in the bold mood (the built-in wording; edit to change it, delete to restore)
       bold:
-        - Come at me.
-        - I can take this one.
-        - "Press on, no backing down."
+        - "I feel strong."
+        - "Time to press on."
+        - "No hesitation."
       # Bubble lines for the explorer in the fearless mood (the built-in wording; edit to change it, delete to restore)
       fearless:
-        - Bring them all.
-        - I'm cutting through.
-        - Nothing here stops me.
+        - "Nothing holds me back."
+        - "Full speed ahead."
+        - "I feel unstoppable."
     troll:
       # Troll bubble lines for direct_pursuit (the built-in wording; edit to change it, delete to restore)
       direct_pursuit:

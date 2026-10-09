@@ -23,15 +23,16 @@ export const THOUGHTS = {
   sweep_last_seen: ['Where did you go?', 'It was right here...', 'Come out, come out!', 'Just checking the corners.'],
 };
 
+// Short inner thoughts: feelings and approach, without addressing enemies.
 export const MOOD_THOUGHTS = {
-  panic: ['Out! Out! Out!', 'Just get away from here!', 'Nothing matters but the way out!'],
-  wary: ["Something's wrong. Keep my distance.", "I don't like this. Back off.", 'Find cover first, think later.'],
-  guarded: ['Stay sharp, keep moving.', 'Eyes open, away from trouble.', 'No detours. Careful progress.'],
-  cautious: ['Slow down, check the corners.', 'Stay clear and slip past.', "Fight only if I'm cornered."],
-  steady: ['Stick to the plan.', 'One room at a time.', 'If one shows up, I can handle it.'],
-  greedy: ['I smell coins nearby.', 'Worth a detour.', "Let's see what else is in here."],
-  bold: ['Come at me.', 'I can take this one.', 'Press on, no backing down.'],
-  fearless: ['Bring them all.', "I'm cutting through.", 'Nothing here stops me.'],
+  panic: ['I need out!', 'Too much. Keep running.', 'Where is the way out?'],
+  wary: ['Something feels wrong.', 'I need some space.', 'Find cover. Breathe.'],
+  guarded: ['Stay sharp.', 'Keep moving carefully.', 'No detours for now.'],
+  cautious: ['One careful step.', 'Slow down. Look around.', 'Keep a safe distance.'],
+  steady: ['Stick to the plan.', 'One room at a time.', 'I feel ready.'],
+  greedy: ['A little more gold...', 'Worth a detour.', 'What else is in here?'],
+  bold: ['I feel strong.', 'Time to press on.', 'No hesitation.'],
+  fearless: ['Nothing holds me back.', 'Full speed ahead.', 'I feel unstoppable.'],
 };
 
 export const TROLL_THOUGHTS = {
@@ -61,15 +62,14 @@ export const TREE_GIANT_THOUGHTS = {
 };
 
 export const WOLF_THOUGHTS = {
-  direct_pursuit: ['Sniff... fresh prey!', 'Keep running. I like the chase.', 'Your scent leads straight to supper.', 'Low ears. Quiet paws. Then teeth.'],
-  cut_off: ['Circle wide. Bite where you turn.', 'The pack takes the other path.', 'A cornered meal cannot run.', 'I know where those footsteps lead.'],
-  sweep_last_seen: ['Sniff, sniff... still warm.', 'You hide. Your scent does not.', 'Quiet now. Listen for breathing.', 'Paws down. Nose to the trail.'],
-  struck: ['Yelp! That prey has teeth!', 'Grrr... circle round the sharp bit.', 'You will pay for that bite.', 'Back a paw. Watch the sword.'],
-  hit: ['Snap! Supper fights back!', 'One bite closer to a full belly.', 'Got you between my teeth!', 'Grrr... the hunt tastes good.'],
-  blocked: ['Grrr... tin is hard to chew.', 'Circle round that shiny shell.', 'The shield cannot guard every side.'],
-  bump: ['Huff! Watch the paws!', 'Too close. Snap, snap!', 'Grrr... out of my hunting line.'],
-  alerted: ['Awoooo! The pack has found supper!', 'I hear you! Save me a bite!', 'Nose up. Pack call. Run!'],
-  gave_up: ['The scent fades. Find another trail.', 'A hungry wolf knows when to circle back.', 'Gone for now. I remember that scent.'],
-  caught: ['Awoooo! Supper for the pack!', 'The chase ends between my teeth.', 'Full belly. Proud howl.'],
+  direct_pursuit: ['Grrr...', 'Grrrr!', 'Rrrr...'],
+  cut_off: ['Grr...', 'Rrrrr...', 'Grrrr...'],
+  sweep_last_seen: ['Rrr...', 'Grrr...', 'Hrrr...'],
+  struck: ['Grrr!', 'GRRR!', 'Rrrrr!'],
+  hit: ['GRRR!', 'Grrrr!', 'Rrrr!'],
+  blocked: ['Grr...', 'Grrrr!', 'Hrrr...'],
+  bump: ['Grr!', 'Rrr!', 'Grrr...'],
+  alerted: ['Grrrr!', 'Rrrrr!', 'GRRR...'],
+  gave_up: ['Grr...', 'Rrr...', 'Hrrr...'],
+  caught: ['Grrrr...', 'Rrrrr...', 'Grrr!'],
 };
-
