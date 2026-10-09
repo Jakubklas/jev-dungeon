@@ -95,8 +95,8 @@ button:disabled { opacity: .45; cursor: default; }
   flex: 1; min-width: 0; background: var(--panel); border: 2px solid var(--line);
   padding: 6px 10px; box-shadow: 3px 3px 0 var(--drop);
 }
-.hearts { display: inline-flex; gap: 3px; align-items: center; height: 22px; }
-.hearts svg { width: 18px; height: 16px; image-rendering: pixelated; shape-rendering: crispEdges; }
+.hearts { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; min-height: 22px; max-width: 100%; }
+.hearts svg { flex: 0 0 18px; width: 18px; height: 16px; image-rendering: pixelated; shape-rendering: crispEdges; }
 .hearts .full { fill: var(--enemy); }
 .hearts .empty { fill: var(--line-hi); }
 .hearts .on { fill: var(--enemy); }
