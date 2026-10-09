@@ -319,7 +319,8 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   check(skillConfig().coinDropChance === 0.6, 'coinDropChance restored');
 }
 
-// 11. Victory by clearing: dispelling the last adversary wins; one of two does not; an arena with none is not won.
+// 11. Victory by clearing (chest-less arenas only): dispelling the last adversary wins; one of two does not; an arena
+// with none is not won; where a portal exists, the last dispel does not win (only the portal does).
 {
   const MAP2 = ['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######'];
   const kill = (g, a) => { a.takeHit(skillConfig().ghostHp - 1, [0, 0]); return resolveAttack(g, EXPLORER, [a.pos], 1); };
@@ -347,6 +348,13 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const g3 = arena(MAP2);
   resolveAttack(g3, EXPLORER, [g3.adversaries[0].pos], 1);
   check(!g3.won && g3.adversaries.length === 1, 'a strike that leaves the ghost alive does not win');
+  // A map with a portal: dispelling the last ghost does not win; the game goes on and the portal still wins.
+  const gp = arena(['#######', '#.....#', '#..@A.#', '#.....#', '#.T...#', '#######']);
+  check(gp.dungeon.treasure && gp.adversaries.length === 1, 'portal arena has a chest and one ghost');
+  const evp = kill(gp, gp.adversaries[0]);
+  check(gp.adversaries.length === 0 && !gp.won && gp.winBy === null && !evp.some((e) => e.type === 'cleared'), 'with a portal, the last dispel does not win');
+  gp.applyMove('down'); gp.applyMove('down'); gp.applyMove('left');
+  check(gp.won && gp.winBy === 'chest', 'with a portal, the portal still wins after the clear');
 }
 
 // 12. Fights have a value (PLAN-motivation P3): the combat rule's live numbers, engage's fact in numbers, the
