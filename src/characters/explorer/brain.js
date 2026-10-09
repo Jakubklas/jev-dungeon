@@ -723,7 +723,7 @@ export class ExplorerBrain {
       const cur = memory.sentiment.id;
       const list = this.#allowed(cap);
       const wasPanic = cur === 'panic';
-      if (!this.#fixedMood && panicNext(cap.C, wasPanic) !== wasPanic) { // PLAN-moods: panic starts below C 20 and ends at 25, by code, no sentiment call
+      if (!this.#fixedMood && panicNext(cap.C, wasPanic, this.#world.health) !== wasPanic) { // PLAN-moods: panic starts below C 20 at 1 life or less and ends at 25 (or a heal), by code, no sentiment call
         const to = wasPanic ? defaultMood(list) : 'panic';
         setSentiment(memory, { id: to }, step);
         policy = { from: cur, to, reason: `confidence ${Math.floor(cap.C)}` };

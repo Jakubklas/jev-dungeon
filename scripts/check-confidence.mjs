@@ -279,6 +279,8 @@ ok(JSON.stringify(JSON.parse(JSON.stringify(bt))) === JSON.stringify(bt), 'beta 
   ok(!panicNext(20, false) && panicNext(19.75, false), 'panic enters below 20');
   ok(panicNext(24.75, true) && !panicNext(25, true), 'panic ends only at 25 or more');
   ok(!panicNext(22, false) && panicNext(22, true), 'panic hysteresis between 20 and 25');
+  ok(panicNext(10, false, 1) && panicNext(10, false, 0.5) && !panicNext(10, false, 1.5) && !panicNext(10, false, 2), 'panic enters only at 1 life or less');
+  ok(panicNext(10, true, 1) && !panicNext(10, true, 1.5), 'a heal above 1 life ends panic');
 }
 
 // 10. purity: no imports, no Math.random, no Date
