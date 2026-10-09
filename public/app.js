@@ -711,6 +711,7 @@ function drawScene(now) {
   drawTrail(cx, cy);
   drawLandmarks(cx, cy, known);
   drawStrikes(cx, cy, now, known, reveal);
+  drawFire(cx, cy, now, known, reveal); // a floor-level blast: under every wall and solid prop, so it stops at the walls
 
   // Entities, sorted by depth (x+y of the cell; the larger one while moving).
   const ents = [];
@@ -789,7 +790,6 @@ function drawScene(now) {
   }
   while (ei < ents.length) drawEntity(ents[ei++], now, cx, cy);
   drawStrikes(cx, cy, now, known, reveal, 'edge');
-  drawFire(cx, cy, now, known, reveal);
   drawGlows(glows, now);
 }
 
@@ -974,8 +974,10 @@ function drawParry(from, t, cx, cy, known, reveal) {
 }
 
 // Fire strike blast: sprites.js ART.fire_strike (18 frames) over FIRE_MS, anchored on the centre of the burnt
-// block (strike.centre: the middle of the whole block, the knight's own cell for the 9x9). Drawn after the entities like the slash, so
-// the column falls over whoever stands there. Fog: drawn only when one of its cells is lit (or Reveal).
+// block (strike.centre: the middle of the whole block, the knight's own cell for the 9x9). It is a floor-level effect, so
+// it is drawn at the end of Pass A: every wall and solid prop of Pass B covers it (the fire stops at the walls of a
+// hallway or a corner) and the characters standing in it draw on top. The sword slash and the claw stay above the walls.
+// Fog: drawn only when one of its cells is lit (or Reveal).
 function drawFire(cx, cy, now, known, reveal) {
   if (!fireFx) return;
   const art = sprites.fire_strike;
@@ -989,7 +991,7 @@ function drawFire(cx, cy, now, known, reveal) {
   b.drawImage(fr.canvas, Math.round((mx - my) * HW - cx - fr.anchorX), Math.round((mx + my) * HH + HH - cy - fr.anchorY));
 }
 
-// pass 'fill' runs in the flats pass, 'edge' after the entities; only 'edge' retires strikeFx.
+// pass 'fill' runs in the flats pass, 'edge' after the entities (not for a fire strike's cells); only 'edge' retires strikeFx.
 function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   if (!strikeFx) return;
   const k = (now - strikeFx.t0) / STRIKE_MS;
@@ -998,6 +1000,7 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   const flash = k < STRIKE_HOLD && Math.floor(k / STRIKE_HOLD * 4) % 2 ? .7 : 1; // two pulses while held
   for (const st of strikeFx.strikes) {
     if (!Array.isArray(st?.cells)) continue;
+    if (pass === 'edge' && st.skill === 'fire_strike') continue; // its cell outlines stay under the walls too (fill pass only)
     const blocked = st.result === 'blocked';
     const tile = diamondTile(blocked ? BLOCK_COLOR : STRIKE_COLOR, pass === 'edge');
     b.globalAlpha = fade * flash * (st.result === 'miss' ? .5 : pass === 'edge' ? 1 : .85);
