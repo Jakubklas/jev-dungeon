@@ -508,14 +508,14 @@ monsters:
     tree_giant:
       hp: 4 # Level 4 makes this 8 hit points.
       clawDamage: 2 # Level 4 makes this 3 lives per attack.
-      speed: 0.45
+      speed: 0.5 # Half the explorer speed
       stunTicks: 0 # An ancient guardian does not stagger.
       clawCooldown: 3
       skills: [ claw_strike ]
     wolf:
       hp: 3
       clawDamage: 1
-      speed: 1.2
+      speed: 2 # Twice the explorer speed
       stunTicks: 1
       clawCooldown: 1
       skills: [ claw_strike ]

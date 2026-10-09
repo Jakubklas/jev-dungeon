@@ -1240,7 +1240,7 @@ function drawEntity(en, now, cx, cy) {
   } else spr = frameOf(art, now, en.phase * 4);
   blitSprite(spr, px, py - 2 + bob, face, en.alpha);
   const pipY = py - 2 + bob - spr.anchorY - (en.brain ? 9 : 2) - 3;
-  heads.set(en.id, { x: px, y: py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
+  heads.set(en.id, { x: px, y: en.maxHp && en.level ? pipY - 10 : py - 2 + bob - spr.anchorY - (en.brain ? 8 : 0) - (en.maxHp ? 5 : 0), alpha: en.alpha });
   // Health bar: one pip per hit point, over every ghost in sight (the explorer sees it too: threats.visible hp);
   // an unseen ghost's shows only with Reveal on.
   if (en.maxHp) {
@@ -1252,14 +1252,20 @@ function drawEntity(en, now, cx, cy) {
       b.fillStyle = i < en.hp ? PALETTE.enemy : '#2c3d72';
       b.fillRect(x0 + i * 4, pipY, 2, 2);
     }
-    // Level badge: one 2x2 pip per level (1-4) right of the hp bar, bone coloured, danger red at level 3.
+    // Pixel lettering left aligned above the hp bar, bone coloured, danger red at level 3.
     // Same fog rule as the bar (maxHp is 0 for a monster not drawn / not revealed). No level = no badge.
     if (en.level) {
-      const bx = x0 + en.maxHp * 4 + 1;
+      const glyphs = ['100100100100111', '000101101101010', '010110010010111', '111001111100111', '111001111001111', '101101111001001'];
+      const bx = x0, by = pipY - 8;
       b.fillStyle = PALETTE.brainEdge;
-      b.fillRect(bx, pipY - 1, en.level * 3 + 1, 4);
+      b.fillRect(bx - 1, by - 1, 17, 7);
       b.fillStyle = en.level >= 3 ? PALETTE.enemy : '#e3daa7';
-      for (let i = 0; i < en.level; i++) b.fillRect(bx + 1 + i * 3, pipY, 2, 2);
+      // "Lv" followed by the level, using crisp 3x5 glyphs.
+      for (const [offset, glyph] of [[0, glyphs[0]], [4, glyphs[1]], [12, glyphs[en.level + 1]]]) {
+        for (let i = 0; i < glyph.length; i++) {
+          if (glyph[i] === '1') b.fillRect(bx + offset + i % 3, by + Math.floor(i / 3), 1, 1);
+        }
+      }
     }
     b.globalAlpha = 1;
   }
@@ -1476,7 +1482,7 @@ function drawRouteArrow(cx, cy, now) {
   sx /= len; sy /= len;
   const bob = Math.floor(now / 260) % 2; // 2-frame idle, like the sprites
   const px = Math.round(isoX(gx + .5, gy + .5)) - cx, py = Math.round(isoY(gx + .5, gy + .5)) - cy - 12; // knight's middle
-  const R = 20 + bob;
+  const R = 28 + bob; // leave a clear gap around the knight, including the arrow's base and outline
   const tx = px + sx * R, ty = py + sy * R * .75;
   const bx = tx - sx * 5, by = ty - sy * 4, wx = -sy * 3, wy = sx * 2;
   b.save();

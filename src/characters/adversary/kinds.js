@@ -6,7 +6,7 @@ import { rng } from '../../dungeon.js';
 import { skillConfig } from '../../skills/config.js';
 
 // stunTicks: ticks a hit stuns this kind; null = the global stunTicks, 0 = never staggered (hp loss only).
-// speed: a multiplier of ADVERSARY_SPEED; tuning: per-loadout number overrides for this kind's own skills.
+// speed: wolves and tree giants use explorer speed; ghosts and trolls multiply ADVERSARY_SPEED; tuning: per-loadout number overrides for this kind's own skills.
 // hp: a function, so a settings change is read when the monster is built (never cached).
 // skills: a name for buildSkillSet (loadouts.js DEFAULT_SETS) or a list of loadout ids.
 export const KINDS = {

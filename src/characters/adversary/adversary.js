@@ -747,11 +747,12 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
   moralePhase(game, order, stunned, events, tick);
-  for (const a of order) if (!stunned.has(a)) a.budget += ADVERSARY_SPEED * a.speed; // a stunned ghost gains no budget
+  const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
+  for (const a of order) if (!stunned.has(a)) a.budget += speedOf(a); // a stunned ghost gains no budget
 
   const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };
   const thinking = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
-  const cfgOf = (a) => ({ ...cfg, speed: ADVERSARY_SPEED * a.speed, hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
+  const cfgOf = (a) => ({ ...cfg, speed: speedOf(a), hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
   const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
 
   for (const a of order) {
@@ -764,7 +765,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
       continue;
     }
     if (a.budget >= 1) {
-      // At most one step per tick (ADVERSARY_SPEED < 1); the remainder carries over.
+      // Resolve attacks once per tick; fast monsters spend extra budget on movement below.
       a.budget -= 1;
       const res = results.get(a);
       const from = [...a.pos];
@@ -804,6 +805,23 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
         turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
       }
       senseAfterStep(game, a, events, tick);
+      // Continue the chosen direction without another decision or attack. Check every cell
+      // so fast movement cannot cross walls or skip bumps and sightings.
+      while (a.budget >= 1) {
+        a.budget -= 1;
+        const extraFrom = [...a.pos];
+        if (res) {
+          if (!turn.dir || !viewOf(game, a).legalMoves().includes(turn.dir)) continue;
+          a.pos = stepCell(a.pos, turn.dir);
+          noteStep(a, extraFrom, turn.dir, tick);
+        } else {
+          patrolStep(game, a);
+          const dir = dirBetween(extraFrom, a.pos);
+          if (dir) a.facing = dir;
+        }
+        bumpCheck(game, a, events, extraFrom);
+        senseAfterStep(game, a, events, tick);
+      }
     }
     a.syncSkills();
     turn.brain = a.hunt.on ? 'on' : 'off';

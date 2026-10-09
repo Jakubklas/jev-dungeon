@@ -116,13 +116,13 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.levels.cautionClaws` | 1 | 1..10 | live | no | Too strong to fight: this many claws or fewer kill the explorer and one strike will not dispel it |
 | `monsters.kinds.tree_giant.hp` | 4 | 1..20 | next | no | Tree giant base hp before level scaling |
 | `monsters.kinds.tree_giant.clawDamage` | 2 | 1..6 | next | no | Tree giant base attack damage before level scaling |
-| `monsters.kinds.tree_giant.speed` | 0.45 | 0.1..1.5 | next | no | Tree giant movement share of global monster speed |
+| `monsters.kinds.tree_giant.speed` | 0.5 | 0.1..2 | next | no | Tree giant movement share of explorer speed |
 | `monsters.kinds.tree_giant.stunTicks` | 0 | 0..6 | next | no | Tree giant stun ticks after a sword hit |
 | `monsters.kinds.tree_giant.clawCooldown` | 3 | 0..6 | next | no | Tree giant steps between attacks |
 | `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
 | `monsters.kinds.wolf.hp` | 3 | 1..20 | next | no | Wolf base hp before level scaling |
 | `monsters.kinds.wolf.clawDamage` | 1 | 1..6 | next | no | Wolf base attack damage before level scaling |
-| `monsters.kinds.wolf.speed` | 1.2 | 0.1..1.5 | next | no | Wolf movement share of global monster speed |
+| `monsters.kinds.wolf.speed` | 2 | 0.1..3 | next | no | Wolf movement share of explorer speed |
 | `monsters.kinds.wolf.stunTicks` | 1 | 0..6 | next | no | Wolf stun ticks after a sword hit |
 | `monsters.kinds.wolf.clawCooldown` | 1 | 0..6 | next | no | Wolf steps between attacks |
 | `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |

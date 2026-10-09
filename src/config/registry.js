@@ -487,7 +487,7 @@ const P9_ROWS = [
 const NEW_KIND_ROWS = [
   { ...num('treeGiantHp', 'monsters.kinds.tree_giant.hp', 4, 1, 20, 1, 'Tree giant base hp before level scaling'), group: 'Skills' },
   { ...num('treeGiantClawDamage', 'monsters.kinds.tree_giant.clawDamage', 2, 1, 6, 1, 'Tree giant base attack damage before level scaling'), group: 'Skills' },
-  { ...num('treeGiantSpeed', 'monsters.kinds.tree_giant.speed', 0.45, 0.1, 1.5, 0.05, 'Tree giant movement share of global monster speed'), group: 'Skills' },
+  { ...num('treeGiantSpeed', 'monsters.kinds.tree_giant.speed', 0.5, 0.1, 2, 0.05, 'Tree giant movement share of explorer speed'), group: 'Skills' },
   { ...num('treeGiantStunTicks', 'monsters.kinds.tree_giant.stunTicks', 0, 0, 6, 1, 'Tree giant stun ticks after a sword hit'), group: 'Skills' },
   { ...num('treeGiantClawCooldown', 'monsters.kinds.tree_giant.clawCooldown', 3, 0, 6, 1, 'Tree giant steps between attacks'), group: 'Skills' },
   list('treeGiantSkills', 'monsters.kinds.tree_giant.skills', ['claw_strike'], 'Tree giant skills (at most 4; empty = none)'),
@@ -503,7 +503,7 @@ const NEW_KIND_ROWS = [
   { key: 'thg_caught', path: 'ui.thoughts.tree_giant.caught', group: 'UI', label: 'Tree giant: caught', hint: 'Tree giant bubble lines for caught', doc: 'Tree giant bubble lines for caught', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
   { ...num('wolfHp', 'monsters.kinds.wolf.hp', 3, 1, 20, 1, 'Wolf base hp before level scaling'), group: 'Skills' },
   { ...num('wolfClawDamage', 'monsters.kinds.wolf.clawDamage', 1, 1, 6, 1, 'Wolf base attack damage before level scaling'), group: 'Skills' },
-  { ...num('wolfSpeed', 'monsters.kinds.wolf.speed', 1.2, 0.1, 1.5, 0.05, 'Wolf movement share of global monster speed'), group: 'Skills' },
+  { ...num('wolfSpeed', 'monsters.kinds.wolf.speed', 2, 0.1, 3, 0.05, 'Wolf movement share of explorer speed'), group: 'Skills' },
   { ...num('wolfStunTicks', 'monsters.kinds.wolf.stunTicks', 1, 0, 6, 1, 'Wolf stun ticks after a sword hit'), group: 'Skills' },
   { ...num('wolfClawCooldown', 'monsters.kinds.wolf.clawCooldown', 1, 0, 6, 1, 'Wolf steps between attacks'), group: 'Skills' },
   list('wolfSkills', 'monsters.kinds.wolf.skills', ['claw_strike'], 'Wolf skills (at most 4; empty = none)'),

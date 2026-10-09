@@ -57,8 +57,8 @@ check(Math.abs(counts.tree_giant / counts.troll - 0.5) < 0.02, 'tree giant spawn
 const giant = new Adversary({ id: 'giant', pos: [1, 1], kind: 'tree_giant', level: 1 });
 const wolf = new Adversary({ id: 'wolf', pos: [1, 1], kind: 'wolf', level: 4 });
 check(giant.level === 4 && wolf.level === 2, 'kind fixed levels override explicit levels');
-check(giant.hp === 8 && giant.clawDamage === 3 && giant.speed === 0.45 && claw(giant).cooldown === 3, 'giant is tough, slow and heavy-hitting');
-check(wolf.hp === 3 && wolf.clawDamage === 1 && wolf.speed === 1.2 && claw(wolf).cooldown === 1, 'wolf is quick with frequent lighter bites');
+check(giant.hp === 8 && giant.clawDamage === 3 && giant.speed === 0.5 && claw(giant).cooldown === 3, 'giant is tough, slow and heavy-hitting');
+check(wolf.hp === 3 && wolf.clawDamage === 1 && wolf.speed === 2 && claw(wolf).cooldown === 1, 'wolf is quick with frequent lighter bites');
 check(giant.profile.homeRadius === 14 && giant.profile.maxSearchTicks === 32 && !giant.profile.makesCalls, 'giant is a persistent territorial loner');
 check(wolf.profile.makesCalls && wolf.profile.teamSight && wolf.profile.homeRadius === null, 'wolf hunts widely with its pack');
 check(new Adversary({ id: 'custom', pos: [1, 1], kind: 'wolf', character: 'timid' }).character === 'timid', 'explicit personality overrides the kind default');
@@ -66,6 +66,20 @@ check(buildArena({ kinds: ['tree_giant', 'wolf'], numAdversaries: 2, levels: 1 }
 check(buildArena({ kinds: 'wolf', characters: 'timid' }).adversaries[0].character === 'timid', 'testbed preserves explicit personality');
 const fixedView = newTestGame({ kinds: ['tree_giant', 'wolf'], numAdversaries: 2 }, { ask: () => ({}), decide: () => ({}) }).view().adversaries;
 check(fixedView[0].kind === 'tree_giant' && fixedView[0].level === 4 && fixedView[1].kind === 'wolf' && fixedView[1].level === 2, 'run view carries new kinds and fixed levels');
+
+// Movement rates are relative to the explorer even when global monster speed changes.
+for (const [kind, expected] of [['wolf', 8], ['tree_giant', 2]]) {
+  const run = newTestGame({ map: ['################', '#..............#', '################', '#@##############', '################'], numAdversaries: 0 }, { ask: () => ({}), decide: () => ({}) });
+  const a = new Adversary({ id: 'speed', pos: [3, 1], kind });
+  a.goal = [13, 1];
+  a.route = Array.from({ length: 10 }, (_, i) => [4 + i, 1]);
+  run.game.adversaries = [a];
+  configureAdversaries({ speed: 0.2 });
+  for (let tick = 0; tick < 4; tick++) await stepAdversaries(run.game, { decide: () => ({ dir: 'right', keep_hunting: 1 }) });
+  check(a.pos[0] - 3 === expected, `${kind}: moves ${expected} cells in four explorer ticks`);
+  check(a.budget < 1, `${kind}: consumes movement budget`);
+}
+configureAdversaries({ speed: 0.6 });
 
 // Testbed.
 const kindsOf = (cfg) => buildArena({ numAdversaries: 3, ...cfg }).adversaries.map((a) => a.kind).join();
