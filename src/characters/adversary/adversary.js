@@ -282,6 +282,46 @@ function shuffleWith(rand, items) {
   return items;
 }
 
+// Linear layout (dungeon.layout.kind 'linear'): the only way to the portal is through the monsters. Never in the
+// start room; the portal room gets one first, each side room a guardian half the time, and the rest go to path rooms
+// weighted toward the portal (spread out: a room's weight falls with every monster already in it).
+function linearSpawns(dungeon, rand, count, ok) {
+  const rooms = dungeon.rooms ?? [];
+  const cellsOf = rooms.map((r) => (r.role === 'start' ? [] : shuffleWith(rand, roomCells({ ...dungeon, rooms: [r] }).filter(ok))));
+  const taken = new Set();
+  const picks = rooms.map(() => 0);
+  const picked = [];
+  const take = (i) => {
+    const c = cellsOf[i].find((cell) => !taken.has(key(cell)));
+    if (!c) return false;
+    taken.add(key(c));
+    picks[i]++;
+    picked.push(c);
+    return true;
+  };
+  const portal = rooms.findIndex((r) => r.role === 'portal');
+  if (portal >= 0 && picked.length < count) take(portal);
+  // Side-room guardians take at most half of what is left after the portal guard, so a small map
+  // (2-3 monsters) still has monsters on the path itself.
+  let sideLeft = Math.floor((count - picked.length) / 2);
+  rooms.forEach((r, i) => {
+    if (r.role !== 'side') return;
+    if (rand() < 0.5 && sideLeft > 0 && take(i)) sideLeft--; // drawn for every side room, so the stream does not depend on count
+  });
+  const path = rooms.map((r, i) => i).filter((i) => rooms[i].role === 'path' || rooms[i].role === 'portal');
+  const n = Math.max(2, path.length);
+  while (picked.length < count) {
+    const open = path.filter((i) => cellsOf[i].some((cell) => !taken.has(key(cell))));
+    if (!open.length) break;
+    const weights = open.map((i) => (1 + 2 * (rooms[i].order ?? 0) / (n - 1)) / (1 + picks[i]) ** 2);
+    let t = rand() * weights.reduce((s, w) => s + w, 0);
+    let at = open.length - 1;
+    for (let k = 0; k < open.length; k++) if ((t -= weights[k]) < 0) { at = k; break; }
+    take(open[at]);
+  }
+  return picked;
+}
+
 export function spawnAdversaries(dungeon) {
   const rand = rng(dungeon.seed ^ 0x9e3779b9);
   const count = Math.min(MAX_ADVERSARIES, Math.max(1, Math.round(countFloor(dungeon) / FLOOR_PER_ADVERSARY))); // 0 when MAX_ADVERSARIES is 0
@@ -289,14 +329,16 @@ export function spawnAdversaries(dungeon) {
   const ok = (c) =>
     (dist.get(key(c)) ?? -1) >= MIN_SPAWN_STEPS &&
     !(euclid(c, dungeon.start) <= SIGHT_RANGE && hasLineOfSight(dungeon, dungeon.start, c));
-  // One candidate list per room, so adversaries spread over different rooms first.
-  const perRoom = (dungeon.rooms ?? [])
-    .map((r) => shuffleWith(rand, roomCells({ ...dungeon, rooms: [r] }).filter(ok)))
-    .filter((cells) => cells.length);
-  shuffleWith(rand, perRoom);
-  const picked = [];
-  for (let round = 0; picked.length < count && perRoom.some((cells) => cells.length > round); round++) {
-    for (const cells of perRoom) if (picked.length < count && cells[round]) picked.push(cells[round]);
+  const picked = dungeon.layout?.kind === 'linear' ? linearSpawns(dungeon, rand, count, ok) : [];
+  if (dungeon.layout?.kind !== 'linear') {
+    // One candidate list per room, so adversaries spread over different rooms first.
+    const perRoom = (dungeon.rooms ?? [])
+      .map((r) => shuffleWith(rand, roomCells({ ...dungeon, rooms: [r] }).filter(ok)))
+      .filter((cells) => cells.length);
+    shuffleWith(rand, perRoom);
+    for (let round = 0; picked.length < count && perRoom.some((cells) => cells.length > round); round++) {
+      for (const cells of perRoom) if (picked.length < count && cells[round]) picked.push(cells[round]);
+    }
   }
   // Kinds and characters come from their own streams and are drawn after every spawn rng call, so dungeons and ghost cells never change.
   const characters = CHARACTERS_ON ? assignSpawnCharacters(dungeon.seed, picked.length) : [];
