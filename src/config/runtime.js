@@ -197,9 +197,9 @@ export const view = () => ({
 // Timing constants and the bubble pools that differ from the built-in lines (the page keeps its own defaults for the rest).
 export function uiView() {
   const constants = Object.fromEntries(KNOBS.filter((k) => k.key.startsWith('ui_')).map((k) => [k.key.slice(3), applied[k.key]]));
-  const thoughts = { approach: {}, mood: {}, troll: {}, explorer: {} };
+  const thoughts = { approach: {}, mood: {}, troll: {}, tree_giant: {}, wolf: {}, explorer: {} };
   for (const k of KNOBS) {
-    const pool = k.key.startsWith('the_') ? 'explorer' : k.key.startsWith('thm_') ? 'mood' : k.key.startsWith('tht_') ? 'troll' : k.key.startsWith('th_') ? 'approach' : null;
+    const pool = k.key.startsWith('the_') ? 'explorer' : k.key.startsWith('thm_') ? 'mood' : k.key.startsWith('tht_') ? 'troll' : k.key.startsWith('thg_') ? 'tree_giant' : k.key.startsWith('thw_') ? 'wolf' : k.key.startsWith('th_') ? 'approach' : null;
     if (pool && Array.isArray(applied[k.key])) thoughts[pool][k.path.split('.').pop()] = applied[k.key];
   }
   return { constants, thoughts };

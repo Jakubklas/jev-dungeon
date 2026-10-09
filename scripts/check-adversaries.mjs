@@ -18,6 +18,7 @@ import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
 import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
 import { skillConfig, configureSkills } from '../src/skills/config.js';
 import { buildSkillSet } from '../src/skills/loadouts.js';
+import { kindOf } from '../src/characters/adversary/kinds.js';
 import { profileOf, traitsOf } from '../src/characters/adversary/character.js';
 
 let failures = 0;
@@ -1042,7 +1043,7 @@ for (const policy of ['random', 'fresh', 'flee']) {
     const on = spawnAdversaries(d);
     configureAdversaries({ adversaryCharacters: false });
     check(off.map((a) => a.pos.join()).join(';') === on.map((a) => a.pos.join()).join(';'), 'characters on/off: same ghost cells');
-    check(off.every((a) => a.character === 'standard') && on.every((a) => a.character !== 'standard'), 'toggle: standard when off, mixed presets when on');
+    check(off.every((a) => a.character === (kindOf(a.kind).character ?? 'standard')) && on.every((a) => kindOf(a.kind).character ? a.character === kindOf(a.kind).character : a.character !== 'standard'), 'toggle: old kinds standard/mixed, new kinds keep dedicated personalities');
   }
   console.log('characters: per-trait behaviour ok');
 }

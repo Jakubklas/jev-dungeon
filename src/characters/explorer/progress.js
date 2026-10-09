@@ -47,3 +47,21 @@ export function forwardEdge(frontier, entryOf) {
     return d !== undefined && d >= top - FORWARD_SLACK;
   });
 }
+
+export const FORWARD_MIN_REVEAL = 6; // an edge is a meaningful forward candidate only if lighting it would reveal this many dark cells (a 1-cell crevice ahead must not win)
+export const GOAL_BEHIND_MARGIN = RETREAT_CELLS; // a kept exploration goal this far (or more) shallower than the forward edge is "behind"
+
+// The forward band of exploration TARGET CHOICE. `frontier` = [{ cell, reveal }] (every reachable edge, reveal =
+// dark cells it would light), `entryOf(cell)` = known-path distance from the explorer's own start (undefined =
+// unknown). Fog-safe justification: the explorer knows from the game rules (not from any per-seed hidden state) that it
+// entered at one end of the dungeon and the portal lies away from it; this reads only cells it has lit and the cell it
+// started on. Returns { top, band }: `top` = the deepest meaningful edge's entry distance (-Infinity: none) and `band`
+// = a Set of the edges within FORWARD_SLACK of it. Empty band = no meaningful forward edge: behave as before.
+export function forwardBand(frontier, entryOf) {
+  let top = -Infinity;
+  for (const f of frontier) if (f.reveal >= FORWARD_MIN_REVEAL) top = Math.max(top, entryOf(f.cell) ?? -Infinity);
+  const band = new Set();
+  if (top === -Infinity) return { top, band };
+  for (const f of frontier) if (f.reveal >= FORWARD_MIN_REVEAL && (entryOf(f.cell) ?? -Infinity) >= top - FORWARD_SLACK) band.add(f);
+  return { top, band };
+}

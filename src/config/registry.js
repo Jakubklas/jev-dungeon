@@ -12,7 +12,7 @@ export const CATEGORIES = {
   world: { userSetting: false, doc: 'Dungeon layout, light, coins and hearts. Developer only.' },
   explorer: { userSetting: false, doc: 'The knight: lives and protection after a hit.' },
   skills: { userSetting: false, doc: 'Sword, shield and the stun they cause.' },
-  monsters: { userSetting: false, doc: 'Ghosts and trolls: speed, packs, spawn, stats, characters.' },
+  monsters: { userSetting: false, doc: 'Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.' },
   player: { userSetting: true, doc: 'Directives the player may whisper to the explorer.' },
   limits: { userSetting: false, doc: 'Memory and prompt-size limits.' },
   jev: { userSetting: false, doc: 'The Jev API client: hedging, retries, timeout, model.' },
@@ -38,7 +38,7 @@ const PAGE_ROWS = [
   { key: 'alertSteps', path: 'monsters.pack.alertSteps', group: 'Pack', label: 'Alert reach', hint: 'Path steps within which a call is heard.', doc: 'Path steps within which a call is heard', type: 'range', min: 1, max: 80, step: 1, def: 24, when: 'live' },
   { key: 'teamSight', path: 'monsters.pack.teamSight', group: 'Pack', label: 'Team sight', hint: 'Hunters track the explorer through a packmate\'s eyes.', doc: 'Hunters see the explorer through packmates\' eyes', type: 'toggle', def: true, when: 'live' },
   { key: 'floorPerAdversary', path: 'monsters.spawn.floorPerMonster', group: 'Spawn', label: 'Floor cells per ghost', hint: 'Fewer cells = more ghosts on a map.', doc: 'Floor cells per monster: lower = more monsters', type: 'range', min: 40, max: 1000, step: 10, def: 150, when: 'next' },
-  { key: 'trollShare', path: null, group: 'Spawn', label: 'Troll share', hint: 'Chance a spawned monster is a troll instead of a ghost (trolls hunt like ghosts but are slower, tougher and hit harder).', doc: 'Derived from the kind weights (monsters.kinds.*.weight); not a file key', type: 'range', min: 0, max: 1, step: 0.01, def: 0.25, when: 'next' },
+  { key: 'trollShare', path: null, group: 'Spawn', label: 'Troll weight share', hint: 'Troll weight relative to ghost plus troll. Wolves match ghosts; tree giants have half the troll weight.', doc: 'Derived from the kind weights (monsters.kinds.*.weight); not a file key', type: 'range', min: 0, max: 1, step: 0.01, def: 0.25, when: 'next' },
   { key: 'maxAdversaries', path: 'monsters.spawn.max', group: 'Spawn', label: 'Max ghosts', hint: '0 = none.', doc: 'Cap on monsters per map (0 = none)', type: 'range', min: 0, max: 24, step: 1, def: 12, when: 'next' },
   { key: 'floorPerCoin', path: 'world.coins.floorPerCoin', group: 'Spawn', label: 'Floor cells per coin', hint: 'Fewer cells = more coins lying around a map.', doc: 'Floor cells per coin: lower = more coins', type: 'range', min: 10, max: 1000, step: 10, def: 60, when: 'next' },
   { key: 'maxCoins', path: 'world.coins.max', group: 'Spawn', label: 'Max coins', hint: 'Coins lying around at the start. 0 = none (ghost drops still happen).', doc: 'Coins lying around at the start (0 = none)', type: 'range', min: 0, max: 100, step: 1, def: 30, when: 'next' },
@@ -62,6 +62,7 @@ const PAGE_ROWS = [
   { key: 'regenSteps', path: 'explorer.regen.steps', group: 'Explorer', label: 'Regen every', hint: 'Steps between natural heals. 0 = no regen.', doc: 'Steps between natural heals of a hurt explorer (0 = no regen)', type: 'range', min: 0, max: 200, step: 1, def: 30, when: 'live', page: false },
   { key: 'regenAmount', path: 'explorer.regen.amount', group: 'Explorer', label: 'Regen amount', hint: 'Lives healed per regen (fractions allowed).', doc: 'Lives healed per natural heal (fractions allowed, up to max lives)', type: 'range', min: 0, max: 3, step: 0.25, def: 0.5, when: 'live', page: false },
   { key: 'lightRadius', path: 'world.lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', doc: 'Cells each visited cell lights up', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },
+  { key: 'explorerProgress', path: 'explorer.progress.redirect', group: 'Explorer', label: 'Retreat redirect', hint: 'The explorer tracks its progress along its known path and, when it keeps retreating over explored ground, is steered to the deepest known frontier. Off = it still tracks progress but never redirects (an A/B arm).', doc: 'true = a sustained retreat is redirected to the deepest known frontier; false = tracked only', type: 'toggle', def: true, when: 'next', page: false },
   { key: 'minSize', path: 'world.size.min', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', doc: 'Smallest map side', type: 'range', min: 25, max: 150, step: 1, def: 25, when: 'next' },
   { key: 'maxSize', path: 'world.size.max', group: 'Map', label: 'Max map side', hint: 'Largest width or height.', doc: 'Largest map side', type: 'range', min: 25, max: 150, step: 1, def: 90, when: 'next' },
   { key: 'roomArea', path: 'world.roomArea', group: 'Map', label: 'Cells per room', hint: 'Fewer cells = more, closer rooms (maze layout only).', doc: 'Floor cells per room: lower = more, closer rooms (maze layout only)', type: 'range', min: 120, max: 800, step: 10, def: 290, when: 'next' },
@@ -69,8 +70,8 @@ const PAGE_ROWS = [
 
 // ---- P1: world, props, testbed. File-only (page: false); each default is the literal the module used to hold. ----
 const num = (key, path, def, min, max, step, doc) => ({ key, path, group: 'World', label: path, hint: doc, doc, type: 'range', min, max, step, def, when: 'next', page: false });
-const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner'];
-const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2 };
+const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'ore', 'statue', 'candle_table', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner', 'candle_nook'];
+const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, ore: 2, statue: 1, candle_table: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2, candle_nook: 2 };
 const P1_ROWS = [
   num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
   num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),
@@ -468,15 +469,50 @@ const P8_ROWS = [
 // ---- Levels (PLAN-levels.md): a level 1-3 per monster scales its hp and claw damage. File-only, next game. ----
 const P9_ROWS = [
   { key: 'levelsEnabled', path: 'monsters.levels.enabled', group: 'Monsters', label: 'monsters.levels.enabled', hint: 'Monster levels', doc: 'true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today)', type: 'toggle', def: true, when: 'next', page: false },
-  { ...num('levelHpMult', 'monsters.levels.hpMult', [0.5, 1, 1.5], 0.1, 10, 0.1, 'Multiplier on the kind hp at level 1/2/3 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 3 },
-  { ...num('levelDmgMult', 'monsters.levels.dmgMult', [1, 1, 1.5], 0.1, 10, 0.1, 'Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 3 },
+  { ...num('levelHpMult', 'monsters.levels.hpMult', [0.5, 1, 1.5, 2], 0.1, 10, 0.1, 'Multiplier on the kind hp at level 1/2/3/4 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 4 },
+  { ...num('levelDmgMult', 'monsters.levels.dmgMult', [1, 1, 1.5, 1.5], 0.1, 10, 0.1, 'Multiplier on the kind claw damage at level 1/2/3/4 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 4 },
   { ...num('levelWeightGhost', 'monsters.levels.weights.ghost', [1, 1], 0, 100, 1, 'Relative spawn weight of a ghost at level 1/2 (all 0 = even)'), group: 'Monsters', type: 'tuple', len: 2 },
   { ...num('levelWeightTroll', 'monsters.levels.weights.troll', [1, 1], 0, 100, 1, 'Relative spawn weight of a troll at level 2/3 (all 0 = even)'), group: 'Monsters', type: 'tuple', len: 2 },
   { key: 'levelCautionClaws', path: 'monsters.levels.cautionClaws', group: 'Monsters', label: 'monsters.levels.cautionClaws', hint: 'Claws that make a monster too strong to fight', doc: 'Too strong to fight: this many claws or fewer kill the explorer and one strike will not dispel it', type: 'range', min: 1, max: 10, step: 1, def: 1, when: 'live', page: false },
   { key: 'the_weak_target', path: 'ui.thoughts.explorer.weak_target', group: 'UI', label: 'ui.thoughts.explorer.weak_target', hint: "Explorer remark lines on first sighting a weak target (in order)", doc: "Explorer remark lines on first sighting a weak target (in order)", type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
   { key: 'the_too_strong', path: 'ui.thoughts.explorer.too_strong', group: 'UI', label: 'ui.thoughts.explorer.too_strong', hint: "Explorer remark lines on first sighting a too-strong monster (in order)", doc: "Explorer remark lines on first sighting a too-strong monster (in order)", type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
 ];
-export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS, ...P5_ROWS, ...P6_ROWS, ...P7_ROWS, ...P8_ROWS, ...P9_ROWS];
+const NEW_KIND_ROWS = [
+  { ...num('treeGiantHp', 'monsters.kinds.tree_giant.hp', 4, 1, 20, 1, 'Tree giant base hp before level scaling'), group: 'Skills' },
+  { ...num('treeGiantClawDamage', 'monsters.kinds.tree_giant.clawDamage', 2, 1, 6, 1, 'Tree giant base attack damage before level scaling'), group: 'Skills' },
+  { ...num('treeGiantSpeed', 'monsters.kinds.tree_giant.speed', 0.45, 0.1, 1.5, 0.05, 'Tree giant movement share of global monster speed'), group: 'Skills' },
+  { ...num('treeGiantStunTicks', 'monsters.kinds.tree_giant.stunTicks', 0, 0, 6, 1, 'Tree giant stun ticks after a sword hit'), group: 'Skills' },
+  { ...num('treeGiantClawCooldown', 'monsters.kinds.tree_giant.clawCooldown', 3, 0, 6, 1, 'Tree giant steps between attacks'), group: 'Skills' },
+  list('treeGiantSkills', 'monsters.kinds.tree_giant.skills', ['claw_strike'], 'Tree giant skills (at most 4; empty = none)'),
+  { key: 'thg_direct_pursuit', path: 'ui.thoughts.tree_giant.direct_pursuit', group: 'UI', label: 'Tree giant: direct_pursuit', hint: 'Tree giant bubble lines for direct_pursuit', doc: 'Tree giant bubble lines for direct_pursuit', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_cut_off', path: 'ui.thoughts.tree_giant.cut_off', group: 'UI', label: 'Tree giant: cut_off', hint: 'Tree giant bubble lines for cut_off', doc: 'Tree giant bubble lines for cut_off', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_sweep_last_seen', path: 'ui.thoughts.tree_giant.sweep_last_seen', group: 'UI', label: 'Tree giant: sweep_last_seen', hint: 'Tree giant bubble lines for sweep_last_seen', doc: 'Tree giant bubble lines for sweep_last_seen', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_struck', path: 'ui.thoughts.tree_giant.struck', group: 'UI', label: 'Tree giant: struck', hint: 'Tree giant bubble lines for struck', doc: 'Tree giant bubble lines for struck', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_hit', path: 'ui.thoughts.tree_giant.hit', group: 'UI', label: 'Tree giant: hit', hint: 'Tree giant bubble lines for hit', doc: 'Tree giant bubble lines for hit', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_blocked', path: 'ui.thoughts.tree_giant.blocked', group: 'UI', label: 'Tree giant: blocked', hint: 'Tree giant bubble lines for blocked', doc: 'Tree giant bubble lines for blocked', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_bump', path: 'ui.thoughts.tree_giant.bump', group: 'UI', label: 'Tree giant: bump', hint: 'Tree giant bubble lines for bump', doc: 'Tree giant bubble lines for bump', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_alerted', path: 'ui.thoughts.tree_giant.alerted', group: 'UI', label: 'Tree giant: alerted', hint: 'Tree giant bubble lines for alerted', doc: 'Tree giant bubble lines for alerted', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_gave_up', path: 'ui.thoughts.tree_giant.gave_up', group: 'UI', label: 'Tree giant: gave_up', hint: 'Tree giant bubble lines for gave_up', doc: 'Tree giant bubble lines for gave_up', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thg_caught', path: 'ui.thoughts.tree_giant.caught', group: 'UI', label: 'Tree giant: caught', hint: 'Tree giant bubble lines for caught', doc: 'Tree giant bubble lines for caught', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { ...num('wolfHp', 'monsters.kinds.wolf.hp', 3, 1, 20, 1, 'Wolf base hp before level scaling'), group: 'Skills' },
+  { ...num('wolfClawDamage', 'monsters.kinds.wolf.clawDamage', 1, 1, 6, 1, 'Wolf base attack damage before level scaling'), group: 'Skills' },
+  { ...num('wolfSpeed', 'monsters.kinds.wolf.speed', 1.2, 0.1, 1.5, 0.05, 'Wolf movement share of global monster speed'), group: 'Skills' },
+  { ...num('wolfStunTicks', 'monsters.kinds.wolf.stunTicks', 1, 0, 6, 1, 'Wolf stun ticks after a sword hit'), group: 'Skills' },
+  { ...num('wolfClawCooldown', 'monsters.kinds.wolf.clawCooldown', 1, 0, 6, 1, 'Wolf steps between attacks'), group: 'Skills' },
+  list('wolfSkills', 'monsters.kinds.wolf.skills', ['claw_strike'], 'Wolf skills (at most 4; empty = none)'),
+  { key: 'thw_direct_pursuit', path: 'ui.thoughts.wolf.direct_pursuit', group: 'UI', label: 'Wolf: direct_pursuit', hint: 'Wolf bubble lines for direct_pursuit', doc: 'Wolf bubble lines for direct_pursuit', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_cut_off', path: 'ui.thoughts.wolf.cut_off', group: 'UI', label: 'Wolf: cut_off', hint: 'Wolf bubble lines for cut_off', doc: 'Wolf bubble lines for cut_off', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_sweep_last_seen', path: 'ui.thoughts.wolf.sweep_last_seen', group: 'UI', label: 'Wolf: sweep_last_seen', hint: 'Wolf bubble lines for sweep_last_seen', doc: 'Wolf bubble lines for sweep_last_seen', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_struck', path: 'ui.thoughts.wolf.struck', group: 'UI', label: 'Wolf: struck', hint: 'Wolf bubble lines for struck', doc: 'Wolf bubble lines for struck', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_hit', path: 'ui.thoughts.wolf.hit', group: 'UI', label: 'Wolf: hit', hint: 'Wolf bubble lines for hit', doc: 'Wolf bubble lines for hit', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_blocked', path: 'ui.thoughts.wolf.blocked', group: 'UI', label: 'Wolf: blocked', hint: 'Wolf bubble lines for blocked', doc: 'Wolf bubble lines for blocked', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_bump', path: 'ui.thoughts.wolf.bump', group: 'UI', label: 'Wolf: bump', hint: 'Wolf bubble lines for bump', doc: 'Wolf bubble lines for bump', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_alerted', path: 'ui.thoughts.wolf.alerted', group: 'UI', label: 'Wolf: alerted', hint: 'Wolf bubble lines for alerted', doc: 'Wolf bubble lines for alerted', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_gave_up', path: 'ui.thoughts.wolf.gave_up', group: 'UI', label: 'Wolf: gave_up', hint: 'Wolf bubble lines for gave_up', doc: 'Wolf bubble lines for gave_up', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'thw_caught', path: 'ui.thoughts.wolf.caught', group: 'UI', label: 'Wolf: caught', hint: 'Wolf bubble lines for caught', doc: 'Wolf bubble lines for caught', type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+];
+
+export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS, ...P5_ROWS, ...P6_ROWS, ...P7_ROWS, ...P8_ROWS, ...P9_ROWS, ...NEW_KIND_ROWS];
 
 // What the request-size checks assert (bytes). Not game settings: the game enforces nothing, the checks measure.
 // Raise one on purpose only with a note in AGENTS.md (Open questions: request size).
@@ -484,7 +520,7 @@ export const REQUEST_BYTES = { explorerChasing: 9500, explorerPatrolling: 10500,
 
 // Kind spawn weights are file-only (relative); trollShare = troll / (ghost + troll) is derived from them.
 export const KIND_WEIGHTS = [
-  { path: 'monsters.kinds.ghost.weight', def: 0.75, doc: 'Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls)' },
+  { path: 'monsters.kinds.ghost.weight', def: 0.75, doc: 'Spawn weight, relative to the other kinds (wolves match ghost weight, tree giants use half troll weight)' },
   { path: 'monsters.kinds.troll.weight', def: 0.25, doc: 'Spawn weight, relative to the other kinds' },
 ];
 

@@ -65,6 +65,12 @@ world:
         weight: 1 # How often fountain is picked, relative to its class (0 = never picked at random)
       forge:
         weight: 1 # How often forge is picked, relative to its class (0 = never picked at random)
+      ore:
+        weight: 2 # How often ore is picked, relative to its class (0 = never picked at random)
+      statue:
+        weight: 1 # How often statue is picked, relative to its class (0 = never picked at random)
+      candle_table:
+        weight: 1 # How often candle_table is picked, relative to its class (0 = never picked at random)
       pots:
         weight: 3 # How often pots is picked, relative to its class (0 = never picked at random)
       skull:
@@ -85,6 +91,8 @@ world:
         weight: 2 # How often gate is picked, relative to its class (0 = never picked at random)
       banner:
         weight: 2 # How often banner is picked, relative to its class (0 = never picked at random)
+      candle_nook:
+        weight: 2 # How often candle_nook is picked, relative to its class (0 = never picked at random)
 
 # The knight: lives and protection after a hit.
 explorer:
@@ -403,15 +411,15 @@ monsters:
       # How far ahead a monster plans, by horizon level 1/2/3 (level 2 is empty) (the built-in wording; edit to change it, delete to restore)
       horizon: [ Think about the next few steps only., "", Predict where it will go and plan ahead. ]
     words:
-      # Plain words for the aggression trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      # Plain words for the aggression trait at level 1/2/3/4 (the built-in wording; edit to change it, delete to restore)
       aggression: [ hesitant, steady, fierce ]
-      # Plain words for the persistence trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      # Plain words for the persistence trait at level 1/2/3/4 (the built-in wording; edit to change it, delete to restore)
       persistence: [ gives up fast, standard, relentless ]
-      # Plain words for the horizon trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      # Plain words for the horizon trait at level 1/2/3/4 (the built-in wording; edit to change it, delete to restore)
       horizon: [ short-term, standard, long-term planner ]
-      # Plain words for the roaming trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      # Plain words for the roaming trait at level 1/2/3/4 (the built-in wording; edit to change it, delete to restore)
       roaming: [ stays home, ranges, roams everywhere ]
-      # Plain words for the pack trait at level 1/2/3 (the built-in wording; edit to change it, delete to restore)
+      # Plain words for the pack trait at level 1/2/3/4 (the built-in wording; edit to change it, delete to restore)
       pack: [ loner, team player, pack hunter ]
     mix: mixed # 'mixed' (shuffled deck), 'standard', or weights like { aggressive: 3, timid: 1 }
     presets:
@@ -496,6 +504,21 @@ monsters:
       skills: [ claw_strike ] # Skills a troll has (at most 4; empty = none)
       clawCooldown: null # Troll claw cooldown, steps (null = the global clawCooldown)
       weight: 0.5 # Spawn weight, relative to the other kinds
+    # Spawn ratios follow ghost/troll weights: wolf = ghost, tree giant = half troll.
+    tree_giant:
+      hp: 4 # Level 4 makes this 8 hit points.
+      clawDamage: 2 # Level 4 makes this 3 lives per attack.
+      speed: 0.45
+      stunTicks: 0 # An ancient guardian does not stagger.
+      clawCooldown: 3
+      skills: [ claw_strike ]
+    wolf:
+      hp: 3
+      clawDamage: 1
+      speed: 1.2
+      stunTicks: 1
+      clawCooldown: 1
+      skills: [ claw_strike ]
   brain:
     pingpongs: 3 # Back-and-forth steps while searching before a monster re-picks its search approach
     skillNear: 10 # A monster asks about a skill when the explorer is within this many cells
@@ -515,9 +538,9 @@ monsters:
   morale:
     enabled: true
   levels:
-    enabled: true # true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today)
-    hpMult: [ 0.5, 1, 1.5 ] # Multiplier on the kind hp at level 1/2/3 (rounded, at least 1)
-    dmgMult: [ 1, 1, 1.5 ] # Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1)
+    enabled: true # true = monsters get a level 1-4 scaling hp and claw; false = base stats (giants stay level 4; other kinds default to level 2)
+    hpMult: [ 0.5, 1, 1.5, 2 ] # Multiplier on the kind hp at level 1/2/3/4 (rounded, at least 1)
+    dmgMult: [ 1, 1, 1.5, 1.5 ] # Multiplier on the kind claw damage at level 1/2/3/4 (rounded, at least 1)
     weights:
       ghost: [ 1, 1 ] # Relative spawn weight of a ghost at level 1/2 (all 0 = even)
       troll: [ 1, 1 ] # Relative spawn weight of a troll at level 2/3 (all 0 = even)

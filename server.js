@@ -18,9 +18,11 @@ const PORT = Number(process.env.PORT) || 3003;
 // adversaries.json) into its own folder, so many servers can run side by side. Unset = next to server.js.
 const DATA = process.env.DATA_DIR ? pathToFileURL(resolve(process.env.DATA_DIR) + '/') : null;
 const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
-// Options for the Run being built: the paths above (the explorer's confidence is always the caps model).
+// Options for the Run being built: the paths above (the explorer's confidence is always the caps model), plus the
+// explorerProgress knob (false = the brain tracks known-path progress but never redirects a retreat).
 const gameOpts = () => ({
   ...GAME_OPTS,
+  progress: settings.appliedValue('explorerProgress') !== false,
 });
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
 await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
@@ -40,6 +42,7 @@ const STATIC = {
   '/props/index.js': ['props/index.js', 'text/javascript; charset=utf-8'],
   '/props/floor-art.js': ['props/floor-art.js', 'text/javascript; charset=utf-8'],
   '/props/wall-art.js': ['props/wall-art.js', 'text/javascript; charset=utf-8'],
+  '/props/image-art.js': ['props/image-art.js', 'text/javascript; charset=utf-8'],
 };
 
 // One game for the whole playground.
