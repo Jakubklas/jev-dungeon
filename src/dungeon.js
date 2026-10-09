@@ -16,7 +16,7 @@ export let MIN_ROOMS = 4; // fewest rooms a map gets (a layout with fewer is red
 export let LOOP_SHARE = 0.25; // extra loop corridors as a share of the rooms ...
 export let LOOP_MIN = 2; // ... and at least this many
 export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
-export let EXPLORER_LIVES = 2; // lives the explorer starts with
+export let EXPLORER_LIVES = 4; // lives the explorer starts with
 export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus loops; 'linear': one winding path of rooms to the portal, with side rooms
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 

@@ -88,7 +88,7 @@ world:
 # The knight: lives and protection after a hit.
 explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
-  lives: 3 # Lives the explorer starts with
+  lives: 4 # Lives the explorer starts with
   skills: [ sword_strike, shield_block, fire_strike ] # Skills the explorer starts with (at most 4; empty = none)
   brain:
     reviewEvery: 8 # Steps between approach reviews

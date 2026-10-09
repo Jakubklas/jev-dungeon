@@ -86,7 +86,7 @@ const OLD = [
   ['maxHearts', 6, 'next'],
   ['coinDropChance', 0.6, 'next'],
   ['stunTicks', 2, 'next'],
-  ['lives', 2, 'next'],
+  ['lives', 4, 'next'],
   ['lightRadius', 7, 'next'],
   ['minSize', 25, 'next'],
   ['maxSize', 90, 'next'],

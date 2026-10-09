@@ -183,7 +183,6 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   ]);
   const a = adversary('a1', [7, 3]);
   game.adversaries = [a];
-  check(EXPLORER_LIVES === 2, `damage checks assume 2 lives, EXPLORER_LIVES is ${EXPLORER_LIVES}`);
   check(startsChase(game, a), 'chase: trigger not met within CHASE_RANGE');
   resetStub(game, { strike: true });
   const events = [], allTurns = [];
@@ -214,11 +213,11 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   while (expectedSteps(wantTicks) < startD) wantTicks++;
   check(hitTick === wantTicks, `hit: first hit after ${hitTick} ticks from ${startD} steps, want ${wantTicks}`);
   const hit = events.find((e) => e.type === 'hit');
-  check(hit?.id === 'a1' && same(hit.at, game.pos) && hit.health === 1, `hit: event ${JSON.stringify(hit)}`);
+  check(hit?.id === 'a1' && same(hit.at, game.pos) && hit.health === EXPLORER_LIVES - 1, `hit: event ${JSON.stringify(hit)}`);
   const hitTypes = events.slice(events.findIndex((e) => e.type === 'hit')).map((e) => e.type).join();
   check(hitTypes === 'hit,strike,bump', `hit: strike tick events ${hitTypes}, want hit,strike,bump`);
   check(events.find((e) => e.type === 'strike')?.result === 'hit', 'hit: strike result not hit');
-  check(!game.lost && game.health === 1 && game.caughtBy === null, 'hit: first strike lost the game');
+  check(!game.lost && game.health === EXPLORER_LIVES - 1 && game.caughtBy === null, 'hit: first strike lost the game');
   check(!events.some((e) => e.type === 'caught'), 'hit: caught emitted for a non-lethal hit');
   check(graceLeft(game) === GRACE_TICKS, `hit: grace ${graceLeft(game)}, want ${GRACE_TICKS}`);
   check(!same(a.pos, game.pos), 'hit: hitter still on the explorer');
@@ -235,8 +234,8 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   check(allTurns.slice(0, -1).every((t) => t.skill_decision === null), 'turn: skill_decision not null without a skill question');
   check(lastTurn.skill_decision?.choice === clawKey && lastTurn.skill_decision.used === clawKey && lastTurn.skill_decision.probabilities?.[clawKey] === 1, `turn: claw skill_decision ${JSON.stringify(lastTurn.skill_decision)}, want choice and used ${clawKey}`);
 
-  // Grace: the adjacent ghost keeps going but its claw is blocked by hit protection ('protected'), then the first
-  // strike after grace is the lethal one. The default claw has cooldown 2, so strikes are every third step.
+  // Grace: the adjacent ghost keeps going but its claw is blocked by hit protection ('protected').
+  // With four lives the ghost must land all four separated strikes before the last one is lethal.
   let secondTick = 0, lastEvents = [];
   const sawProtected = [];
   while (ticks < hitTick + 60 && !game.lost) {
@@ -251,11 +250,11 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   const types = lastEvents.map((e) => e.type).join();
   check(types === 'hit,caught,strike', `chase: lethal tick events ${types}, want hit,caught,strike`);
   check(lastEvents[0]?.health === 0 && same(lastEvents[1]?.at ?? [-1, -1], game.pos), 'chase: lethal hit/caught event shape');
-  check(sawProtected.every((t) => t <= hitTick + GRACE_TICKS), 'grace: a strike was protected after grace ended');
+  check(sawProtected.length >= EXPLORER_LIVES - 1, 'grace: a hit did not protect the explorer before each later claw');
   check((await step(game)).events.length === 0, 'chase: adversaries still act after the loss');
   check(game.applyMove('right').moved === false, 'chase: explorer can still move after the loss');
   check(game.legalMoves().length === 0, 'chase: legalMoves not empty after the loss');
-  console.log(`damage: standing explorer struck after ${hitTick} ticks from ${startD} path steps, caught by the first strike after ${GRACE_TICKS} grace ticks (tick ${secondTick})`);
+  console.log(`damage: standing explorer struck after ${hitTick} ticks from ${startD} path steps, its next hit after ${GRACE_TICKS} grace ticks was tick ${secondTick}, caught after ${EXPLORER_LIVES} hits`);
 
   // Stepping into an adversary is only a bump: no life, no grace, no brain call; the ghost is pushed off the cell.
   const g3 = handMap(['#######', '#E...T#', '#######']);
@@ -277,7 +276,7 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   resetStub(g4, { strike: true });
   const ev4 = (await step(g4)).events;
   const strikes4 = ev4.filter((e) => e.type === 'strike');
-  check(ev4.filter((e) => e.type === 'hit').length === 1 && g4.health === 1 && !g4.lost, `two ghosts strike: ${ev4.map((e) => e.type)} health ${g4.health}`);
+  check(ev4.filter((e) => e.type === 'hit').length === 1 && g4.health === EXPLORER_LIVES - 1 && !g4.lost, `two ghosts strike: ${ev4.map((e) => e.type)} health ${g4.health}`);
   check(strikes4.length === 2 && strikes4[0].result === 'hit' && strikes4[1].result === 'protected', `two ghosts strike: results ${strikes4.map((e) => e.result)}, want hit,protected`);
   check(!same(l.pos, g4.pos) && !same(r.pos, g4.pos), 'two ghosts strike: a ghost left on the explorer');
   check(g4.strikes.length === 2 && g4.strikes.every((s) => s.by === 'a1' || s.by === 'a2'), 'two ghosts strike: game.strikes does not hold both flashes');
@@ -299,11 +298,11 @@ const clawGhost = (id, pos, extra = {}) => adversary(id, pos, { skills: buildSki
   resetStub(g6, { strike: true });
   s6.budget = 1;
   const first6 = (await step(g6)).events;
-  check(first6.some((e) => e.type === 'hit') && g6.health === 1, `grace: first strike did not hit (${first6.map((e) => e.type)})`);
+  check(first6.some((e) => e.type === 'hit') && g6.health === EXPLORER_LIVES - 1, `grace: first strike did not hit (${first6.map((e) => e.type)})`);
   s6.pos = [3, 2]; s6.budget = 1;
   g6.clearTickState();
   const ev6 = (await step(g6)).events;
-  check(g6.health === 1 && !ev6.some((e) => e.type === 'hit') && ev6.some((e) => e.type === 'strike' && e.result === 'protected'), `grace: re-hit right after a hit (${ev6.map((e) => e.type)}, health ${g6.health})`);
+  check(g6.health === EXPLORER_LIVES - 1 && !ev6.some((e) => e.type === 'hit') && ev6.some((e) => e.type === 'strike' && e.result === 'protected'), `grace: re-hit right after a hit (${ev6.map((e) => e.type)}, health ${g6.health})`);
   check(graceLeft(g6) === GRACE_TICKS - 1, `grace: ${graceLeft(g6)} left after one tick, want ${GRACE_TICKS - 1}`);
   check(g6.strikes.length === 1 && g6.strikes[0].result === 'protected', 'grace: game.strikes holds this tick\'s flash');
 

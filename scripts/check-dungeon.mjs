@@ -1889,22 +1889,23 @@ if (MEASURE) {
   }
 }
 
-// Health: 2 lives, lost only when all are gone.
+// Health: the configured lives, lost only when all are gone.
 {
   const g = new Game(generateDungeon(3));
-  if (!(g.health === EXPLORER_LIVES && g.maxHealth === 2)) fail('health: starts at 2/2');
+  if (!(g.health === EXPLORER_LIVES && g.maxHealth === EXPLORER_LIVES)) fail(`health: starts at ${EXPLORER_LIVES}/${EXPLORER_LIVES}`);
   const pv = g.publicView();
-  if (!(pv.health === 2 && pv.max_health === 2)) fail('health: publicView includes health and max_health');
+  if (!(pv.health === EXPLORER_LIVES && pv.max_health === EXPLORER_LIVES)) fail('health: publicView includes health and max_health');
   const r1 = g.damage(1, 'a1');
-  if (!(r1.health === 1 && !r1.lost && !g.lost && g.caughtBy === null)) fail('health: first hit leaves 1 life');
-  if (!(g.publicView().health === 1)) fail('health: publicView follows damage');
-  const r2 = g.damage(1, 'a2');
-  if (!(r2.health === 0 && r2.lost && g.lost && g.caughtBy === 'a2')) fail('health: second hit loses the game');
+  if (!(r1.health === EXPLORER_LIVES - 1 && !r1.lost && !g.lost && g.caughtBy === null)) fail('health: first hit leaves a life buffer');
+  if (!(g.publicView().health === EXPLORER_LIVES - 1)) fail('health: publicView follows damage');
+  let r2 = r1;
+  for (let i = 2; i <= EXPLORER_LIVES; i++) r2 = g.damage(1, `a${i}`);
+  if (!(r2.health === 0 && r2.lost && g.lost && g.caughtBy === `a${EXPLORER_LIVES}`)) fail('health: final hit loses the game');
   const r3 = g.damage(1, 'a3');
-  if (!(r3.health === 0 && g.caughtBy === 'a2')) fail('health: no-op once lost');
+  if (!(r3.health === 0 && g.caughtBy === `a${EXPLORER_LIVES}`)) fail('health: no-op once lost');
   const g2 = new Game(generateDungeon(3));
   g2.won = true;
-  if (!(g2.damage(1, 'a1').health === 2 && !g2.lost)) fail('health: no-op once won');
+  if (!(g2.damage(1, 'a1').health === EXPLORER_LIVES && !g2.lost)) fail('health: no-op once won');
 }
 
 if (failures) {
