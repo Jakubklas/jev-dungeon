@@ -546,7 +546,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   check(BLOCK_9X9.length === 81 && new Set(BLOCK_9X9.map((c) => c.join())).size === 81, 'the block is 81 distinct cells');
   check(squareBlock(4).length === 16 && Math.min(...squareBlock(4).map((c) => c[0])) === -1, 'an even block puts the actor in its central 2x2');
   const fire = new AreaSkill({ ...LOADOUTS.fire_strike });
-  check(fire.kind === 'area' && fire.damage === 2 && fire.cooldown === 200, 'fire strike: area kind, damage 2, cooldown 200');
+  check(fire.kind === 'area' && fire.damage === 2 && fire.cooldown === 120, 'fire strike: area kind, damage 2, cooldown 120');
   const cells = fire.cells([5, 4], 'right');
   check(cells.every((c) => Math.abs(c[0] - 5) <= 4 && Math.abs(c[1] - 4) <= 4) && cells.length === 81, 'a 9x9 square centred on the explorer, 4 cells each way');
   for (const d of Object.keys(DIRS)) check(eq(new Set(fire.cells([5, 4], d).map((c) => c.join())).size, 81) && fire.cells([5, 4], d).map((c) => c.join()).sort().join() === cells.map((c) => c.join()).sort().join(), `placement ${d}: the same square whatever the aim`);
@@ -569,11 +569,11 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   check(g.strikes.length === 1 && g.strikes[0].skill === 'fire_strike' && g.strikes[0].cells.length === 9 * 7 && g.facing === facing, 'one strike recorded with its skill and the 63 floor cells of the block; facing unchanged');
   check(eq(g.strikes[0].centre, [5, 4]), `the block is centred on the explorer's cell: ${g.strikes[0].centre}`);
   const f = set.skills.find((k) => k.id === 'fire_strike');
-  check(!f.ready && f.cooldownLeft === 200 && world.useSkill(set, 'fire_strike') === null, 'cooling down 200 steps; a second use is refused');
-  for (let i = 0; i < 199; i++) set.turnPassed();
-  check(!f.ready, 'still cooling after 199 turns');
+  check(!f.ready && f.cooldownLeft === 120 && world.useSkill(set, 'fire_strike') === null, 'cooling down 120 steps; a second use is refused');
+  for (let i = 0; i < 119; i++) set.turnPassed();
+  check(!f.ready, 'still cooling after 119 turns');
   set.turnPassed();
-  check(f.ready, 'ready again after 200 turns');
+  check(f.ready, 'ready again after 120 turns');
   // A troll (4 hp) takes 2 and stays; a sword strike would have taken 1.
   const { dungeon: dt, adversaries: at } = buildArena({ map: ['#######', '#.....#', '#..A..#', '#..@A.#', '#.....#', '#....A#', '#######'], seed: 7, kinds: ['troll', 'ghost', 'ghost'] });
   const gt = new Game(dt); gt.adversaries = at;

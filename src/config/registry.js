@@ -138,7 +138,7 @@ const P2_ROWS = [
   list('ghostSkills', 'monsters.kinds.ghost.skills', ['claw_strike'], 'Skills a ghost has (at most 4; empty = none)'),
   list('trollSkills', 'monsters.kinds.troll.skills', ['claw_strike'], 'Skills a troll has (at most 4; empty = none)'),
   { ...num('fireDamage', 'skills.fire_strike.damage', 2, 1, 5, 1, 'Hit points the fire strike takes from every enemy in its 9x9 area'), group: 'Skills' },
-  { ...num('fireCooldown', 'skills.fire_strike.cooldown', 200, 0, 1000, 1, 'Steps before the fire strike is ready again'), group: 'Skills' },
+  { ...num('fireCooldown', 'skills.fire_strike.cooldown', 120, 0, 1000, 1, 'Steps before the fire strike is ready again'), group: 'Skills' },
   { ...num('ghostSpeed', 'monsters.kinds.ghost.speed', 1, 0.2, 1, 0.05, 'Share of the global monster speed (1 = full)'), group: 'Skills' },
   { ...num('ghostClawCooldown', 'monsters.kinds.ghost.clawCooldown', null, 0, 6, 1, 'Ghost claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
   { ...num('trollClawCooldown', 'monsters.kinds.troll.clawCooldown', null, 0, 6, 1, 'Troll claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },

@@ -370,7 +370,7 @@ Sword, shield and the stun they cause.
 | `skills.shield_block.cooldown` | 2 | 0..6 | next | no | Steps before the shield can be raised again |
 | `skills.stunTicks` | 2 | 0..6 | next | no | Ticks a struck monster loses (no move, no Jev call) |
 | `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 9x9 area |
-| `skills.fire_strike.cooldown` | 200 | 0..1000 | next | no | Steps before the fire strike is ready again |
+| `skills.fire_strike.cooldown` | 120 | 0..1000 | next | no | Steps before the fire strike is ready again |
 | `skills.minProbability` | 0.5 | 0.1..1 | next | no | Jev must be at least this sure to use a skill |
 | `skills.questionText.default.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for monsters |
 | `skills.questionText.default.none` | (built-in wording) | text, up to 300 chars | live | no | Skill question "none" option for monsters |

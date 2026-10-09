@@ -274,7 +274,7 @@ export class SkillSet {                           // skill-set.js. Throws over 4
   get(key)                                        // -> { skill, target } from the latest options() call, else null
   summaries(), turnPassed()
 }
-export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), fire_strike (area 2, cd 200), claw_strike (attack 1, cd 2)
+export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), fire_strike (area 2, cd 120), claw_strike (attack 1, cd 2)
 export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block','fire_strike'], ghost: ['claw_strike'], none: [] }
 export class AreaSkill extends AttackSkill          // area.js: kind 'area', shape BLOCK_9X9 (squareBlock(9), centred), minSeen 2; options() -> one option { key: id, fact, target: { dir, cells } }
 export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: loadout < skillConfig() (settings) < tuning
