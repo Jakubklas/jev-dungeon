@@ -1004,7 +1004,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         rmSync(bd, { recursive: true, force: true });
       }
     }
-    // Outnumbered: three chasers inside the fire strike's 4x4 block, one adjacent, so the skill question carries the
+    // Outnumbered: three chasers inside the fire strike's 9x9 block, one adjacent, so the skill question carries the
     // sword, the shield and the fire strike at once on the decision tick, with lit coins in the room.
     {
       const room = ['#################', ...Array.from({ length: 9 }, () => '#...............#'), '#################'];

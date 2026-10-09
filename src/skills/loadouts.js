@@ -13,8 +13,8 @@ const KINDS = { attack: AttackSkill, area: AreaSkill, block: BlockSkill };
 export const LOADOUTS = {
   sword_strike: { kind: 'attack', id: 'sword_strike', name: 'Sword strike', source: 'sword', damage: 1, cooldown: 1, text: 'Strike the cell in front of you with the sword.' },
   shield_block: { kind: 'block', id: 'shield_block', name: 'Shield block', source: 'shield', effectiveness: 0.6, cooldown: 2, text: 'Raise the shield until your next step to stop an attack.' },
-  // The explorer's big spell: a 4x4 blast around it (area.js), offered only when outnumbered, then a long wait.
-  fire_strike: { kind: 'area', id: 'fire_strike', name: 'Fire strike', source: 'fire', damage: 2, cooldown: 200, text: 'Burn the 4x4 cells around you: every enemy in them takes the damage.' },
+  // The explorer's big spell: a 9x9 blast centred on it (area.js), offered only when outnumbered, then a long wait.
+  fire_strike: { kind: 'area', id: 'fire_strike', name: 'Fire strike', source: 'fire', damage: 2, cooldown: 200, text: 'Burn the 9x9 cells around you: every enemy in them takes the damage.' },
   claw_strike: { kind: 'attack', id: 'claw_strike', name: 'Claw strike', source: 'claw', damage: 1, cooldown: 2, text: 'Strike the cell in front with a claw.' },
 };
 

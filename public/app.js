@@ -87,7 +87,7 @@ const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const SHIELD_SLASH_MS = 260;      // the parry crescent: 6 frames like the sword's slash, a little quicker
 let SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
-let FIRE_MS = 990;              // the fire strike's blast: 18 sprite frames (fall, burst, burn, smoke), 55 ms each
+let FIRE_MS = 1490;             // the fire strike's blast: 18 sprite frames (fall, burst, burn, smoke), about 83 ms each
 // Slash palette, outer rim to bright core: the explorer's sword is white-blue, a ghost's claw red-white.
 const SLASH_COLORS = {
   sword: ['#2a2392', '#5b4fe0', '#a9a4ff', '#ffffff'],
@@ -974,7 +974,7 @@ function drawParry(from, t, cx, cy, known, reveal) {
 }
 
 // Fire strike blast: sprites.js ART.fire_strike (18 frames) over FIRE_MS, anchored on the centre of the burnt
-// block (strike.centre: the middle of all 16 cells, a cell corner next to the knight). Drawn after the entities like the slash, so
+// block (strike.centre: the middle of the whole block, the knight's own cell for the 9x9). Drawn after the entities like the slash, so
 // the column falls over whoever stands there. Fog: drawn only when one of its cells is lit (or Reveal).
 function drawFire(cx, cy, now, known, reveal) {
   if (!fireFx) return;

@@ -267,7 +267,7 @@ export class SkillSet {                           // skill-set.js. Throws over 4
 }
 export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), fire_strike (area 2, cd 200), claw_strike (attack 1, cd 2)
 export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block','fire_strike'], ghost: ['claw_strike'], none: [] }
-export class AreaSkill extends AttackSkill          // area.js: kind 'area', shape BLOCK_4X4, minSeen 2; options() -> one option { key: id, fact, target: { dir, cells } }
+export class AreaSkill extends AttackSkill          // area.js: kind 'area', shape BLOCK_9X9 (squareBlock(9), centred), minSeen 2; options() -> one option { key: id, fact, target: { dir, cells } }
 export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: loadout < skillConfig() (settings) < tuning
 export const SKILL_MIN = 0.5                      // question.js
 export function skillQuestion(options, priorityLine = '', { neutral = false } = {}) // -> a Choice question, `none` first (never shuffled), or null when options is empty; neutral: the explorer's wording (no "choose none unless")

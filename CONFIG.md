@@ -360,7 +360,7 @@ Sword, shield and the stun they cause.
 | `skills.shield_block.effectiveness` | 0.6 | 0..1 | next | no | Chance a raised shield stops a claw (0-1) |
 | `skills.shield_block.cooldown` | 2 | 0..6 | next | no | Steps before the shield can be raised again |
 | `skills.stunTicks` | 2 | 0..6 | next | no | Ticks a struck monster loses (no move, no Jev call) |
-| `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 4x4 area |
+| `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 9x9 area |
 | `skills.fire_strike.cooldown` | 200 | 0..1000 | next | no | Steps before the fire strike is ready again |
 | `skills.minProbability` | 0.5 | 0.1..1 | next | no | Jev must be at least this sure to use a skill |
 | `skills.questionText.default.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for monsters |
@@ -445,7 +445,7 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.walkMs` | 620 | 100..3000 | live | no | A troll's stride after each step, ms |
 | `ui.strikeMs` | 800 | 100..4000 | live | no | Strike overlay duration, ms |
 | `ui.slashMs` | 340 | 50..2000 | live | no | Slash crescent duration, ms |
-| `ui.fireMs` | 990 | 200..5000 | live | no | Fire strike blast duration (18 frames), ms |
+| `ui.fireMs` | 1490 | 200..5000 | live | no | Fire strike blast duration (18 frames), ms |
 | `ui.revealAlpha` | 0.42 | 0.1..1 | live | no | Opacity of cells and monsters shown by Reveal map |
 | `ui.bubbleIn` | 200 | 0..2000 | live | no | Thought bubble fade-in, ms |
 | `ui.bubbleOut` | 400 | 0..3000 | live | no | Thought bubble fade-out, ms |

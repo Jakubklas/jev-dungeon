@@ -344,7 +344,7 @@ skills:
     effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
     cooldown: 2 # Steps before the shield can be raised again
   fire_strike:
-    damage: 2 # Hit points the fire strike takes from every enemy in its 4x4 area
+    damage: 2 # Hit points the fire strike takes from every enemy in its 9x9 area
     cooldown: 200 # Steps before the fire strike is ready again
   stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
   minProbability: 0.5 # Jev must be at least this sure to use a skill

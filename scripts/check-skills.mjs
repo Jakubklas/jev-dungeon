@@ -10,7 +10,7 @@ import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { Skill } from '../src/skills/skill.js';
 import { AttackSkill } from '../src/skills/attack.js';
 import { BlockSkill } from '../src/skills/block.js';
-import { AreaSkill, BLOCK_4X4 } from '../src/skills/area.js';
+import { AreaSkill, BLOCK_9X9, squareBlock } from '../src/skills/area.js';
 import { newTestGame } from '../src/turn.js';
 import { MAX_SKILLS, SkillSet } from '../src/skills/skill-set.js';
 import { LOADOUTS, buildSkillSet } from '../src/skills/loadouts.js';
@@ -531,22 +531,23 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   }
 }
 
-// 13. Fire strike (area skill): a 4x4 blast around the explorer, 2 hp to every enemy in it, offered only when
+// 13. Fire strike (area skill): a 9x9 blast centred on the explorer, 2 hp to every enemy in it, offered only when
 // outnumbered, then a 200-step wait. Only cells in real line of sight burn (rule 1).
 {
   const seenOf = (world) => ({ pos: world.pos, opponentsNear: true, visibleOpponents: world.visibleAdversaries().map((v) => ({ id: v.id, pos: [...v.pos], hp: v.hp, maxHp: v.maxHp })) });
-  check(BLOCK_4X4.length === 16 && new Set(BLOCK_4X4.map((c) => c.join())).size === 16, 'the block is 16 distinct cells');
+  check(BLOCK_9X9.length === 81 && new Set(BLOCK_9X9.map((c) => c.join())).size === 81, 'the block is 81 distinct cells');
+  check(squareBlock(4).length === 16 && Math.min(...squareBlock(4).map((c) => c[0])) === -1, 'an even block puts the actor in its central 2x2');
   const fire = new AreaSkill({ ...LOADOUTS.fire_strike });
   check(fire.kind === 'area' && fire.damage === 2 && fire.cooldown === 200, 'fire strike: area kind, damage 2, cooldown 200');
   const cells = fire.cells([5, 4], 'right');
-  check(cells.some((c) => eq(c, [5, 4])) && Math.max(...cells.map((c) => c[0])) - Math.min(...cells.map((c) => c[0])) === 3 && Math.max(...cells.map((c) => c[1])) - Math.min(...cells.map((c) => c[1])) === 3, 'a 4x4 square that holds the explorer');
-  for (const d of Object.keys(DIRS)) check(fire.cells([5, 4], d).filter((c) => Math.abs(c[0] - 5) <= 1 && Math.abs(c[1] - 4) <= 1).length >= 4, `placement ${d}: the explorer sits in its central 2x2`);
+  check(cells.every((c) => Math.abs(c[0] - 5) <= 4 && Math.abs(c[1] - 4) <= 4) && cells.length === 81, 'a 9x9 square centred on the explorer, 4 cells each way');
+  for (const d of Object.keys(DIRS)) check(eq(new Set(fire.cells([5, 4], d).map((c) => c.join())).size, 81) && fire.cells([5, 4], d).map((c) => c.join()).sort().join() === cells.map((c) => c.join()).sort().join(), `placement ${d}: the same square whatever the aim`);
   // One enemy in sight: the sword's job, nothing offered.
   const g1 = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#.....#', '#.....#', '#######']);
   const set1 = buildSkillSet('explorer');
   check(!('fire_strike' in set1.options(new KnownWorld(g1), seenOf(new KnownWorld(g1)))), 'not offered with one enemy in sight');
-  // Three around the explorer and a spare out of the block: one option, all three dispelled, no win.
-  const g = arena(['###########', '#.........#', '#.........#', '#...A.....#', '#....@A...#', '#.....A...#', '#.........#', '#........A#', '###########']);
+  // Three around the explorer and a spare in sight but out of the block (6 cells off): one option, all three dispelled, no win.
+  const g = arena(['#################', '#...............#', '#...............#', '#...A...........#', '#....@A.........#', '#.....A....A....#', '#...............#', '#...............#', '#################']);
   const world = new KnownWorld(g);
   const set = buildSkillSet('explorer');
   check(set.skills.map((k) => k.id).join() === 'sword_strike,shield_block,fire_strike', 'the explorer carries the fire strike');
@@ -557,8 +558,8 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const facing = g.facing;
   const ev = world.useSkill(set, 'fire_strike');
   check(ev.filter((e) => e.type === 'dispelled').length === 3 && g.adversaries.map((a) => a.id).join() === 'a4' && !g.won, 'three enemies dispelled at once, the spare left, no win');
-  check(g.strikes.length === 1 && g.strikes[0].skill === 'fire_strike' && g.strikes[0].cells.length === 16 && g.facing === facing, 'one strike recorded with its skill and 16 cells; facing unchanged');
-  check(Math.abs(g.strikes[0].centre[0] - 5) === 0.5 && Math.abs(g.strikes[0].centre[1] - 4) === 0.5, `the block centre is a corner of the explorer's cell: ${g.strikes[0].centre}`);
+  check(g.strikes.length === 1 && g.strikes[0].skill === 'fire_strike' && g.strikes[0].cells.length === 9 * 7 && g.facing === facing, 'one strike recorded with its skill and the 63 floor cells of the block; facing unchanged');
+  check(eq(g.strikes[0].centre, [5, 4]), `the block is centred on the explorer's cell: ${g.strikes[0].centre}`);
   const f = set.skills.find((k) => k.id === 'fire_strike');
   check(!f.ready && f.cooldownLeft === 200 && world.useSkill(set, 'fire_strike') === null, 'cooling down 200 steps; a second use is refused');
   for (let i = 0; i < 199; i++) set.turnPassed();
@@ -588,7 +589,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   check(JSON.stringify(sf.options(wf, seenOf(wf))) === before, 'a hidden enemy\'s hp does not change the option');
   wf.useSkill(sf, 'fire_strike');
   check(gf.adversaries.includes(hidden) && !gf.strikes[0].cells.some((c) => eq(c, [5, 2])), 'the hidden enemy is not struck, its cell not burnt');
-  check(gf.strikes[0].cells.length < 16 && gf.strikes[0].centre.every((v) => v % 1 === 0.5), 'walls cut cells off, the drawn centre stays the whole block\'s');
+  check(gf.strikes[0].cells.length < 81 && eq(gf.strikes[0].centre, gf.pos), 'walls cut cells off, the drawn centre stays the whole block\'s');
   // The last two at once: a cleared win.
   const gw = arena(['#######', '#.....#', '#.....#', '#..@A.#', '#...A.#', '#.....#', '#######']);
   const ww = new KnownWorld(gw);
@@ -603,7 +604,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   try {
     const url = pathToFileURL(dirR + '/');
     let asked = null;
-    const run = newTestGame({ map: ['###########', '#.........#', '#.........#', '#...A.....#', '#....@A...#', '#.....A...#', '#.........#', '#........A#', '###########'], seed: 7 },
+    const run = newTestGame({ map: ['#################', '#...............#', '#...............#', '#...A...........#', '#....@A.........#', '#.....A....A....#', '#...............#', '#...............#', '#################'], seed: 7 },
       { ask: async ({ questions }) => { if (questions.skill) asked = questions.skill; return answers(questions); }, decide: async ({ questions }) => answers(questions), memoryDir: url, dir: url });
     const turn = await run.playTurn();
     check(asked && 'fire_strike' in asked.criteria, 'the skill question offers the fire strike');

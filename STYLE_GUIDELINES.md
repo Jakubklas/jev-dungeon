@@ -220,7 +220,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
 | Facing | Sign of the change in screen x: right/up faces right, left/down faces left; mirrored around `anchorX` | AGENTS.md, facing rule |
 | Chase glow | 3 red rings, pulse `.75 + .25·sin(now/180)` | `drawEntity` |
 | Sword / claw slash | 340 ms, 6 frames | `SLASH_MS` |
-| Fire strike blast | 990 ms, 18 frames (55 ms each), on its own clock so the next steps don't cut it; anchored at the middle of the whole 4x4 block (`strike.centre`), drawn after the entities, no slash | `FIRE_MS` (`ui.fireMs`), `drawFire` |
+| Fire strike blast | 1490 ms, 18 frames (about 83 ms each), on its own clock so the next steps don't cut it; anchored at the middle of the whole 9x9 block (the knight's cell) (`strike.centre`), drawn after the entities, no slash | `FIRE_MS` (`ui.fireMs`), `drawFire` |
 | Strike diamonds | 800 ms (hold 50%, 2 pulses, fade) | `STRIKE_MS`, `STRIKE_HOLD` |
 | Shield parry | 260 ms, 6 frames: the sword slash's crescent (same `drawCrescent`, thin tail, fat head, tail catching up late, last 2 frames at .55) at about half its size (radius 11, sweep 1.9 rad, head about 4.5 px half-width) in the coin ramp, swept from the raised shield toward the attacker. The shield flashes to `SHIELD_FLASH` tones on frames 0, 2 and 4 | `SHIELD_SLASH_MS`, `drawParry`, `drawCrescent`. Preview (old shield, new shield both facings, sword slash frames above the parry frames): [docs/shield-preview.png](docs/shield-preview.png) |
 | Hit protection | The knight blinks every 120 ms at alpha .3 | `BLINK_MS` |
