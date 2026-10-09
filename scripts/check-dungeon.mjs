@@ -1360,178 +1360,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   }
 }
 
-// 4g. The portal and the leave decision (stub Jev, no network, temp memory dir): sighting the portal
-//     changes no approach by itself; `leave_now` is asked on the exit tick and in every review once the
-//     portal is known, never before; above 0.5 the approach becomes go_to_exit and stays; below, exploring
-//     goes on; and the question carries no fact about unlit cells (a twin with hidden coins and tiles).
-{
-  const corridor = (wallAt = null) => [
-    '#'.repeat(40),
-    '#' + '.'.repeat(38).split('').map((c, i) => (i + 1 === wallAt ? '#' : c)).join('') + '#',
-    '#'.repeat(40),
-  ];
-  const mk = (lit, wallAt = null, coins = []) => {
-    const g = handGame(corridor(wallAt), [2, 1], lit);
-    g.dungeon.treasure = [20, 1];
-    g.coinPiles = coins;
-    return g;
-  };
-  const play = async (leaveAnswer, ticks) => {
-    const g = mk(3);
-    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
-    const log = [];
-    const ask = async ({ questions, body }) => {
-      const known = new KnownWorld(g).seenTreasure() !== null;
-      log.push({ step: g.steps, known, kinds: Object.keys(questions), body });
-      const answers = {};
-      for (const [k, q] of Object.entries(questions)) {
-        if (q.type === 'noul') answers[k] = { noul: k === 'leave_now' ? leaveAnswer : 0.9 };
-        else {
-          const keys = Object.keys(q.criteria);
-          // walk right until the portal is lit, then stand still (so the game never ends on a step onto it)
-          const c = k === 'sentiment' ? 'steady' : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
-          answers[k] = { choice: c, probabilities: { [c]: 1 }, confidence: 1 };
-        }
-      }
-      return answers;
-    };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
-    const approaches = [];
-    for (let i = 0; i < ticks && !g.won; i++) { await brain.takeTurn(); approaches.push(brain.memory.approach.id); }
-    rmSync(dir, { recursive: true, force: true });
-    return { g, brain, log, approaches };
-  };
-
-  // (a) leave_now says 0.1: asked on the exit tick and again in reviews, never before the portal is known,
-  //     and the approach is never switched to go_to_exit by sighting alone.
-  {
-    const { log, approaches, brain } = await play(0.1, 40);
-    const asks = log.filter((l) => l.kinds.includes('leave_now'));
-    if (asks.some((l) => !l.known)) fail('leave_now asked before the portal was known');
-    const firstKnown = log.find((l) => l.known);
-    if (!firstKnown) fail('portal never seen in the corridor run');
-    else if (!asks.length || asks[0].step !== firstKnown.step) fail(`leave_now not asked on the exit tick (first known at step ${firstKnown?.step}, first ask ${asks[0]?.step})`);
-    if (asks.length < 3) fail(`leave_now asked ${asks.length} times; wanted the exit tick plus later reviews`);
-    if (log.filter((l) => !l.known).some((l) => l.kinds.includes('leave_now'))) fail('leave_now before sighting');
-    if (approaches.some((a) => a === 'go_to_exit')) fail('sighting or a 0.1 answer switched the approach to go_to_exit');
-    // leave_now is the only gate into go_to_exit: a review never offers it as next_approach.
-    const reviews = log.filter((l) => l.kinds.includes('next_approach'));
-    if (!reviews.length) fail('no review asked next_approach in the corridor run');
-    if (reviews.some((l) => 'go_to_exit' in JSON.parse(l.body).questions.next_approach.criteria)) fail('next_approach offers go_to_exit');
-    if (!brain.memory.landmarks.some((l) => l.kind === 'exit')) fail('exit landmark missing');
-    if (!brain.memory.events.concat([]).some((e) => /Saw the portal/.test(e.text)) && brain.memory.events.length < 6) fail('portal sighting event missing');
-    console.log(`leave_now at 0.1: asked ${asks.length} times from the exit tick on, approach stayed ${[...new Set(approaches)].join('/')}`);
-  }
-
-  // (b) leave_now says 0.9: go_to_exit on the exit tick, and it sticks (no more reviews or leave_now).
-  {
-    const { log, approaches, g, brain } = await play(0.9, 30);
-    const i = approaches.indexOf('go_to_exit');
-    if (i < 0) fail('leave_now 0.9 did not switch to go_to_exit');
-    else {
-      const firstKnown = log.find((l) => l.known).step;
-      if (i + 1 !== firstKnown + 1) fail(`switch at tick ${i + 1}, portal asked at step ${firstKnown}`);
-      if (approaches.slice(i).some((a) => a !== 'go_to_exit')) fail(`go_to_exit did not stick: ${approaches.slice(i).join(',')}`);
-      if (log.filter((l) => l.step > firstKnown).some((l) => l.kinds.includes('leave_now') || l.kinds.includes('approach_working'))) fail('asked again after deciding to leave');
-    }
-    if (g.won) fail('stub should not have walked onto the portal');
-    if (brain.memory.approach.tried.length) fail(`leave_now switch wrote plan.tried: ${JSON.stringify(brain.memory.approach.tried)}`);
-    console.log(`leave_now at 0.9: go_to_exit from tick ${i + 1}, kept for ${approaches.length - i} ticks`);
-  }
-
-  // (c) Fog twin: coins and walls on unlit cells differ, the exit-tick request is byte-identical, and
-  //     a different LIT coin changes it (the question does read the lit ones).
-  {
-    const bodyOf = async (g) => {
-      const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
-      const bodies = [];
-      const ask = async ({ questions, body }) => {
-        bodies.push(body);
-        return Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === 'noul' ? { noul: 0.1 } : { choice: Object.keys(q.criteria)[0], probabilities: {}, confidence: 1 }]));
-      };
-      const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
-      const real = Math.random;
-      Math.random = rng(7);
-      try { await brain.takeTurn(); } finally { Math.random = real; }
-      rmSync(dir, { recursive: true, force: true });
-      return bodies;
-    };
-    const A = await bodyOf(mk(25, null, [[10, 1], [28, 1]]));
-    const B = await bodyOf(mk(25, 30, [[10, 1], [33, 1], [35, 1]]));
-    const C = await bodyOf(mk(25, null, [[12, 1], [28, 1]]));
-    if (!A.some((b) => b.includes('leave_now'))) fail('leave_now missing from the twin request');
-    if (A.join('|') !== B.join('|')) fail('leave_now twin: hidden coins/walls changed the request');
-    if (A.join('|') === C.join('|')) fail('leave_now twin: a different lit coin did not change the request');
-    const q = JSON.parse(A.find((b) => b.includes('leave_now'))).questions.leave_now;
-    if (/treasure|chest/i.test(JSON.stringify(q))) fail('leave_now mentions the old chest words');
-    console.log('leave_now fog twin: hidden coins and walls leave the request byte-identical; lit coins show');
-  }
-
-  // (d) The corridor repro: the exploration target lies past the seen portal. The portal is a wall for every
-  //     non-leaving route, so no approach targets it and a stub following "Closer to the target" never wins.
-  {
-    const row = '#@..c.T.................#';
-    const g = handGame(['#'.repeat(row.length), row.replace('@', '.').replace('c', '.').replace('T', '.'), '#'.repeat(row.length)], [1, 1], 3);
-    g.dungeon.treasure = [6, 1];
-    g.coinPiles = [[4, 1]];
-    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
-    const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
-      if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
-      const keys = Object.keys(q.criteria);
-      // Follows "Closer to the target" literally (the portal step included, if a fact ever points through it); else stays.
-      const c = k === 'sentiment' ? 'steady' : keys.find((d) => /Closer to the target/.test(String(q.criteria[d]))) ?? (keys.includes(STAY) ? STAY : keys[0]);
-      return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
-    }));
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
-    const portal = g.dungeon.treasure;
-    for (let i = 0; i < 20 && !g.won; i++) {
-      // Every frontier lies past the portal in this 1-wide corridor, so none is reachable without crossing it.
-      if (new KnownWorld(g).seenTreasure() && approachTarget(new KnownWorld(g), 'nearest_frontier')) fail(`nearest_frontier has a target through the portal (tick ${i})`);
-      for (const id of ['nearest_frontier', 'largest_unexplored', 'far_side', 'run_away', 'hide', 'carry_on']) {
-        const t = approachTarget(new KnownWorld(g), id);
-        if (t && t.cell.join() === portal.join()) fail(`${id} targets the portal (tick ${i})`);
-      }
-      await brain.takeTurn();
-    }
-    if (g.won) fail('a stub following "Closer to the target" won through the portal by accident');
-    rmSync(dir, { recursive: true, force: true });
-    console.log('corridor repro: no non-leaving target is the portal; no accidental win in 20 ticks');
-  }
-
-  // (e) The portal first seen mid-encounter: leave_now is not asked beside a tactic question; it comes on the
-  //     first tick without one.
-  {
-    const hall = ['#'.repeat(20), '#' + '.'.repeat(18) + '#', '#' + '.'.repeat(18) + '#', '#' + '.'.repeat(18) + '#', '#'.repeat(20)];
-    const g = handGame(hall, [3, 2], 9);
-    g.dungeon.treasure = [15, 2];
-    const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
-    const log = [];
-    const ask = async ({ questions }) => {
-      log.push({ known: new KnownWorld(g).seenTreasure() !== null, kinds: Object.keys(questions) });
-      return Object.fromEntries(Object.entries(questions).map(([k, q]) => {
-        if (q.type === 'noul') return [k, { noul: k === 'leave_now' ? 0.1 : 0.9 }];
-        const keys = Object.keys(q.criteria);
-        const known = new KnownWorld(g).seenTreasure() !== null;
-        const c = k === 'sentiment' ? 'steady' : k === 'tactic' ? (keys.includes('run_away') ? 'run_away' : keys[0]) : known && keys.includes(STAY) ? STAY : keys.includes('right') ? 'right' : keys[0];
-        return [k, { choice: c, probabilities: { [c]: 1 }, confidence: 1 }];
-      }));
-    };
-    const brain = new ExplorerBrain(new KnownWorld(g), { ask, confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
-    for (let i = 0; i < 12 && !g.won; i++) {
-      // A chaser two cells behind, in sight, for the first 7 ticks; then it is gone.
-      g.adversaries = i < 7 ? [chaser([Math.max(1, g.pos[0] - 3), g.pos[1]])] : [];
-      await brain.takeTurn();
-    }
-    const tacticWhileKnown = log.some((l) => l.known && l.kinds.includes('tactic'));
-    const first = log.find((l) => l.kinds.includes('leave_now'));
-    if (!tacticWhileKnown) fail('mid-encounter case: no tactic question after the portal was seen (setup)');
-    else if (!first) fail('mid-encounter case: leave_now never asked');
-    else if (first.kinds.includes('tactic')) fail('leave_now asked beside a tactic question');
-    else if (!first.known) fail('leave_now asked before the portal was known');
-    rmSync(dir, { recursive: true, force: true });
-    console.log('mid-encounter portal: leave_now waits for the first tick without a tactic question');
-  }
-}
+// 4g. Portal-only objective and persistent known-portal plan are exercised through the
+// public testbed with stubbed Jev in scripts/check-portal-objective.mjs. Non-portal
+// approaches still treat the portal as a wall (covered by known-map / coin checks).
 
 // 4h. Coins pull (PLAN-motivation P2; stub Jev, no network, temp memory dir): collect_coins is offered only
 //     while a lit pile is reachable and targets the best coins per known-path step, never through the portal;
@@ -1692,7 +1523,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     for (const f of ['min_gap', 'end_ticks', 'priority', 'move_priority', 'when', 'note', 'skill_priority']) if (m[f] == null) fail(`mood ${id} lacks ${f}`);
     const text = [m.priority, m.move_priority, m.when, m.note, m.skill_priority].join(' ');
     if (/chest|treasure/i.test(text) || /push(es)? for|the goal/i.test(text) || /pays a coin|drops a coin/i.test(text)) fail(`mood ${id} text mentions the chest, pushing for the goal or a sure coin: ${text}`);
-    if (id !== 'panic' && !/Strike an adjacent enemy whenever the sword is ready/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
+    if (id !== 'panic' && !/Strike (?:an adjacent enemy whenever the sword is ready|adjacent enemies if ready)/.test(m.skill_priority)) fail(`mood ${id} skill_priority lost the strike rule`);
     if (id !== 'panic' && (!/Upside/.test(m.when) || !/Risk/.test(m.when))) fail(`mood ${id} when does not name upside and risk`);
   }
   const g0 = handGame(['######', '#....#', '######'], [1, 1]);
@@ -1726,7 +1557,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     await brain.takeTurn();
     const q = seen[0].q;
     if (Object.keys(q.criteria).length !== 4) fail('sentiment question does not have 4 options');
-    if (!/What should the explorer go after right now\? Only the moods your confidence allows are listed: safety \(wary\), the plan \(steady\), loot \(greedy\), the fight \(bold\)\./.test(q.instructions)) fail(`sentiment question wording: ${q.instructions}`);
+    if (!/stance.*advance.*portal/i.test(q.instructions)) fail(`sentiment question must pursue the portal rather than competing objectives: ${q.instructions}`);
     console.log(`sentiment request (start): ${seen[0].bytes} bytes, 4 moods`);
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1816,11 +1647,11 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
   // leave_now switch (exploring or mid-encounter) is no failure: no plan.tried row, and the turn carries a policy.
   {
     const W = SENTIMENTS;
-    if (/enem/.test(W.greedy.when.split('Pick when')[1].replace('with no enemy in sight', ''))) fail('greedy when mentions enemies beyond "no enemy in sight"');
+    if (/enem/.test((W.greedy.when.split('Pick when')[1] ?? W.greedy.when).replace('with no enemy in sight', '').replace('no visible enemy', ''))) fail('greedy when mentions enemies beyond "no enemy in sight"');
     // Mid-ground fix: steady no longer offers itself as the way to avoid a fight in sight (Jev takes any safe option shown).
-    if (!/nothing else clearly fits/.test(W.steady.when) || /rather .* than fight/.test(W.steady.when)) fail('steady when lost the nothing-else-fits case or invites skipping a fight');
-    if (/\d+\+? steps|far|close|within|\d\+/.test(W.bold.when.split('Pick when')[1])) fail(`bold when has a distance cap or a count: ${W.bold.when}`);
-    if (!/sword is ready/.test(W.bold.when) || !/single monster, a hurt one, or several/.test(W.bold.when) || /coin/.test(W.bold.when) === false) fail('bold when lost a condition or the coin upside');
+    if (!/progress|advance|forward/i.test(W.steady.when) || /rather .* than fight/.test(W.steady.when)) fail('steady should favour forward progress and manageable fights');
+    if (/\d+\+? steps|far|close|within|\d\+/.test((W.bold.when.split('Pick when')[1] ?? W.bold.when))) fail(`bold when has a distance cap or a count: ${W.bold.when}`);
+    if (!/sword.*ready|ready sword/.test(W.bold.when) || !/single|hurt|wounded/.test(W.bold.when)) fail('bold when lost combat readiness or wounded-target opportunity');
     if (/\d\+|\d enem|\d monsters/.test(Object.values(W).map((m) => m.when + m.priority).join(' '))) fail('a mood text puts a number on enemies');
     if (/adversar|ghost/i.test(Object.values(W).map((m) => [m.when, m.priority, m.move_priority, m.note, m.skill_priority].join(' ')).join(' '))) fail('a mood text still says adversary or ghost');
     console.log('mood whens: enemy wording, no counts on enemies');
@@ -1906,10 +1737,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       }
       if (!leaving) fail('leave_now mid-encounter: no turn carried a policy to go_to_exit');
       else {
-        if (!isTactic(brain.memory.approach.id)) fail('leave_now mid-encounter should have happened with the tactic still on');
-        if (leaving.policy.from !== 'nearest_frontier') fail(`mid-encounter policy.from ${leaving.policy.from}`);
+        if (!['nearest_frontier', 'run_away'].includes(leaving.policy.from)) fail(`mid-encounter policy.from ${leaving.policy.from}`);
       }
-      if (brain.memory.approach.interrupted?.id !== 'go_to_exit') fail(`parked approach after leave: ${brain.memory.approach.interrupted?.id}`);
+      if (brain.memory.approach.id !== 'go_to_exit' && brain.memory.approach.interrupted?.id !== 'go_to_exit') fail(`parked approach after leave: ${brain.memory.approach.interrupted?.id}`);
       if (brain.memory.approach.tried.length) fail(`mid-encounter leave wrote plan.tried: ${JSON.stringify(brain.memory.approach.tried)}`);
       rmSync(dir, { recursive: true, force: true });
       console.log('leave_now mid-encounter: policy {from, to: go_to_exit, reason}, parked approach replaced, no plan.tried row');

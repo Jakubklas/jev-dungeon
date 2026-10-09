@@ -36,18 +36,18 @@ export const APPROACHES = {
   far_side: { text: 'Travel to the part of the dungeon farthest from where the explorer has already been.', thought: "Let's try the far side of this place." },
   collect_coins: { text: 'Go for the best seen pile of coins: coins are the score, so a detour for them can pay.', thought: 'Coins! Worth the detour.', needsCoins: true },
   heal: { text: 'Go for the nearest seen heart: it restores a life, and you are hurt.', thought: 'A heart! I need that.', needsHeart: true },
-  go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
+  go_to_exit: { text: 'Win through the seen portal: follow the shortest known path, clearing enemies in the way or slipping past them.', thought: 'The portal! Go for the win.', needsExit: true },
   slip_past: {
     text: 'Slip past the enemy: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
   },
-  run_away: { text: 'Pull back for now: get clear of the enemy, keep escape routes open, avoid dead ends, and come back for the loot once you have regrouped.', thought: 'Run away!', tactic: true, brief: 'Pull back for now: get clear, regroup, come back later.' },
+  run_away: { text: 'Pull back to recover or reposition, keeping escape routes open; then resume advancing toward the portal. Retreat alone cannot win.', thought: 'Regroup, then press forward.', tactic: true, brief: 'Pull back to recover or reposition, then advance again.' },
   engage: {
     text: 'Engage: fight the enemy with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
     thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
   },
   hide: { text: "Duck out of sight: reach a known cell outside the enemy's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
-  race_to_exit: { text: 'Race the enemy to the seen portal along the known path, staying out of its reach.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Race it to the seen portal along the known path.' },
+  race_to_exit: { text: 'Win by reaching the seen portal along the known path before the enemy can stop you.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Reach the seen portal along the known path and win.' },
   carry_on: { text: 'The enemy is patrolling and has not seen the explorer: keep exploring, but stay out of its sight.', thought: "It hasn't seen me, keep going.", tactic: true, brief: 'It has not seen you: keep exploring out of its sight.' },
 };
 export const TACTICS = Object.keys(APPROACHES).filter((id) => APPROACHES[id].tactic);
@@ -312,11 +312,12 @@ function hereKind(world) {
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
 let HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
-// `retreat` false (the mid and high confidence tiers): Jev leans on any safe option it is shown, so pulling back (run_away, hide,
-// race_to_exit) is left off the menu while a forward tactic (engage, slip_past, carry_on) is open. With no forward tactic, or
+// `retreat` false (the mid and high confidence tiers): Jev leans on any safe option it is shown, so pulling back
+// (run_away, hide) is left off the menu while a forward tactic (engage, slip_past, carry_on) is open.
+// The portal remains a winning tactic. With no forward tactic, or
 // `cornered` (cornerMode), nothing is trimmed.
 const FORWARD_TACTICS = ['engage', 'slip_past', 'carry_on'];
-const RETREAT_TACTICS = ['run_away', 'hide', 'race_to_exit'];
+const RETREAT_TACTICS = ['run_away', 'hide'];
 export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false, retreat = true, cornered = null } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};

@@ -181,7 +181,7 @@ const TACTIC_MOVE_HINT = {
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null, directive = false) =>
-  'Goal: reach and step through the portal at the end of this dark dungeon; only the portal wins. Advance toward it: dispel enemies in your way to permanently clear obstacles and pursuers, or slip past when fighting would stop you reaching it. Retreat to recover or reposition, then resume advancing. Your score is the coins you hold when you win. At 0 lives you lose, coins and all. ' +
+  'Goal: reach and step through the portal at the dungeon\'s end; only the portal wins. Advance: dispel enemies in your way, permanently removing obstacles and pursuers; slip past when fighting would prevent reaching it. Retreat to recover or reposition, then advance again. Score: coins held when you win. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
   `A touch only bumps. An adjacent enemy's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
@@ -255,7 +255,7 @@ export class ExplorerBrain {
   #coinDue = false;
   #coinStep = -Infinity;
   #dirAskStep = 0; // the step the directive was set or directive_done last asked
-  #leaveDue = false; // the portal was just seen: ask leave_now on the next real choice
+  #leaveDue = false; // legacy leave_now scheduling; portal discovery now commits the destination
   // { id, cell }: the goal cell of the current tactic, kept so its target stays put.
   #tacticGoal = null;
   // cornerMode: this tick's cornerFacts (null = not cornered / off), and the breakout route kept for its length
@@ -815,7 +815,7 @@ export class ExplorerBrain {
       !forced && !liveDirective && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
       sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
     if (reviewDue) this.#addReviewQuestions(questions, approachId, rInfo);
-    // leave_now: on the first tick after the portal was seen, and in every review while it is known.
+    // Legacy leave_now fallback for a known portal without a committed destination.
     // Never while leaving is already the plan, and not beside a tactic question (race_to_exit covers
     // leaving under threat; that request is the largest): it waits for the next tick, a tactic may be on.
     const askLeave = !forced && !liveDirective && !tacticIds.length && exitSeen(world) && !this.#leaving() && (this.#leaveDue || reviewDue);
@@ -933,9 +933,9 @@ export class ExplorerBrain {
     if (result.coins) addEvent(memory, world.steps, `Picked up ${result.coins === 1 ? 'a coin' : `${result.coins} coins`}: ${world.coins} in all.`);
     if (!result.won) this.#noteLandmarks(world.steps);
     if (!result.won) this.#spotExit(world.steps);
-    // Leaving is Jev's call (leave_now), and it outranks any review outcome.
+    // A portal destination outranks incidental coin detours and ordinary reviews.
     if (pendingLeave !== null && !result.won) policy = this.#leave(pendingLeave, world.steps);
-    else if (pendingCoins && !result.won && !isTactic(memory.approach.id)) {
+    else if (pendingCoins && !result.won && !this.#leaving() && !isTactic(memory.approach.id)) {
       const from = memory.approach.id;
       const reason = `Coins came into view: Jev picked ${pendingCoins.id} (${Math.round(pendingCoins.p * 100)}%).`;
       changeApproach(memory, approachOf(pendingCoins.id), world.steps); // a coin detour is not a failure: no plan.tried row
@@ -943,7 +943,7 @@ export class ExplorerBrain {
       this.#review = { step: world.steps, targetSteps: this.#target(pendingCoins.id)?.steps ?? null };
       policy = { from, to: pendingCoins.id, reason };
     }
-    else if (pendingSwitch && !result.won && !isTactic(memory.approach.id)) {
+    else if (pendingSwitch && !result.won && !this.#leaving() && !isTactic(memory.approach.id)) {
       const from = memory.approach.id;
       switchApproach(memory, approachOf(pendingSwitch.id), pendingSwitch.reason, world.steps);
       addEvent(memory, world.steps, `Dropped ${from} for ${pendingSwitch.id} after a review (judged ${Math.round(pendingSwitch.working * 100)}% working).`);
@@ -1170,15 +1170,11 @@ export class ExplorerBrain {
         ? 'Which way should the explorer step next to follow the player\'s `directive`? Judge each move from its description, `surroundings` and `recent`.'
         : `Which way should the explorer step next? It feels ${memory.sentiment.id} (\`self.mind\`); judge each move from its description, \`surroundings\` and \`recent\`.`;
     const portalSeen = sit.surroundings.exit !== 'not seen yet';
-    // Stepping onto the portal ends the game, so it is only the plan when leaving is.
-    const leavingNow = approachId === 'go_to_exit' || approachId === 'race_to_exit';
-    const portalLine = leavingNow
-      ? speculative
-        ? 'Take a move onto the portal; else head for it.'
-        : 'Take a move onto the portal; else move closer to it along the known path.'
+    const portalLine = live
+      ? 'Stepping onto the portal wins the game; follow the player directive while it is active.'
       : speculative
-        ? 'Onto the portal only to leave or dodge a strike.'
-        : 'A move onto the portal ends the game: take it only if leaving now is the plan or an enemy would otherwise strike you.';
+        ? 'Step onto the portal to win; else clear or slip past enemies toward it.'
+        : 'Take a move onto the portal to win; otherwise clear or slip past obstacles and advance toward it along the known path.';
     const engaging = approachId === 'engage';
     const hint = cornered && approachId === 'slip_past'
       ? 'Follow the route past it; a claw may land, but getting out matters more.'
@@ -1255,7 +1251,7 @@ export class ExplorerBrain {
         false: 'Stuck: going back and forth, circling through explored ground, or revisiting cells many times while revealing almost nothing.',
       },
     };
-    // go_to_exit is never a review alternative: leave_now is the only way into it.
+    // Portal discovery commits the destination; ordinary reviews only compare exploration approaches.
     const alternatives = availableApproaches(world).filter((id) => id !== approachId && id !== 'go_to_exit');
     if (alternatives.length) {
       questions.next_approach = this.#nextApproachQuestion(
@@ -1484,17 +1480,18 @@ export class ExplorerBrain {
     return `${APPROACHES[id].text} ${t ? t.why : 'No reachable target from here.'}`;
   }
 
-  // The portal is known: record it once (event, landmark) and queue a decision tick that also asks
-  // leave_now. No approach change: leaving is Jev's call (see #leave).
+  // The portal is known: record it once and commit the destination immediately.
+  // An encounter keeps its tactic, with the portal as the plan to resume; directives stay active.
   #spotExit(step) {
     const world = this.#world;
     const memory = this.#memory;
     if (world.won || !exitSeen(world) || memory.landmarks.some((l) => l.kind === 'exit')) return;
     const at = Math.max(step, 1);
-    addEvent(memory, at, 'Saw the portal.');
-    addLandmark(memory, { kind: 'exit', cell: world.seenTreasure(), step, note: 'The portal: stepping on it leaves and ends the game.' });
+    addEvent(memory, at, 'Saw the portal: reach and step through it to win.');
+    addLandmark(memory, { kind: 'exit', cell: world.seenTreasure(), step, note: 'The portal: stepping on it is the only way to win.' });
     this.#encounter.pending = 'exit';
-    this.#leaveDue = true;
+    this.#leaveDue = false;
+    this.#leave(1, at);
   }
 
   // Leaving is already the plan: the approach (or, mid-encounter, the parked one) is go_to_exit.
@@ -1508,21 +1505,21 @@ export class ExplorerBrain {
     return {
       type: 'noul',
       instructions:
-        `Give up clearing the dungeon and leave through the portal now (it ends the game)? ${leaveFacts(this.#world, sit)}`,
+        `Advance to the known portal now to win, clearing or slipping past obstacles on the way? ${leaveFacts(this.#world, sit)}`,
       criteria: {
-        true: 'Leave: clearing the dungeon is out of reach and little else is worth the risk.',
-        false: 'Stay: keep clearing the dungeon, and the coins or ground still worth getting.',
+        true: 'Advance to the portal: stepping through it is the only win.',
+        false: 'Recover or reposition briefly, then resume advancing to the portal.',
       },
     };
   }
 
-  // leave_now said leave: make go_to_exit the approach (mid-encounter, the one to resume). Returns the switch.
+  // Commit go_to_exit as the approach (mid-encounter, the one to resume). Returns the switch.
   #leave(p, step) {
     const memory = this.#memory;
     const a = memory.approach;
     const at = Math.max(step, 1);
-    const reason = `Jev decided to leave (${Math.round(p * 100)}%): ${memory.progress.coins} coins held.`;
-    addEvent(memory, at, `Decided to leave through the portal (${Math.round(p * 100)}%).`);
+    const reason = 'Portal known: committed to reaching it and stepping through to win.';
+    addEvent(memory, at, 'Destination: reach the portal and step through to win.');
     if (isTactic(a.id)) {
       const from = a.interrupted?.id ?? a.id;
       replaceInterrupted(memory, { id: 'go_to_exit', text: APPROACHES.go_to_exit.text }, reason, at);

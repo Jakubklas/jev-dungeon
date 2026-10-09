@@ -471,7 +471,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   // c. Every mood may strike an adjacent adversary when the sword is ready.
   for (const [id, m] of Object.entries(SENTIMENTS)) {
     if (id === 'panic') continue; // panic strikes only an enemy that blocks the only way (PLAN-moods)
-    check(/Strike an adjacent enemy whenever the sword is ready/.test(m.skill_priority) && !/only if|that blocks your way|that one hit dispels/.test(m.skill_priority), `${id}: skill_priority allows any adjacent strike (${m.skill_priority})`);
+    check(/Strike (?:an adjacent enemy whenever the sword is ready|adjacent enemies if ready)/.test(m.skill_priority) && !/only if|that blocks your way|that one hit dispels/.test(m.skill_priority), `${id}: skill_priority allows any adjacent strike (${m.skill_priority})`);
   }
 
   // d. Stubbed duels: a hunting ghost (2 hp, claw cooldown 2) against a sword-only explorer, 24 placements.
