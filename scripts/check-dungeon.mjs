@@ -152,7 +152,8 @@ for (let seed = 1; seed <= SEEDS; seed++) {
   if (tile(d.treasure) !== '.') fail(`seed ${seed}: treasure is not floor`);
   if (!inRoom(d, d.treasure)) fail(`seed ${seed}: treasure is not in a room`);
   if (!Array.isArray(d.rooms) || d.rooms.length < 4) fail(`seed ${seed}: rooms missing`);
-  for (const r of d.rooms ?? []) {
+  // Maze rooms are exact rectangles; linear rooms are organic shapes around a 4-15 rectangle (check-layout.mjs covers them).
+  for (const r of (d.rooms ?? []).filter((r) => !r.role)) {
     if (r.w < 4 || r.w > 15 || r.h < 4 || r.h > 15) fail(`seed ${seed}: room ${r.w}x${r.h} at ${r.x},${r.y} not 4-15 a side`);
   }
   if (JSON.stringify(generateDungeon(seed)) !== JSON.stringify(d)) fail(`seed ${seed}: not deterministic`);

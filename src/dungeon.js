@@ -17,6 +17,7 @@ export let LOOP_SHARE = 0.25; // extra loop corridors as a share of the rooms ..
 export let LOOP_MIN = 2; // ... and at least this many
 export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
 export let EXPLORER_LIVES = 2; // lives the explorer starts with
+export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus loops; 'linear': one winding path of rooms to the portal, with side rooms
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 
 // Settings hook (src/settings.js). Light radius, lives, size range and room area only matter to a game
@@ -35,6 +36,7 @@ export function configureWorld(o) {
   if (o.loopMin !== undefined) LOOP_MIN = o.loopMin;
   if (o.treasureShare !== undefined) TREASURE_SHARE = o.treasureShare;
   if (o.spawnMinSteps !== undefined) SPAWN_STEPS = o.spawnMinSteps;
+  if (o.layout !== undefined) LAYOUT = o.layout;
 }
 export let SPAWN_STEPS = 20; // mirrors MIN_SPAWN_STEPS in characters/adversary/adversary.js (both set from spawnMinSteps)
 
@@ -171,11 +173,327 @@ function carve(rand, width, height) {
   return { grid, rooms, center };
 }
 
+// Linear layout (LAYOUT 'linear'): one winding path of rooms from the start to the portal, a few dead-end side
+// rooms and at most one short loop. The map is cut into a coarse grid of patches with 2 wall cells between them;
+// each room and everything it owns is carved inside its own patch, and a corridor only crosses the strip between
+// two linked patches, so the room graph on the finished tiles is exactly the graph chosen here: the shape
+// distortions (organic rooms, winding corridors 1-4 wide) can never add a shortcut. A failed attempt is retried
+// with weaker distortion; the last attempt (plain rectangles, straight 1-wide corridors) always succeeds.
+const LINEAR_ATTEMPTS = 12;
+const SPINE_SHARE = 0.6; // share of the patch grid the main path covers
+const SPINE_BUDGET = 6000; // search nodes for the self-avoiding walk
+
+function generateLinear(seed, rand, width, height) {
+  for (let attempt = 0; attempt < LINEAR_ATTEMPTS; attempt++) {
+    const strength = attempt === LINEAR_ATTEMPTS - 1 ? 0 : 1 - attempt / (LINEAR_ATTEMPTS - 1);
+    const built = buildLinear(rand, width, height, strength);
+    if (!built) continue;
+    const dungeon = { seed, width, height, tiles: built.grid.map((row) => row.join('')), start: built.start, treasure: built.treasure, rooms: built.rooms, layout: built.layout };
+    // Props come last, from their own PRNG, so layout, start and treasure never change.
+    const { tiles, props, decor } = placeProps(dungeon, rng(seed ^ 0x2c1b3c6d));
+    return { ...dungeon, tiles, props, decor };
+  }
+  throw new Error(`linear layout failed for seed ${seed}`); // unreachable: the plain attempt cannot fail
+}
+
+function buildLinear(rand, width, height, strength) {
+  const int = (lo, hi) => lo + Math.floor(rand() * (hi - lo + 1));
+  const C = Math.max(9, Math.min(16, Math.round(Math.min(width, height) / 5)));
+  const cols = Math.max(2, Math.floor((width - 2) / C)), rows = Math.max(2, Math.floor((height - 2) / C));
+  const cw = Math.floor((width - 2) / cols), ch = Math.floor((height - 2) / rows);
+  const N = cols * rows;
+  const patchOf = (c) => ({ x: 2 + (c % cols) * cw, y: 2 + Math.floor(c / cols) * ch, w: cw - 2, h: ch - 2 });
+  const gridNb = (c) => {
+    const cx = c % cols, cy = Math.floor(c / cols), out = [];
+    if (cy > 0) out.push(c - cols);
+    if (cy < rows - 1) out.push(c + cols);
+    if (cx > 0) out.push(c - 1);
+    if (cx < cols - 1) out.push(c + 1);
+    return out;
+  };
+
+  // 1. The main path: a self-avoiding walk over the patch grid from a border patch, keeping its heading half the time.
+  const target = Math.max(3, Math.min(N - 1, Math.round(N * SPINE_SHARE)));
+  const border = [];
+  for (let c = 0; c < N; c++) if (c % cols === 0 || c % cols === cols - 1 || c < cols || c >= N - cols) border.push(c);
+  const first = border[Math.floor(rand() * border.length)];
+  const used = new Uint8Array(N);
+  const path = [first];
+  used[first] = 1;
+  let best = [first], budget = SPINE_BUDGET;
+  const walk = () => {
+    if (path.length > best.length) best = [...path];
+    if (path.length >= target || --budget <= 0) return path.length >= target;
+    const here = path[path.length - 1];
+    const nb = gridNb(here).filter((c) => !used[c]);
+    for (let i = nb.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [nb[i], nb[j]] = [nb[j], nb[i]]; }
+    if (path.length >= 2 && rand() < 0.5) {
+      const straight = 2 * here - path[path.length - 2];
+      const k = nb.indexOf(straight);
+      if (k > 0) nb.unshift(...nb.splice(k, 1));
+    }
+    for (const c of nb) {
+      path.push(c); used[c] = 1;
+      if (walk()) return true;
+      path.pop(); used[c] = 0;
+    }
+    return false;
+  };
+  walk();
+  const spine = best;
+  if (spine.length < 3) return null;
+  used.fill(0);
+  for (const c of spine) used[c] = 1;
+
+  // Nodes: [patch cell, role, order]; links between node indices.
+  const nodes = spine.map((c, i) => ({ cell: c, role: i === 0 ? 'start' : i === spine.length - 1 ? 'portal' : 'path', order: i }));
+  const links = [];
+  for (let i = 1; i < spine.length; i++) links.push([i - 1, i]);
+  const spineAt = new Map(spine.map((c, i) => [c, i]));
+  const addSide = (cell, order, linkTo) => {
+    used[cell] = 1;
+    nodes.push({ cell, role: 'side', order });
+    for (const j of linkTo) links.push([j, nodes.length - 1]);
+    return nodes.length - 1;
+  };
+  const wantSides = Math.min(5, Math.max(2, Math.round(N / 5)));
+  let sides = 0;
+  // 2. At most one loop: a free patch at an inside corner, linked to path[i] and path[i+2], so it bypasses one room.
+  if (rand() < 0.5) {
+    const corners = [];
+    for (let c = 0; c < N; c++) {
+      if (used[c]) continue;
+      const on = gridNb(c).filter((n) => spineAt.has(n)).map((n) => spineAt.get(n)).sort((a, b) => a - b);
+      for (let a = 0; a < on.length; a++) for (let b = a + 1; b < on.length; b++) if (on[b] - on[a] === 2) corners.push([c, on[a]]);
+    }
+    if (corners.length) {
+      const [c, i] = corners[Math.floor(rand() * corners.length)];
+      addSide(c, i, [i, i + 2]);
+      sides++;
+    }
+  }
+  // 3. Dead-end side rooms off any path room but the portal room, now and then two deep.
+  while (sides < wantSides) {
+    const cand = [];
+    for (let c = 0; c < N; c++) {
+      if (used[c]) continue;
+      for (const n of gridNb(c)) if (spineAt.has(n) && spineAt.get(n) < spine.length - 1) cand.push([c, spineAt.get(n)]);
+    }
+    if (!cand.length) break;
+    const [c, i] = cand[Math.floor(rand() * cand.length)];
+    const s = addSide(c, i, [i]);
+    sides++;
+    if (sides < wantSides && rand() < 0.3) {
+      const deeper = gridNb(c).filter((n) => !used[n]);
+      if (deeper.length) { addSide(deeper[Math.floor(rand() * deeper.length)], i, [s]); sides++; }
+    }
+  }
+
+  // 4. Rooms: a rectangle in its patch, then (with strength) lobes, edge noise and smoothing; the core stays floor.
+  const grid = Array.from({ length: height }, () => Array(width).fill('#'));
+  const rooms = [], patches = [], cores = [];
+  for (const node of nodes) {
+    const p = patchOf(node.cell);
+    const big = node.role === 'portal';
+    // Rooms fill well under their patch, so the corridors between them have room to wind; the portal room is bigger.
+    const lo = (side) => Math.max(3, Math.min(side, big ? Math.ceil(side * 0.65) : Math.max(ROOM_MIN, Math.ceil(side * 0.4))));
+    const hi = (side) => Math.max(lo(side), Math.min(side, big ? Math.ceil(side * 0.85) : Math.min(ROOM_MAX, Math.ceil(side * 0.75))));
+    const rw = int(lo(p.w), hi(p.w)), rh = int(lo(p.h), hi(p.h));
+    const rx = int(p.x, p.x + p.w - rw), ry = int(p.y, p.y + p.h - rh);
+    const mask = new Uint8Array(p.w * p.h);
+    const at = (x, y) => (y - p.y) * p.w + (x - p.x);
+    const inP = (x, y) => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h;
+    for (let y = ry; y < ry + rh; y++) for (let x = rx; x < rx + rw; x++) mask[at(x, y)] = 1;
+    if (strength > 0) {
+      const lobes = 1 + (rand() < 0.5 ? 1 : 0);
+      for (let l = 0; l < lobes; l++) {
+        const ex = int(rx, rx + rw - 1), ey = rand() < 0.5 ? (rand() < 0.5 ? ry : ry + rh - 1) : int(ry, ry + rh - 1);
+        const erx = 1.5 + rand() * 2 * strength, ery = 1.5 + rand() * 2 * strength;
+        for (let y = Math.floor(ey - ery); y <= Math.ceil(ey + ery); y++) {
+          for (let x = Math.floor(ex - erx); x <= Math.ceil(ex + erx); x++) {
+            if (inP(x, y) && ((x - ex) / erx) ** 2 + ((y - ey) / ery) ** 2 <= 1) mask[at(x, y)] = 1;
+          }
+        }
+      }
+      // Edge noise in a 2-cell band around the rectangle's outline.
+      for (let y = p.y; y < p.y + p.h; y++) {
+        for (let x = p.x; x < p.x + p.w; x++) {
+          const inside = x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+          const d = inside ? Math.min(x - rx, rx + rw - 1 - x, y - ry, ry + rh - 1 - y) : Math.max(rx - x, x - (rx + rw - 1), ry - y, y - (ry + rh - 1)) - 1;
+          if (d <= 1 && rand() < 0.4 * strength) mask[at(x, y)] ^= 1;
+        }
+      }
+      for (let pass = 0; pass < 2; pass++) {
+        const next = mask.slice();
+        for (let y = p.y; y < p.y + p.h; y++) {
+          for (let x = p.x; x < p.x + p.w; x++) {
+            let n = 0;
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && inP(x + dx, y + dy) && mask[at(x + dx, y + dy)]) n++;
+            if (n >= 5) next[at(x, y)] = 1;
+            else if (n <= 3) next[at(x, y)] = 0;
+          }
+        }
+        mask.set(next);
+      }
+    }
+    const cx = rx + Math.floor(rw / 2), cy = ry + Math.floor(rh / 2);
+    for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) if (inP(x, y)) mask[at(x, y)] = 1;
+    // Keep only the core's piece: smoothing can leave islands.
+    const keep = new Uint8Array(mask.length);
+    const stack = [at(cx, cy)];
+    keep[stack[0]] = 1;
+    let kept = 0;
+    while (stack.length) {
+      const i = stack.pop(), x = p.x + (i % p.w), y = p.y + Math.floor(i / p.w);
+      kept++;
+      for (const [dx, dy] of STEPS) {
+        const nx = x + dx, ny = y + dy;
+        if (inP(nx, ny) && mask[at(nx, ny)] && !keep[at(nx, ny)]) { keep[at(nx, ny)] = 1; stack.push(at(nx, ny)); }
+      }
+    }
+    // Noise and smoothing can eat most of a small room; then it keeps its whole rectangle.
+    if (kept < 0.6 * rw * rh) for (let y = ry; y < ry + rh; y++) for (let x = rx; x < rx + rw; x++) keep[at(x, y)] = 1;
+    let x0 = cx, x1 = cx, y0 = cy, y1 = cy;
+    for (let i = 0; i < keep.length; i++) {
+      if (!keep[i]) continue;
+      const x = p.x + (i % p.w), y = p.y + Math.floor(i / p.w);
+      grid[y][x] = '.';
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    rooms.push({ x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1, role: node.role, order: node.order });
+    patches.push(p);
+    cores.push([cx, cy]);
+  }
+
+  // 5. Corridors: a walk with momentum and side-steps between two room cores, painted with a brush whose width
+  // drifts 1..4, kept inside the rectangle made of the two patches and the strip between them (no other patch).
+  for (const [a, b] of links) {
+    const pa = patches[a], pb = patches[b];
+    // Narrow patches get narrower corridors, or the corridors swallow the rooms.
+    const maxW = Math.max(1, Math.min(1 + Math.round(3 * strength), Math.floor(Math.min(pa.w, pa.h, pb.w, pb.h) / 3)));
+    const R = { x0: Math.min(pa.x, pb.x), y0: Math.min(pa.y, pb.y), x1: Math.max(pa.x + pa.w, pb.x + pb.w) - 1, y1: Math.max(pa.y + pa.h, pb.y + pb.h) - 1 };
+    const inR = (x, y) => x >= R.x0 && x <= R.x1 && y >= R.y0 && y <= R.y1;
+    let [x, y] = cores[a];
+    const [qx, qy] = cores[b];
+    let w = strength > 0 ? int(1, maxW) : 1;
+    const paint = () => {
+      const o = -Math.floor((w - 1) / 2);
+      for (let dy = o; dy < o + w; dy++) for (let dx = o; dx < o + w; dx++) if (inR(x + dx, y + dy)) grid[y + dy][x + dx] = '.';
+    };
+    paint();
+    const cap = 3 * (Math.abs(qx - x) + Math.abs(qy - y)) + 20;
+    let axis = Math.abs(qx - x) >= Math.abs(qy - y) ? 0 : 1;
+    for (let step = 0; x !== qx || y !== qy; step++) {
+      const dx = qx - x, dy = qy - y;
+      if (strength > 0 && step < cap && rand() < 0.25 * strength) {
+        // Side-step across the current heading.
+        const s = rand() < 0.5 ? -1 : 1;
+        if (axis === 0 && inR(x, y + s)) y += s;
+        else if (axis === 1 && inR(x + s, y)) x += s;
+      } else {
+        if ((axis === 0 && !dx) || (axis === 1 && !dy) || (strength > 0 && rand() < 0.2)) axis = dx && (!dy || rand() < Math.abs(dx) / (Math.abs(dx) + Math.abs(dy))) ? 0 : 1;
+        if (axis === 0 && dx) x += Math.sign(dx);
+        else if (axis === 1 && dy) y += Math.sign(dy);
+        else if (dx) x += Math.sign(dx);
+        else y += Math.sign(dy);
+      }
+      if (strength > 0 && rand() < 0.15) w = Math.max(1, Math.min(maxW, w + (rand() < 0.5 ? -1 : 1)));
+      paint();
+    }
+  }
+
+  // 6. A corridor can clip a corner of another room's box; join any such piece to the room inside the box (so a
+  // room's floor connects within its box), carving only inside that box, i.e. inside the room's own patch.
+  for (let k = 0; k < rooms.length; k++) {
+    const r = rooms[k];
+    const inB = (x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
+    for (;;) {
+      const from = new Map([[`${cores[k][0]},${cores[k][1]}`, null]]);
+      const queue = [cores[k]];
+      for (let h = 0; h < queue.length; h++) {
+        const [x, y] = queue[h];
+        for (const [dx, dy] of STEPS) {
+          const nx = x + dx, ny = y + dy;
+          if (inB(nx, ny) && grid[ny][nx] === '.' && !from.has(`${nx},${ny}`)) { from.set(`${nx},${ny}`, null); queue.push([nx, ny]); }
+        }
+      }
+      let loose = null;
+      for (let y = r.y; y < r.y + r.h && !loose; y++) for (let x = r.x; x < r.x + r.w; x++) if (grid[y][x] === '.' && !from.has(`${x},${y}`)) { loose = [x, y]; break; }
+      if (!loose) break;
+      // Shortest route through the box (walls too) from the loose cell to the room; carve it.
+      const prev = new Map([[`${loose[0]},${loose[1]}`, null]]);
+      const q = [loose];
+      let hit = null;
+      for (let h = 0; h < q.length && !hit; h++) {
+        const [x, y] = q[h];
+        for (const [dx, dy] of STEPS) {
+          const nx = x + dx, ny = y + dy, id = `${nx},${ny}`;
+          if (!inB(nx, ny) || prev.has(id)) continue;
+          prev.set(id, `${x},${y}`);
+          if (from.has(id)) { hit = id; break; }
+          q.push([nx, ny]);
+        }
+      }
+      for (let id = hit; id; id = prev.get(id)) { const [x, y] = id.split(',').map(Number); grid[y][x] = '.'; }
+    }
+  }
+  // Every room needs a wall facing it (top or left of its floor) for its torches; a room swallowed by its
+  // corridors has none, so the attempt is redrawn (weaker distortion next time).
+  for (const r of rooms) {
+    let faced = false;
+    for (let y = r.y; y < r.y + r.h && !faced; y++) {
+      for (let x = r.x; x < r.x + r.w; x++) {
+        if (grid[y][x] === '.' && ((y === r.y && grid[y - 1][x] === '#') || (x === r.x && grid[y][x - 1] === '#'))) { faced = true; break; }
+      }
+    }
+    if (!faced) return null;
+  }
+
+  // 7. Start, reachability, portal.
+  const start = [...cores[0]];
+  const isOpen = (i) => grid[(i / width) | 0][i % width] === '.';
+  const { dist } = bfs(width, height, isOpen, start[1] * width + start[0]);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (grid[y][x] === '.' && dist[y * width + x] < 0) grid[y][x] = '#';
+  // The portal goes inside the portal room's box (not on a widened corridor stub elsewhere in its patch).
+  const portalNode = spine.length - 1, pp = rooms[portalNode];
+  const clear = [];
+  let far = -1;
+  for (let y = pp.y; y < pp.y + pp.h; y++) {
+    for (let x = pp.x; x < pp.x + pp.w; x++) {
+      let ok = dist[y * width + x] > 0;
+      for (let dy = -1; ok && dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (grid[y + dy][x + dx] !== '.') { ok = false; break; }
+      if (ok) { clear.push([x, y]); far = Math.max(far, dist[y * width + x]); }
+    }
+  }
+  if (!clear.length) return null;
+  const near = clear.filter(([x, y]) => dist[y * width + x] >= far * 0.9);
+  const treasure = near[Math.floor(rand() * near.length)];
+
+  // 8. Verify the path cannot be skipped: closing a path room's patch must cut the start off from the portal,
+  // unless the loop bypasses that room.
+  const bypassed = new Set();
+  nodes.forEach((n, j) => {
+    const ends = links.filter(([, l]) => l === j).map(([k]) => k);
+    if (n.role === 'side' && ends.length === 2) bypassed.add(Math.min(...ends) + 1); // the loop's two path rooms are i and i + 2
+  });
+  for (let r = 1; r < portalNode; r++) {
+    if (bypassed.has(r)) continue;
+    const p = patches[r];
+    const blocked = (i) => {
+      const x = i % width, y = (i / width) | 0;
+      return isOpen(i) && !(x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
+    };
+    if (bfs(width, height, blocked, start[1] * width + start[0]).dist[treasure[1] * width + treasure[0]] >= 0) return null;
+  }
+  return { grid, start, treasure, rooms, layout: { kind: 'linear', patches, links } };
+}
+
 export function generateDungeon(seed = randomSeed()) {
   const rand = rng(seed);
   // Size comes first so it depends on the seed alone.
   const width = MIN_SIZE + Math.floor(rand() * (MAX_SIZE - MIN_SIZE + 1));
   const height = MIN_SIZE + Math.floor(rand() * (MAX_SIZE - MIN_SIZE + 1));
+  if (LAYOUT === 'linear') return generateLinear(seed, rand, width, height);
   // Retry on the same PRNG stream in the rare case a layout comes out unusable.
   for (;;) {
     const { grid, rooms, center } = carve(rand, width, height);

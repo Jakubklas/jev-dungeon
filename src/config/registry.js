@@ -61,7 +61,7 @@ const PAGE_ROWS = [
   { key: 'lightRadius', path: 'world.lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', doc: 'Cells each visited cell lights up', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },
   { key: 'minSize', path: 'world.size.min', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', doc: 'Smallest map side', type: 'range', min: 25, max: 90, step: 1, def: 25, when: 'next' },
   { key: 'maxSize', path: 'world.size.max', group: 'Map', label: 'Max map side', hint: 'Largest width or height.', doc: 'Largest map side', type: 'range', min: 25, max: 90, step: 1, def: 90, when: 'next' },
-  { key: 'roomArea', path: 'world.roomArea', group: 'Map', label: 'Cells per room', hint: 'Fewer cells = more, closer rooms.', doc: 'Floor cells per room: lower = more, closer rooms', type: 'range', min: 120, max: 800, step: 10, def: 290, when: 'next' },
+  { key: 'roomArea', path: 'world.roomArea', group: 'Map', label: 'Cells per room', hint: 'Fewer cells = more, closer rooms (maze layout only).', doc: 'Floor cells per room: lower = more, closer rooms (maze layout only)', type: 'range', min: 120, max: 800, step: 10, def: 290, when: 'next' },
 ];
 
 // ---- P1: world, props, testbed. File-only (page: false); each default is the literal the module used to hold. ----
@@ -71,10 +71,11 @@ const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, fo
 const P1_ROWS = [
   num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
   num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),
-  num('minRooms', 'world.rooms.minCount', 4, 1, 20, 1, 'Fewest rooms a map gets'),
-  num('loopShare', 'world.corridors.loopShare', 0.25, 0, 1, 0.05, 'Extra loop corridors as a share of the rooms'),
-  num('loopMin', 'world.corridors.loopMin', 2, 0, 10, 1, 'Fewest loop corridors'),
-  num('treasureShare', 'world.treasureShare', 0.6, 0, 1, 0.05, 'The portal sits at least this share of the farthest path distance away'),
+  num('minRooms', 'world.rooms.minCount', 4, 1, 20, 1, 'Fewest rooms a map gets (maze layout only)'),
+  num('loopShare', 'world.corridors.loopShare', 0.25, 0, 1, 0.05, 'Extra loop corridors as a share of the rooms (maze layout only)'),
+  num('loopMin', 'world.corridors.loopMin', 2, 0, 10, 1, 'Fewest loop corridors (maze layout only)'),
+  num('treasureShare', 'world.treasureShare', 0.6, 0, 1, 0.05, 'The portal sits at least this share of the farthest path distance away (maze layout only)'),
+  { key: 'layout', path: 'world.layout', group: 'Map', label: 'world.layout', hint: 'Map shape: linear = one winding path of rooms to the portal with a few side rooms; maze = rooms joined in a web with loops', doc: 'Map shape: linear (winding path to the portal, few side rooms) or maze (web of rooms)', type: 'choice', options: ['linear', 'maze'], def: 'linear', when: 'next', page: false },
   num('torchMin', 'world.props.torches.min', 1, 0, 6, 1, 'Fewest wall torches per room'),
   num('torchMax', 'world.props.torches.max', 3, 1, 8, 1, 'Most wall torches per room'),
   num('torchGap', 'world.props.torches.gap', 3, 1, 8, 1, 'Preferred spacing between wall items, cells'),

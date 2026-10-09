@@ -134,13 +134,14 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.lightRadius` | 7 | 3..12 | next | no | Cells each visited cell lights up |
 | `world.size.min` | 25 | 25..90 | next | no | Smallest map side |
 | `world.size.max` | 90 | 25..90 | next | no | Largest map side |
-| `world.roomArea` | 290 | 120..800 | next | no | Floor cells per room: lower = more, closer rooms |
+| `world.roomArea` | 290 | 120..800 | next | no | Floor cells per room: lower = more, closer rooms (maze layout only) |
 | `world.rooms.min` | 4 | 2..10 | next | no | Smallest room side, cells |
 | `world.rooms.max` | 15 | 4..30 | next | no | Largest room side, cells |
-| `world.rooms.minCount` | 4 | 1..20 | next | no | Fewest rooms a map gets |
-| `world.corridors.loopShare` | 0.25 | 0..1 | next | no | Extra loop corridors as a share of the rooms |
-| `world.corridors.loopMin` | 2 | 0..10 | next | no | Fewest loop corridors |
-| `world.treasureShare` | 0.6 | 0..1 | next | no | The portal sits at least this share of the farthest path distance away |
+| `world.rooms.minCount` | 4 | 1..20 | next | no | Fewest rooms a map gets (maze layout only) |
+| `world.corridors.loopShare` | 0.25 | 0..1 | next | no | Extra loop corridors as a share of the rooms (maze layout only) |
+| `world.corridors.loopMin` | 2 | 0..10 | next | no | Fewest loop corridors (maze layout only) |
+| `world.treasureShare` | 0.6 | 0..1 | next | no | The portal sits at least this share of the farthest path distance away (maze layout only) |
+| `world.layout` | "linear" | linear / maze | next | no | Map shape: linear (winding path to the portal, few side rooms) or maze (web of rooms) |
 | `world.props.torches.min` | 1 | 0..6 | next | no | Fewest wall torches per room |
 | `world.props.torches.max` | 3 | 1..8 | next | no | Most wall torches per room |
 | `world.props.torches.gap` | 3 | 1..8 | next | no | Preferred spacing between wall items, cells |

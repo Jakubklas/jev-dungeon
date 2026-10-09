@@ -112,6 +112,7 @@ for (const k of R.KNOBS) {
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
+  layout: D.LAYOUT,
   torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
   bigMinRun: CAT.BIG_MIN_RUN, bigChance: CAT.BIG_CHANCE, clusterSizeMin: CAT.CLUSTER_SIZE_MIN, clusterSizeMax: CAT.CLUSTER_SIZE_MAX, clusterPerCells: CAT.CLUSTER_PER_CELLS,
   clusterMax: CAT.CLUSTER_MAX, clusterGap: CAT.CLUSTER_GAP, clusterTries: CAT.CLUSTER_TRIES, minExits: CAT.MIN_EXITS,
@@ -231,7 +232,7 @@ check(S.view().values.minSize <= S.view().values.maxSize, 'an inconsistent file 
 
 // 6b. P1 knobs change the world as asked, and defaults change nothing
 check(JSON.stringify([11, 12, 13, 14].map(sig)) === JSON.stringify(baseline), 'applying the defaults leaves every generated dungeon identical');
-writeFileSync(cfg, 'world: { rooms: { min: 6, max: 9, minCount: 4 }, props: { clusters: { max: 0 }, kinds: { fountain: { weight: 0 } } } }\nmonsters: { spawn: { minSteps: 12 } }\ntestbed: { size: { w: 7, h: 9 }, numAdversaries: 2, props: few }\n');
+writeFileSync(cfg, 'world: { layout: maze, rooms: { min: 6, max: 9, minCount: 4 }, props: { clusters: { max: 0 }, kinds: { fountain: { weight: 0 } } } }\nmonsters: { spawn: { minSteps: 12 } }\ntestbed: { size: { w: 7, h: 9 }, numAdversaries: 2, props: few }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();

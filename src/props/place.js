@@ -60,21 +60,45 @@ export function placeProps(dungeon, rand) {
     front[face === 'L' ? at(x, y + 1) : at(x + 1, y)] = 1;
   };
   // Wall cells of a room whose face touches the room: top wall faces L, left wall faces R.
+  // A rectangular room's top and left walls always face its floor. A room with a `role` (the linear layout) is
+  // irregular: any wall cell in its box (plus the ring around it) whose face has floor of the box in front.
+  const floorIn = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h && floor0[at(x, y)] === 1;
+  const shapedWalls = (r) => {
+    const out = [];
+    for (let y = r.y - 1; y < r.y + r.h; y++) {
+      for (let x = r.x - 1; x < r.x + r.w; x++) {
+        if (!wall0(x, y)) continue;
+        if (floorIn(r, x, y + 1)) out.push([x, y, 'L']);
+        if (floorIn(r, x + 1, y)) out.push([x, y, 'R']);
+      }
+    }
+    return out;
+  };
   const roomWalls = (r) => {
+    if (r.role) return shapedWalls(r);
     const out = [];
     for (let x = r.x; x < r.x + r.w; x++) if (wall0(x, r.y - 1)) out.push([x, r.y - 1, 'L']);
     for (let y = r.y; y < r.y + r.h; y++) if (wall0(r.x - 1, y)) out.push([r.x - 1, y, 'R']);
     return out;
   };
-  for (const r of rooms) {
+  const bigDecor = (r) => {
     if ((r.w >= BIG_MIN_RUN || r.h >= BIG_MIN_RUN) && rand() < BIG_CHANCE) {
       const runs = [];
-      if (r.w >= BIG_MIN_RUN) {
+      if (r.role) {
+        // Three wall cells in a row along the face, each with floor in front.
+        for (const [x, y, face] of shapedWalls(r)) {
+          if ((face === 'L' ? r.w : r.h) < BIG_MIN_RUN) continue; // the room must be long enough along that wall
+          const ok = face === 'L'
+            ? [-1, 0, 1].every((d) => wall0(x + d, y) && floorIn(r, x + d, y + 1))
+            : [-1, 0, 1].every((d) => wall0(x, y + d) && floorIn(r, x + 1, y + d));
+          if (ok) runs.push([x, y, face]);
+        }
+      } else if (r.w >= BIG_MIN_RUN) {
         for (let x = r.x + 1; x < r.x + r.w - 1; x++) {
           if (wall0(x - 1, r.y - 1) && wall0(x, r.y - 1) && wall0(x + 1, r.y - 1)) runs.push([x, r.y - 1, 'L']);
         }
       }
-      if (r.h >= BIG_MIN_RUN) {
+      if (!r.role && r.h >= BIG_MIN_RUN) {
         for (let y = r.y + 1; y < r.y + r.h - 1; y++) {
           if (wall0(r.x - 1, y - 1) && wall0(r.x - 1, y) && wall0(r.x - 1, y + 1)) runs.push([r.x - 1, y, 'R']);
         }
@@ -85,6 +109,8 @@ export function placeProps(dungeon, rand) {
         addDecor(pickKind(BIG_DECOR_KINDS), x, y, face);
       }
     }
+  };
+  const torches = (r) => {
     const walls = shuffle(roomWalls(r));
     const want = TORCH_MIN + Math.floor(rand() * (TORCH_MAX - TORCH_MIN + 1));
     let placed = 0;
@@ -94,6 +120,10 @@ export function placeProps(dungeon, rand) {
         if (!decorAt[at(x, y)] && !decorNear(x, y, gap)) { addDecor('torch', x, y, face); placed++; }
       }
     }
+  };
+  // A shaped room can have a short wall, so it gets its torches before a big item can take the only spot.
+  for (const r of rooms) {
+    if (r.role) { torches(r); bigDecor(r); } else { bigDecor(r); torches(r); }
   }
   // Occasional corridor torches: wall cells facing a corridor (floor outside every room rect).
   const corr = [];
