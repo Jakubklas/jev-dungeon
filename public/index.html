@@ -36,6 +36,14 @@
     </section>
 
     <aside class="pane">
+      <div class="model-picker">
+        <label for="decision-model">Decision model</label>
+        <select id="decision-model" aria-describedby="model-status" disabled>
+          <option value="jev">Jev</option>
+          <option value="laya">Laya (local)</option>
+        </select>
+        <p id="model-status" role="status" aria-live="polite">Loading models…</p>
+      </div>
       <div class="controls">
         <button id="start" class="primary">Start</button>
         <button id="reload">Reload</button>

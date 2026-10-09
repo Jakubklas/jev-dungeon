@@ -74,6 +74,17 @@ h1 {
 
 .pane { display: flex; flex-direction: column; gap: 10px; }
 .pane > * { flex: none; }
+.model-picker { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; align-items: center; }
+.model-picker label { color: var(--muted); font-size: 12px; }
+.model-picker select {
+  min-width: 0; font: inherit; padding: 7px 10px; border-radius: 0;
+  border: 2px solid var(--line-hi); background: var(--panel-2); color: var(--ink);
+  box-shadow: 3px 3px 0 var(--drop); cursor: pointer;
+}
+.model-picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.model-picker select:disabled { opacity: .45; cursor: default; }
+.model-picker p { grid-column: 1 / -1; margin: 0; font-size: 11px; color: var(--muted); }
+.model-picker p.error { color: var(--warn); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 button {
   font: inherit; font-weight: 700; padding: 7px 16px; border-radius: 0; letter-spacing: .04em;

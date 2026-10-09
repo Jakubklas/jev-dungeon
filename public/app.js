@@ -2343,8 +2343,54 @@ async function loadUi() {
   } catch { /* keep the defaults */ }
 }
 
+// Provider changes apply live to this arena, including both explorer and adversaries.
+const modelSelect = $('decision-model');
+let selectedModel = null;
+
+function modelStatus(text, isError = false) {
+  $('model-status').textContent = text;
+  $('model-status').classList.toggle('error', isError);
+}
+
+async function loadModels() {
+  try {
+    const response = await fetch('api/config');
+    const config = await response.json();
+    if (!response.ok) throw new Error(config.error || `HTTP ${response.status}`);
+    if (!['jev', 'laya'].includes(config.values?.decisionProvider)) throw new Error('Restart this arena server to enable model selection.');
+    selectedModel = config.values.decisionProvider;
+    modelSelect.value = selectedModel;
+    modelSelect.disabled = false;
+    modelStatus('Changes apply immediately.');
+  } catch (err) {
+    modelStatus(`Models unavailable: ${err.message}`, true);
+  }
+}
+
+modelSelect.addEventListener('change', async () => {
+  const next = modelSelect.value;
+  modelSelect.disabled = true;
+  modelStatus('Switching model…');
+  try {
+    const response = await fetch('api/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: { decisionProvider: next } }),
+    });
+    const config = await response.json();
+    if (!response.ok) throw new Error(config.error || `HTTP ${response.status}`);
+    selectedModel = config.values.decisionProvider;
+    modelSelect.value = selectedModel;
+    modelStatus('Changes apply immediately.');
+  } catch (err) {
+    modelSelect.value = selectedModel;
+    modelStatus(`Could not switch model: ${err.message}`, true);
+  } finally {
+    modelSelect.disabled = false;
+  }
+});
+
 async function init() {
-  await loadUi();
+  await Promise.all([loadUi(), loadModels()]);
   let res = await api('GET', '/api/state');
   // A ?testbed URL always builds its arena; otherwise keep the server's game. No auto-start: page load costs no Jev calls.
   if (res.ok && (!res.data.game || TESTBED)) res = await api('POST', '/api/new');
