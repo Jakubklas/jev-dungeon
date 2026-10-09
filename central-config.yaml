@@ -156,7 +156,7 @@ explorer:
       midMin: 50 # Confidence from this is the mid tier; below it is midlow, which offers retreats
     panic:
       enter: 15 # Panic starts below this confidence
-      exit: 25 # Panic ends at or above this confidence
+      exit: 15 # Panic ends at or above this confidence
     cap:
       lastLife: 45 # Highest confidence on the last life
       floor: 0.3 # Share of the cap kept at one life of many
