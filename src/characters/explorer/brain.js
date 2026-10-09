@@ -21,7 +21,7 @@ import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
-import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
+import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell, step as nextCell } from './known-map.js';
 import { cornerFacts, holdGhost, knownLineOfSight, matchup, remarkLine, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
@@ -258,6 +258,10 @@ export class ExplorerBrain {
   #leaveDue = false; // legacy leave_now scheduling; portal discovery now commits the destination
   // { id, cell }: the goal cell of the current tactic, kept so its target stays put.
   #tacticGoal = null;
+  // { id, cell }: a deliberately chosen exploration or recovery destination. An encounter may
+  // interrupt the approach, but it must not make Jev forget the frontier or heart it was crossing
+  // known ground to reach.
+  #approachGoal = null;
   // cornerMode: this tick's cornerFacts (null = not cornered / off), and the breakout route kept for its length
   // ({ cell, until } with the route cell and the last step it is kept to; route and full only).
   #corner = null;
@@ -319,7 +323,8 @@ export class ExplorerBrain {
     });
     this.#memory = memory;
     setSkills(memory, this.#skills.summaries());
-    this.#review = { step: 0, targetSteps: approachTarget(world, 'nearest_frontier')?.steps ?? null };
+    this.#pinApproachGoal('nearest_frontier');
+    this.#review = { step: 0, targetSteps: this.#target('nearest_frontier')?.steps ?? null };
     memory.progress.known_floor_cells = world.knownFloorCount();
     this.#encounter.pending = 'start';
     this.#cs = createConfidence(confidence && typeof confidence === 'object' ? confidence : {}); // an arm object = start / weights / model (checks and measurements)
@@ -633,7 +638,19 @@ export class ExplorerBrain {
 
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
   #target(id, opts = {}) {
-    return approachTarget(this.#world, id, { avoid: this.#zone, cornered: Boolean(this.#cornerOpt()), ...opts });
+    const remembered = this.#approachGoal?.id === id ? this.#approachGoal.cell : null;
+    const target = approachTarget(this.#world, id, { avoid: this.#zone, cornered: Boolean(this.#cornerOpt()), goal: remembered, ...opts });
+    // A reached heart / lit frontier is no longer a valid destination. Drop the old commitment so
+    // the next current-approach pass can choose a fresh one.
+    if (remembered && (!target || !sameCell(target.cell, remembered))) this.#approachGoal = null;
+    return target;
+  }
+
+  #pinApproachGoal(id) {
+    if (isTactic(id) || id === 'go_to_exit') { this.#approachGoal = null; return null; }
+    const target = approachTarget(this.#world, id, { avoid: this.#zone, cornered: Boolean(this.#cornerOpt()) });
+    this.#approachGoal = target ? { id, cell: [...target.cell] } : null;
+    return target;
   }
 
   async takeTurn() {
@@ -653,6 +670,7 @@ export class ExplorerBrain {
     // collect_coins is done when no seen pile is reachable any more (all taken): back to the closest edge.
     if (memory.approach.id === 'collect_coins' && !this.#target('collect_coins')) {
       changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
+      this.#pinApproachGoal('nearest_frontier');
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'collect_coins', to: 'nearest_frontier', reason: 'no seen coins left to collect' };
     }
@@ -660,6 +678,7 @@ export class ExplorerBrain {
     // Need sets the reach: at half the lives or fewer any known heart is worth the walk, otherwise only one close by.
     if (memory.approach.id === 'heal' && !this.#target('heal')) {
       changeApproach(memory, approachOf('nearest_frontier'), prev); // not a failure: no plan.tried row
+      this.#pinApproachGoal('nearest_frontier');
       this.#review = { step: Math.max(prev, 1), targetSteps: this.#target('nearest_frontier')?.steps ?? null };
       policy = { from: 'heal', to: 'nearest_frontier', reason: world.health >= world.maxHealth ? 'lives are full' : 'no seen heart left to reach' };
     } else if (!policy && !this.directive && !isTactic(memory.approach.id) && !['heal', 'go_to_exit'].includes(memory.approach.id) && !this.#leaving() &&
@@ -668,10 +687,14 @@ export class ExplorerBrain {
       if (heart && (world.health * 2 <= world.maxHealth || heart.steps <= HEAL_NEAR)) {
         const from = memory.approach.id;
         changeApproach(memory, approachOf('heal'), prev);
+        this.#approachGoal = { id: 'heal', cell: [...heart.cell] };
         this.#review = { step: Math.max(prev, 1), targetSteps: heart.steps };
         policy = { from, to: 'heal', reason: `hurt (${world.health} of ${world.maxHealth} lives) and a heart is ${heart.steps} steps away` };
       }
     }
+    // A frontier can cease to be an edge after the last move revealed its surroundings. Commit a
+    // replacement only for the current approach; candidate approaches in a review remain dynamic.
+    if (!isTactic(memory.approach.id) && memory.approach.id !== 'go_to_exit' && !this.#goal()) this.#pinApproachGoal(memory.approach.id);
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
     const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
@@ -726,7 +749,7 @@ export class ExplorerBrain {
 
     let decision = null;
     let tacticIds = []; // feasible tactics Jev chooses between in request 2
-    let decisionTargets = {}; // tactic id -> target cell at decision time
+    let decisionTargets = {}; // tactic id -> observed target at decision time
     let apiMs = 0;
     if (trigger) {
       info.lastDecision = step;
@@ -736,12 +759,12 @@ export class ExplorerBrain {
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
         const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() });
-        decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target.cell]));
+        decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
         if (tacticIds.length === 1) {
           // Only one way to deal with it: code takes it, no one-option Choice.
-          this.#applyTactic(tacticIds[0], trigger, prev, decisionTargets[tacticIds[0]]);
+          this.#applyTactic(tacticIds[0], trigger, prev, decisionTargets[tacticIds[0]].cell);
           decision.tactic = { choice: tacticIds[0], probabilities: { [tacticIds[0]]: 1 }, options };
           tacticIds = [];
         } else if (tacticIds.length) {
@@ -794,7 +817,7 @@ export class ExplorerBrain {
       };
       if (!forced) {
         for (const id of tacticIds) {
-          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions);
+          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions, decisionTargets[id]);
           questions[`move_if_${id}`] = q.question;
           moveOptions[id] = q.options;
           // engage judges moves without the minimum gap; the shared facts keep the mood's gap warnings.
@@ -810,10 +833,15 @@ export class ExplorerBrain {
     const approachId = memory.approach.id;
     const rInfo = this.#review;
     const sinceReview = step - rInfo.step;
+    const reviewTarget = this.#target(approachId);
+    // A recovery trip may cross a long, fully lit corridor. Each step that closes that committed
+    // route is real progress, even before it reveals a new cell, so do not ask Jev to abandon it.
+    const closingCommittedRoute = approachId === 'heal' && reviewTarget && rInfo.targetSteps !== null && reviewTarget.steps < rInfo.targetSteps;
+    if (closingCommittedRoute) this.#review = { step, targetSteps: reviewTarget.steps };
     // No reviews while a tactic or the run for the portal is on: those last as long as the situation does.
     const reviewDue =
       !forced && !liveDirective && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
-      sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
+      !closingCommittedRoute && sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
     if (reviewDue) this.#addReviewQuestions(questions, approachId, rInfo);
     // Legacy leave_now fallback for a known portal without a committed destination.
     // Never while leaving is already the plan, and not beside a tactic question (race_to_exit covers
@@ -878,13 +906,17 @@ export class ExplorerBrain {
         const c = answers.tactic?.choice;
         const chosen = tacticIds.includes(c) ? c : tacticIds.includes('run_away') ? 'run_away' : tacticIds[0];
         decision.tactic = { choice: chosen, probabilities: answers.tactic?.probabilities ?? null, options: decision.tactic.options };
-        this.#applyTactic(chosen, trigger, prev, decisionTargets[chosen]);
+        this.#applyTactic(chosen, trigger, prev, decisionTargets[chosen].cell);
         moveKey = `move_if_${chosen}`;
         moveFor = chosen;
       }
       const a = answers[moveKey];
       if (!forced && a) {
         dir = legal.includes(a.choice) ? a.choice : legal[0];
+        // The skill and move answers arrive together. Do not let a bare movement choice walk
+        // into a claw that the explorer knows will take every remaining life before its sword can
+        // land; hold position and let the tactic be reconsidered instead.
+        if (this.#lethalWalkIn(dir, skillKey) && legal.includes(STAY)) dir = STAY;
         moveDecision = { choice: dir, probabilities: a.probabilities, confidence: a.confidence, options: moveOptions[moveFor] };
       }
 
@@ -939,6 +971,7 @@ export class ExplorerBrain {
       const from = memory.approach.id;
       const reason = `Coins came into view: Jev picked ${pendingCoins.id} (${Math.round(pendingCoins.p * 100)}%).`;
       changeApproach(memory, approachOf(pendingCoins.id), world.steps); // a coin detour is not a failure: no plan.tried row
+      this.#pinApproachGoal(pendingCoins.id);
       addEvent(memory, world.steps, `Switched from ${from} to ${pendingCoins.id} ${pendingCoins.id === 'collect_coins' ? 'for' : 'with'} the coins in view.`);
       this.#review = { step: world.steps, targetSteps: this.#target(pendingCoins.id)?.steps ?? null };
       policy = { from, to: pendingCoins.id, reason };
@@ -946,11 +979,12 @@ export class ExplorerBrain {
     else if (pendingSwitch && !result.won && !this.#leaving() && !isTactic(memory.approach.id)) {
       const from = memory.approach.id;
       switchApproach(memory, approachOf(pendingSwitch.id), pendingSwitch.reason, world.steps);
+      this.#pinApproachGoal(pendingSwitch.id);
       addEvent(memory, world.steps, `Dropped ${from} for ${pendingSwitch.id} after a review (judged ${Math.round(pendingSwitch.working * 100)}% working).`);
       this.#review = { step: world.steps, targetSteps: this.#target(pendingSwitch.id)?.steps ?? null };
       info.pending = info.pending ?? 'review'; // the new approach gets its sentiment next tick
     }
-    if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Dispelled the last enemy and won.');
+    if (result.won) addEvent(memory, world.steps, result.moved ? `Stepped through the portal with ${world.coins === 1 ? '1 coin' : `${world.coins} coins`}.` : 'Cleared the portal-less arena.');
     this.#skills.turnPassed();
     if (doneNow && this.directive) this.clearDirective('Jev judged it done');
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // its last step was just taken
@@ -1133,7 +1167,7 @@ export class ExplorerBrain {
 
   // next_move for one approach. speculative: asked once per tactic on a decision tick, so it keeps
   // only the safety line, the tactic's own hint and the mood's priority (the generic list lives in next_move).
-  #moveQuestion(approachId, sit, profile, speculative, skillLine = false) {
+  #moveQuestion(approachId, sit, profile, speculative, skillLine = false, targetOverride = null) {
     const world = this.#world;
     const memory = this.#memory;
     const cells = memory.recent.cells;
@@ -1142,7 +1176,8 @@ export class ExplorerBrain {
     const cornered = Boolean(this.#cornerOpt()); // cornerMode: gating relaxed, urgent text (also while a kept route is walked)
     const parts = describeMoveParts(world, approachId, {
       minGap: gap,
-      goal: speculative ? null : this.#goal(),
+      goal: speculative ? targetOverride?.cell ?? null : this.#goal(),
+      targetOverride,
       avoid: this.#zone,
       exclude: this.#exclude,
       remembered: this.#remembered,
@@ -1456,10 +1491,20 @@ export class ExplorerBrain {
     this.#tacticGoal = t ? { id: 'run_away', cell: t.cell } : null;
   }
 
-  // The kept goal of the current tactic (null when it belongs to another tactic).
+  #lethalWalkIn(dir, skillKey) {
+    const world = this.#world;
+    if (dir === STAY || skillKey !== 'none' || world.graceLeft > 0) return false;
+    const dest = nextCell(world.pos, dir);
+    return world.visibleAdversaries().some((th) =>
+      th.mode === 'chase' && !this.#stunnedIds().has(th.id) && !sameCell(dest, th.pos) &&
+      threatDistance(th, world.pos) > 1 && threatDistance(th, dest) <= 1 &&
+      world.health <= (th.clawDamage ?? 1));
+  }
+
+  // The kept goal of the current tactic or ordinary approach (null when it belongs to another plan).
   #goal() {
     const memory = this.#memory;
-    const g = this.#tacticGoal;
+    const g = isTactic(memory.approach.id) ? this.#tacticGoal : this.#approachGoal;
     return g && g.id === memory.approach.id ? g.cell : null;
   }
 
