@@ -24,6 +24,8 @@ export function spawnHearts(dungeon, { count } = {}) {
   for (const p of dungeon.props ?? []) if (!p.solid) blocked.add(key([p.x, p.y]));
   const order = rooms.map((_, i) => i);
   for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+  // Linear layout: side rooms first (a detour that pays), then the rest, each group in shuffled order.
+  if (dungeon.layout?.kind === 'linear') order.sort((a, b) => (rooms[a].role === 'side' ? 0 : 1) - (rooms[b].role === 'side' ? 0 : 1));
   const picked = [];
   for (const i of order) {
     if (picked.length >= n) break;

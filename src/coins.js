@@ -46,11 +46,31 @@ export function spawnCoins(dungeon, { count } = {}) {
       }
     }
     return shuffleWith(rand, cells);
-  }).filter((cells) => cells.length);
-  shuffleWith(rand, perRoom);
+  });
+  if (dungeon.layout?.kind === 'linear') return linearCoins(dungeon, rand, perRoom, n);
+  const lists = perRoom.filter((cells) => cells.length);
+  shuffleWith(rand, lists);
   const picked = [];
-  for (let round = 0; picked.length < n && perRoom.some((cells) => cells.length > round); round++) {
-    for (const cells of perRoom) if (picked.length < n && cells[round]) picked.push(cells[round]);
+  for (let round = 0; picked.length < n && lists.some((cells) => cells.length > round); round++) {
+    for (const cells of lists) if (picked.length < n && cells[round]) picked.push(cells[round]);
+  }
+  return picked;
+}
+
+// Linear layout: side rooms pay for the detour. Each round a side room gives two coins, any other room one.
+function linearCoins(dungeon, rand, perRoom, n) {
+  const lists = perRoom
+    .map((cells, i) => ({ cells, per: dungeon.rooms[i].role === 'side' ? 2 : 1 }))
+    .filter((l) => l.cells.length);
+  shuffleWith(rand, lists);
+  const picked = [];
+  const next = lists.map(() => 0);
+  for (let more = true; picked.length < n && more;) {
+    more = false;
+    lists.forEach((l, k) => {
+      for (let j = 0; j < l.per && picked.length < n && next[k] < l.cells.length; j++) picked.push(l.cells[next[k]++]);
+      if (next[k] < l.cells.length) more = true;
+    });
   }
   return picked;
 }
