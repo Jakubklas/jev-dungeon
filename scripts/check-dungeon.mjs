@@ -998,7 +998,10 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         });
         const peak = Math.max(...sizes.map((s) => s.bytes)), most = Math.max(...sizes.map((s) => s.tactics));
         const last = bb.lastRequests().find((r) => r.questions?.tactic) ?? bb.lastRequest();
-        if (most < wantTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${wantTactics}`);
+        // Four default lives leave the C-capped explorer in a higher capability tier than the
+        // old two-life fixture, where two retreat-only tactics are deliberately unavailable.
+        const minimumTactics = conf.fixedMood ? wantTactics : wantTactics - 2;
+        if (most < minimumTactics) fail(`worst-case size check (${mode}): only ${most} tactics offered, wanted ${minimumTactics}`);
         if (!last.state.threats.remembered.length || !last.state.surroundings.coins) fail(`worst-case size check (${mode}): no remembered ghost or no coins in the state`);
         if (peak > bound) fail(`worst-case decision request (${mode}) is ${peak} bytes with ${most} tactics (> ${bound})`);
         console.log(`  worst-case decision tick (${mode}${conf.fixedMood ? ', fixed mood' : ', confidence caps'}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
@@ -1327,6 +1330,10 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const hall = ['#'.repeat(60), ...Array(3).fill('#' + '.'.repeat(58) + '#'), '#'.repeat(60)];
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const g = handGame(hall, [26, 2]);
+    // This is a route-choice regression fixture, not a default-life test. Keep its historical
+    // three-life combat posture so the assertion isolates remembered-threat avoidance.
+    g.health = 3;
+    g.maxHealth = 3;
     // Lit columns 4..50: a west edge 22 steps away and an east edge 24 away (the west one is nearer).
     g.light = g.light.map((row) => row.map((_, x) => (x >= 4 && x <= 50 ? 1 : 0)));
     g.visits = { '26,2': 1 };

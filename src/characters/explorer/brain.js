@@ -647,7 +647,10 @@ export class ExplorerBrain {
   }
 
   #pinApproachGoal(id) {
-    if (isTactic(id) || id === 'go_to_exit') { this.#approachGoal = null; return null; }
+    // `nearest_frontier` is intentionally re-evaluated: it is a local next-step policy, unlike
+    // a far-side / largest-region expedition or a heart run, and must keep steering around a
+    // remembered chaser after an encounter.
+    if (isTactic(id) || id === 'go_to_exit' || id === 'nearest_frontier') { this.#approachGoal = null; return null; }
     const target = approachTarget(this.#world, id, { avoid: this.#zone, cornered: Boolean(this.#cornerOpt()) });
     this.#approachGoal = target ? { id, cell: [...target.cell] } : null;
     return target;
@@ -694,7 +697,7 @@ export class ExplorerBrain {
     }
     // A frontier can cease to be an edge after the last move revealed its surroundings. Commit a
     // replacement only for the current approach; candidate approaches in a review remain dynamic.
-    if (!isTactic(memory.approach.id) && memory.approach.id !== 'go_to_exit' && !this.#goal()) this.#pinApproachGoal(memory.approach.id);
+    if (!isTactic(memory.approach.id) && memory.approach.id !== 'go_to_exit' && !this.#goal() && !this.#remembered.some((r) => r.chasing)) this.#pinApproachGoal(memory.approach.id);
     if (this.#directiveExpired()) this.clearDirective('ran out of steps'); // defensive: normally ended at the end of its last step
     const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
@@ -1380,6 +1383,10 @@ export class ExplorerBrain {
     } else if (inEncounter && info.unseen >= profile.end_ticks) {
       countEncounter(memory, 'escaped', at);
       const from = a.id;
+      // A frontier chosen before the fight can sit beyond the last place a chaser was seen.
+      // Resume the exploration approach, but pick a fresh safe edge while that sighting is still
+      // remembered; preserving a destination must never turn the explorer back toward a threat.
+      if (this.#remembered.some((r) => r.chasing)) this.#approachGoal = null;
       if (!resumeApproach(memory, prev, thoughtOf)) {
         interruptApproach(memory, approachOf('nearest_frontier'), 'encounter over', prev);
         a.interrupted = null;

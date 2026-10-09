@@ -282,7 +282,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
 
   // Keep an exploration destination through a temporary encounter. Reaching it may reveal
   // enough that it stops being a frontier; only then do we choose a new edge.
-  if (goal && !sameCell(goal, world.pos) && dist.has(goal) && isFrontier(world, goal)) {
+  if (goal && !sameCell(goal, world.pos) && dist.has(goal) && isFrontier(world, goal) && !avoid?.has(key(goal))) {
     return { cell: [...goal], steps: dist.get(goal), why: `Chosen edge of the known map to the ${compass(world.pos, goal)}, ${plural(dist.get(goal), 'step')} away.` };
   }
   if (!frontier.length) return null;
