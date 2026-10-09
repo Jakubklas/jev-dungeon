@@ -826,7 +826,7 @@ function drawScene(now) {
   drawStrikes(cx, cy, now, known, reveal, 'edge');
   drawGlows(glows, now);
   drawRouteSpine(cx, cy);
-  drawRouteChevron(cx, cy, now);
+  drawRouteArrow(cx, cy, now);
 }
 
 // Wall decor, right after its wall block (same band and alpha). Only faces that are drawn
@@ -1439,7 +1439,7 @@ function drawBubbles(now) {
 }
 
 // ---------- route guidance (spectator) ----------
-// view.route (null on an old server or a portal-less arena): a chevron by the knight toward the
+// view.route (null on an old server or a portal-less arena): a small solid triangle by the knight toward the
 // next waypoint, a progress strip, a one-line cue, and (debug toggle only) the hidden spine.
 const ROUTE_COLOR = '#ffd98c', ROUTE_EDGE = '#0a1126'; // trail amber on the cold mortar tone
 const routeOf = () => {
@@ -1462,8 +1462,8 @@ function pxLine(c, x0, y0, x1, y1) { // 1 px Bresenham line on a 2D context
   }
 }
 
-// The portal's own visual wins once it is known, so no chevron then.
-function drawRouteChevron(cx, cy, now) {
+// The portal's own visual wins once it is known, so no arrow then.
+function drawRouteArrow(cx, cy, now) {
   const r = routeOf();
   if (!r || !isCell(r.next_waypoint) || r.suppressed === 'portal_known' || r.suppressed === 'over' || game.over) return;
   const me = actors.get('@');
@@ -1478,14 +1478,23 @@ function drawRouteChevron(cx, cy, now) {
   const px = Math.round(isoX(gx + .5, gy + .5)) - cx, py = Math.round(isoY(gx + .5, gy + .5)) - cy - 12; // knight's middle
   const R = 20 + bob;
   const tx = px + sx * R, ty = py + sy * R * .75;
-  const bx = tx - sx * 7, by = ty - sy * 5, wx = -sy * 6, wy = sx * 4;
+  const bx = tx - sx * 5, by = ty - sy * 4, wx = -sy * 3, wy = sx * 2;
   b.save();
   b.globalAlpha = .95;
   for (const [ox, oy, col] of [[1, 0, ROUTE_EDGE], [-1, 0, ROUTE_EDGE], [0, 1, ROUTE_EDGE], [0, -1, ROUTE_EDGE], [0, 0, ROUTE_COLOR]]) {
     b.fillStyle = col;
-    for (const k of [0, 1]) { // two lines 1 px apart: a 2 px stroke that survives the integer upscale
-      pxLine(b, tx + ox, ty + oy + k, bx + wx + ox, by + wy + oy + k);
-      pxLine(b, tx + ox, ty + oy + k, bx - wx + ox, by - wy + oy + k);
+    const points = [[tx + ox, ty + oy], [bx + wx + ox, by + wy + oy], [bx - wx + ox, by - wy + oy]]
+      .map(([x, y]) => [Math.round(x), Math.round(y)]);
+    // Fill integer pixels inside the triangle, keeping its edges crisp at every direction.
+    const xs = points.map(([x]) => x), ys = points.map(([, y]) => y);
+    for (let y = Math.min(...ys); y <= Math.max(...ys); y++) {
+      for (let x = Math.min(...xs); x <= Math.max(...xs); x++) {
+        const sides = points.map(([ax, ay], i) => {
+          const [bx, by] = points[(i + 1) % 3];
+          return (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        });
+        if (sides.every(v => v >= 0) || sides.every(v => v <= 0)) b.fillRect(x, y, 1, 1);
+      }
     }
   }
   b.restore();
