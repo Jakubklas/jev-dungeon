@@ -512,6 +512,13 @@ monsters:
     offText: "Brain off: patrolling the dungeon by code."
   morale:
     enabled: true
+  levels:
+    enabled: true # true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today)
+    hpMult: [ 0.5, 1, 1.5 ] # Multiplier on the kind hp at level 1/2/3 (rounded, at least 1)
+    dmgMult: [ 1, 1, 1.5 ] # Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1)
+    weights:
+      ghost: [ 1, 1 ] # Relative spawn weight of a ghost at level 1/2 (all 0 = even)
+      troll: [ 1, 1 ] # Relative spawn weight of a troll at level 2/3 (all 0 = even)
 
 # Directives the player may whisper to the explorer.
 player:

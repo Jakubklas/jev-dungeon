@@ -34,6 +34,7 @@ import { configureAdversaryBrain } from '../characters/adversary/brain.js';
 import { configureAdversaryPerception } from '../characters/adversary/perception.js';
 import { configureAdversaryMemory } from '../characters/adversary/memory.js';
 import { configureAdversaryView } from '../characters/adversary/adversary-view.js';
+import { configureLevels } from '../characters/adversary/kinds.js';
 import { configureMorale } from '../characters/adversary/morale.js';
 import { KNOBS, isUserSetting } from './registry.js';
 import { SCHEMA, defaults, validate, clean, crossProblems, parseConfig, templateYaml, eq } from './load.js';
@@ -82,6 +83,7 @@ function push() {
   configureAdversaryMemory(applied);
   configureAdversaryView(applied);
   configureMorale(applied);
+  configureLevels(applied);
   configureExplorerMemory(applied);
   configureAdversaryLimits(applied);
   configureAttack(applied);
@@ -195,9 +197,9 @@ export const view = () => ({
 // Timing constants and the bubble pools that differ from the built-in lines (the page keeps its own defaults for the rest).
 export function uiView() {
   const constants = Object.fromEntries(KNOBS.filter((k) => k.key.startsWith('ui_')).map((k) => [k.key.slice(3), applied[k.key]]));
-  const thoughts = { approach: {}, mood: {}, troll: {} };
+  const thoughts = { approach: {}, mood: {}, troll: {}, explorer: {} };
   for (const k of KNOBS) {
-    const pool = k.key.startsWith('thm_') ? 'mood' : k.key.startsWith('tht_') ? 'troll' : k.key.startsWith('th_') ? 'approach' : null;
+    const pool = k.key.startsWith('the_') ? 'explorer' : k.key.startsWith('thm_') ? 'mood' : k.key.startsWith('tht_') ? 'troll' : k.key.startsWith('th_') ? 'approach' : null;
     if (pool && Array.isArray(applied[k.key])) thoughts[pool][k.path.split('.').pop()] = applied[k.key];
   }
   return { constants, thoughts };

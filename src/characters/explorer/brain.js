@@ -22,7 +22,7 @@ import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
 } from './perception.js';
 import { dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, sameCell } from './known-map.js';
-import { cornerFacts, holdGhost, knownLineOfSight, speedPhrase, threatDistance, threatsOf } from './encounter.js';
+import { cornerFacts, holdGhost, knownLineOfSight, matchup, remarkLine, speedPhrase, threatDistance, threatsOf } from './encounter.js';
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
@@ -270,6 +270,10 @@ export class ExplorerBrain {
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
   #seen = new Map();
+  // PLAN-levels: the explorer's one-line remark on a monster it has just sighted (null otherwise), and how many of each
+  // kind it has made (the pool is walked in order: deterministic, no rng). Reset at the start of every takeTurn.
+  #remark = null;
+  #remarkN = { weak_target: 0, too_strong: 0 };
   #everSeen = new Set(); // every adversary id the explorer has had in sight this game (minus the ones it dispelled): is this the only one it knows of?
   // Remembered sightings that are not visible now (what threats.remembered is built from), and the
   // known cells near recent ones (exploration approaches steer clear of them).
@@ -392,6 +396,12 @@ export class ExplorerBrain {
     return this.#memory;
   }
 
+  // What the explorer said about a monster it first sighted this turn ("Ah, that's a weak target." / "I don't have enough
+  // health to fight this guy."), or null. Shown once per sighting; never part of a request.
+  get remark() {
+    return this.#remark;
+  }
+
   // The player's live instruction (PLAN-inject): null or { text, from_step, until_step, steps_left }. Lives in game
   // steps: from_step is the first step it applies to, until_step the last; steps_left counts the steps still to take.
   #directiveExpired() {
@@ -503,10 +513,17 @@ export class ExplorerBrain {
     const now = world.steps;
     const visible = new Set();
     this.#visibleIds = visible;
+    this.#remark = null;
+    const damage = this.#skills.skills.find((x) => x.kind === 'attack')?.damage;
     for (const v of world.visibleAdversaries()) {
       visible.add(v.id);
       this.#everSeen.add(v.id);
-      this.#seen.set(v.id, { id: v.id, cell: [...v.pos], step: now, chasing: v.mode === 'chase', hp: v.hp, maxHp: v.maxHp });
+      if (!this.#seen.has(v.id) && !this.#remark) { // a new sighting (never seen, or the last one has expired)
+        const fit = matchup(world, v, damage);
+        const kind = fit === 'weak' ? 'weak_target' : fit === 'too_strong' ? 'too_strong' : null;
+        if (kind) this.#remark = remarkLine(kind, this.#remarkN[kind]++);
+      }
+      this.#seen.set(v.id, { id: v.id, cell: [...v.pos], step: now, chasing: v.mode === 'chase', hp: v.hp, maxHp: v.maxHp, level: v.level, clawDamage: v.clawDamage });
     }
     for (const [id, r] of this.#seen) {
       if (visible.has(id)) continue;
@@ -604,7 +621,7 @@ export class ExplorerBrain {
     const stunned = this.#stunnedIds();
     const th = holdGhost(threats, stunned, world.pos, this.#holdOn === 'multi');
     if (!th) return stop();
-    if (approachTarget(world, 'engage', { stunned })?.steps !== 0) return stop();
+    if (approachTarget(world, 'engage', { stunned, cornered: Boolean(this.#cornerOpt()) })?.steps !== 0) return stop();
     const here = world.pos;
     const same = h.cell && sameCell(h.cell, here);
     if (threatDistance(th, here) <= 1) {
@@ -617,7 +634,7 @@ export class ExplorerBrain {
 
   // Exploration target with this tick's sightings steered around (tactics ignore the zone).
   #target(id, opts = {}) {
-    return approachTarget(this.#world, id, { avoid: this.#zone, ...opts });
+    return approachTarget(this.#world, id, { avoid: this.#zone, cornered: Boolean(this.#cornerOpt()), ...opts });
   }
 
   async takeTurn() {
@@ -1455,7 +1472,7 @@ export class ExplorerBrain {
     const world = this.#world;
     const memory = this.#memory;
     const id = memory.approach.id;
-    const target = approachTarget(world, id, { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#exclude, remembered: this.#remembered, stunned: this.#stunnedIds() });
+    const target = approachTarget(world, id, { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#exclude, remembered: this.#remembered, stunned: this.#stunnedIds(), cornered: Boolean(this.#cornerOpt()) });
     if (target) this.#tacticGoal = { id, cell: target.cell };
     if (!target) return true;
     // run_away never fails by gap, and engage closes the gap on purpose.

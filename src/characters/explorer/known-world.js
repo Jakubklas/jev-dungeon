@@ -3,6 +3,7 @@
 // once lit. This is the single explorer file allowed to hold a Game (the static guard in
 // check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
+import { levelsOn } from '../adversary/kinds.js';
 import { hasLineOfSight } from '../../dungeon.js';
 import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
@@ -35,8 +36,12 @@ export class KnownWorld {
   // while in sight (user-approved amendment of rule 1). Out of sight nothing is read, hp included.
   visibleAdversaries() {
     const byId = new Map(this.#game.adversaries.map((a) => [a.id, a]));
-    return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp, stun: byId.get(v.id).stunTicks }));
+    // level and clawDamage are read like the health bar: what an adversary in sight shows (PLAN-levels.md).
+    return visibleAdversaries(this.#game).map((v) => ({ ...v, hp: byId.get(v.id).hp, maxHp: byId.get(v.id).maxHp, stun: byId.get(v.id).stunTicks, level: byId.get(v.id).level, clawDamage: byId.get(v.id).clawDamage }));
   }
+  // Whether monster levels are on (the monsters.levels.enabled knob): a config switch, no game state. Off, the explorer
+  // neither weighs nor tells Jev a level, so requests are byte-identical to the game without levels.
+  get levelsOn() { return levelsOn(); }
 
   // The portal (dungeon.treasure) once it is lit, else null. A testbed arena may have none.
   seenTreasure() {

@@ -459,7 +459,18 @@ const P8_ROWS = [
   { ...num('morBandSteady', 'monsters.morale.bands.steady', 40, 0, 100, 1, "Morale from this up reads steady"), group: 'Monsters', when: 'live' },
   { ...num('morBandWavering', 'monsters.morale.bands.wavering', 30, 0, 100, 1, "Morale from this up reads wavering"), group: 'Monsters', when: 'live' },
 ];
-export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS, ...P5_ROWS, ...P6_ROWS, ...P7_ROWS, ...P8_ROWS];
+// ---- Levels (PLAN-levels.md): a level 1-3 per monster scales its hp and claw damage. File-only, next game. ----
+const P9_ROWS = [
+  { key: 'levelsEnabled', path: 'monsters.levels.enabled', group: 'Monsters', label: 'monsters.levels.enabled', hint: 'Monster levels', doc: 'true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today)', type: 'toggle', def: true, when: 'next', page: false },
+  { ...num('levelHpMult', 'monsters.levels.hpMult', [0.5, 1, 1.5], 0.1, 10, 0.1, 'Multiplier on the kind hp at level 1/2/3 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 3 },
+  { ...num('levelDmgMult', 'monsters.levels.dmgMult', [1, 1, 1.5], 0.1, 10, 0.1, 'Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1)'), group: 'Monsters', type: 'tuple', len: 3 },
+  { ...num('levelWeightGhost', 'monsters.levels.weights.ghost', [1, 1], 0, 100, 1, 'Relative spawn weight of a ghost at level 1/2 (all 0 = even)'), group: 'Monsters', type: 'tuple', len: 2 },
+  { ...num('levelWeightTroll', 'monsters.levels.weights.troll', [1, 1], 0, 100, 1, 'Relative spawn weight of a troll at level 2/3 (all 0 = even)'), group: 'Monsters', type: 'tuple', len: 2 },
+  { key: 'levelCautionClaws', path: 'monsters.levels.cautionClaws', group: 'Monsters', label: 'monsters.levels.cautionClaws', hint: 'Claws that make a monster too strong to fight', doc: 'Too strong to fight: this many claws or fewer kill the explorer and one strike will not dispel it', type: 'range', min: 1, max: 10, step: 1, def: 1, when: 'live', page: false },
+  { key: 'the_weak_target', path: 'ui.thoughts.explorer.weak_target', group: 'UI', label: 'ui.thoughts.explorer.weak_target', hint: "Explorer remark lines on first sighting a weak target (in order)", doc: "Explorer remark lines on first sighting a weak target (in order)", type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+  { key: 'the_too_strong', path: 'ui.thoughts.explorer.too_strong', group: 'UI', label: 'ui.thoughts.explorer.too_strong', hint: "Explorer remark lines on first sighting a too-strong monster (in order)", doc: "Explorer remark lines on first sighting a too-strong monster (in order)", type: 'text', list: true, minLen: 1, maxLen: 60, maxItems: 12, nullable: true, def: null, when: 'live', page: false },
+];
+export const KNOBS = [...PAGE_ROWS, ...P1_ROWS, ...P2_ROWS, ...P3_ROWS, ...P4_ROWS, ...P5_ROWS, ...P6_ROWS, ...P7_ROWS, ...P8_ROWS, ...P9_ROWS];
 
 // What the request-size checks assert (bytes). Not game settings: the game enforces nothing, the checks measure.
 // Raise one on purpose only with a note in AGENTS.md (Open questions: request size).

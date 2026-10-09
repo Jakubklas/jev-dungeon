@@ -2,7 +2,7 @@
 // `kinds`, the view. Free, no Jev.
 import { generateDungeon } from '../src/dungeon.js';
 import { Adversary, configureAdversaries, spawnAdversaries } from '../src/characters/adversary/adversary.js';
-import { KIND_IDS, assignKinds, kindOf } from '../src/characters/adversary/kinds.js';
+import { KIND_IDS, LEVEL_RANGE, LEVELS, assignKinds, assignLevels, defaultLevel, levelsFor, levelStats, kindOf } from '../src/characters/adversary/kinds.js';
 import { TestbedError, buildArena } from '../src/testbed.js';
 import { newTestGame } from '../src/turn.js';
 import { stepAdversaries } from '../src/characters/adversary/adversary.js';
@@ -80,6 +80,32 @@ check(run.view().adversaries[0].kind === 'troll', 'view().adversaries[].kind');
   };
   const gs = await stepsOf("ghost"), ts = await stepsOf("troll");
   check(ts < gs && ts > 0, `troll moved ${ts} times vs ghost ${gs} in 100 ticks`);
+}
+
+// Levels (PLAN-levels). The draw over 500 seeds, stats per level, knobs and the Adversary are in check-config section 9;
+// the explorer side is check-levels. Here: the exports, the stream's independence, the spawn wiring and the view.
+{
+  check(Object.isFrozen(LEVEL_RANGE) && LEVEL_RANGE.ghost.join() === '1,2' && LEVEL_RANGE.troll.join() === '2,3' && LEVELS.join() === '1,2,3', 'LEVEL_RANGE ghost 1-2, troll 2-3');
+  check(defaultLevel('ghost') === 2 && defaultLevel('troll') === 2, 'defaultLevel is 2 for both kinds');
+  const ks = ['ghost', 'troll', 'ghost', 'troll', 'troll'];
+  check(assignLevels(9, ks.slice(0, 3)).join() === assignLevels(9, ks).slice(0, 3).join(), 'a monster\'s level does not depend on the monster count');
+  check(assignLevels(9, ks).join() === levelsFor('random', 9, ks).join() && levelsFor(3, 1, ks).every((l) => l === 3) && levelsFor([1, 3], 1, ks).join() === '1,3,1,3,1', 'levelsFor: random / number / cycled list');
+  for (const kind of KIND_IDS) for (const lv of LEVELS) {
+    const st = levelStats(kind, lv);
+    check(st.hp >= 1 && st.clawDamage >= 1 && Number.isInteger(st.hp) && Number.isInteger(st.clawDamage), `levelStats ${kind} L${lv} is whole and at least 1`);
+  }
+  check(levelStats('troll', 3).hp > levelStats('troll', 2).hp && levelStats('ghost', 2).hp > levelStats('ghost', 1).hp, 'levelStats: hp rises with level');
+  for (const bad of [0, 4, 1.5, '2']) { threw = false; try { levelStats('ghost', bad); } catch { threw = true; } check(threw, `levelStats rejects level ${JSON.stringify(bad)}`); }
+  for (let seed = 1; seed <= 30; seed++) {
+    const d = generateDungeon(seed);
+    configureAdversaries({ trollShare: 0.5 });
+    const sp = spawnAdversaries(d);
+    check(sp.map((a) => a.level).join() === assignLevels(seed, sp.map((a) => a.kind)).join() && sp.every((a) => LEVEL_RANGE[a.kind].includes(a.level)), `seed ${seed}: spawn uses assignLevels, in range`);
+  }
+  const lr = newTestGame({ numAdversaries: 1, kinds: 'troll', levels: 3, treasure: null }, { ask: () => ({}), decide: () => ({}), memoryDir: '/private/tmp/claude-502/-Users-jakub-jev-playground-dungeon-game/ca19c17d-dfc6-41fe-b0d0-86bd2a9b4157/scratchpad' });
+  const av = lr.view().adversaries[0];
+  check(av.level === 3 && av.claw_damage === lr.game.adversaries[0].clawDamage && lr.view().explorer.remark === null, 'view: level, claw_damage and explorer.remark');
+  check(Object.keys(lr.game.adversaries[0]).join() === 'id,pos,mode,budget,lastSeen,goal', 'level is not a public field');
 }
 
 if (fails) { console.log(`${fails} failure(s)`); process.exit(1); }

@@ -6,7 +6,7 @@ import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS, KINDS, FOOTPRINT_STANDIN, FORGE_SHAPES } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
-import { KIND_IDS, kindsFor } from './characters/adversary/kinds.js';
+import { KIND_IDS, kindsFor, levelsFor } from './characters/adversary/kinds.js';
 import { LOADOUTS } from './skills/loadouts.js';
 import { MAX_SKILLS } from './skills/skill-set.js';
 import { spawnCoins } from './coins.js';
@@ -23,6 +23,7 @@ export const DEFAULTS = {
   adversaries: null,
   minAdversaryGap: 4,
   adversariesInSight: null,
+  levels: 2, // the monsters' level: 'random' (seeded draw, ghost 1-2, troll 2-3) | 1..3 | a list cycled per monster (kinds.js); 2 = today's stats
   kinds: 'ghost', // the monsters' kind: 'ghost' | 'troll' | 'mixed' | a list cycled per monster (kinds.js)
   characters: 'standard',
   props: 'none',
@@ -121,6 +122,21 @@ export function normalizeConfig(raw = {}) {
       k.forEach((id) => { if (!ok(id)) bad(`kinds entry ${JSON.stringify(id)} is not one of ${KIND_IDS.join(', ')}`); });
     } else if (k !== 'mixed' && !ok(k)) bad(`kinds must be 'mixed', one of ${KIND_IDS.join(', ')} or a list, got ${JSON.stringify(k)}`);
     cfg.kinds = k;
+  }
+  if (given('levels')) {
+    let l = raw.levels;
+    if (typeof l === 'string' && /[;|,\s]/.test(l.trim())) l = l.trim().split(/[;|,\s]+/).filter(Boolean);
+    const num = (x) => (typeof x === 'string' && /^\d+$/.test(x.trim()) ? Number(x) : x);
+    const ok = (x) => Number.isInteger(x) && x >= 1 && x <= 3;
+    if (Array.isArray(l)) {
+      if (!l.length) bad('levels list must not be empty');
+      l = l.map(num);
+      l.forEach((x) => { if (!ok(x)) bad(`levels entry ${JSON.stringify(x)} is not 1, 2 or 3`); });
+    } else if (l !== 'random') {
+      l = num(l);
+      if (!ok(l)) bad(`levels must be 'random', 1, 2, 3 or a list, got ${JSON.stringify(raw.levels)}`);
+    }
+    cfg.levels = l;
   }
   if (given('characters')) {
     // 'standard', 'mixed', one preset id, or a list (URL: "ambusher;timid") applied per ghost in id order, cycled.
@@ -412,8 +428,9 @@ export function buildArena(rawConfig = {}) {
   // Adversary instances keep exactly the contracted public shape (AGENTS.md: don't add fields).
   const characters = charactersFor(cfg.characters, cfg.seed, positions.length);
   const kinds = kindsFor(cfg.kinds, cfg.seed, positions.length);
+  const levels = levelsFor(cfg.levels, cfg.seed, kinds);
   const adversaries = positions.map((pos, i) => new Adversary({
-    id: `a${i + 1}`, pos, character: characters[i], kind: kinds[i], skills: ghostSkillSetOf(cfg), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
+    id: `a${i + 1}`, pos, character: characters[i], kind: kinds[i], level: levels[i], ...(cfg.ghostSkills === 'none' ? { skills: 'none' } : {}), ...(cfg.ghostHp != null ? { hp: cfg.ghostHp } : {}),
   }));
   // A starting morale for the arena (monster morale): the score and the baseline it returns to. It only shows
   // with the monsterMorale toggle on; with it off the state is there and nothing reads it.

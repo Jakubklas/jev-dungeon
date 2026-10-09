@@ -182,7 +182,7 @@ export async function playDuel(opts = {}) {
     const skills = opts.skills ?? 'sword';
     const holder = {};
     const run = newTestGame(
-      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills, ...(opts.kinds ? { kinds: opts.kinds } : {}) },
+      { map: buildMap(opts, ghosts), seed, explorerSkills: skills === 'sword' ? ['sword_strike'] : skills, ...(opts.kinds ? { kinds: opts.kinds } : {}), ...(opts.levels ? { levels: opts.levels } : {}) },
       { ask: (req) => { opts.onAsk?.(req); return holder.ask(req); }, decide, dir: url, memoryDir: url, hold: opts.hold ?? true, confidence: opts.confidence ?? { fixedMood: true } },
     );
     const game = run.game;
@@ -199,7 +199,7 @@ export async function playDuel(opts = {}) {
     for (let t = 1; t <= (opts.maxTicks ?? 60) && !game.won && !game.lost; t++) {
       const turn = await run.playTurn();
       r.ticks = t;
-      opts.onTurn?.(turn, game);
+      opts.onTurn?.(turn, game, run);
       const ev = turn.events;
       const mine = ev.filter((e) => e.type === 'strike' && e.id === 'explorer').length;
       const claws = ev.filter((e) => e.type === 'strike' && e.id !== 'explorer' && ['hit', 'blocked', 'protected'].includes(e.result)).length;

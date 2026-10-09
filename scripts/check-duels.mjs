@@ -6,6 +6,10 @@
 // against 2-3 ghosts, the health-2 spot check and 4 ghosts (no hold). No Jev, no network. Run from dungeon-game: node scripts/check-duels.mjs
 import { PLACEMENTS, man, openGroups, playDuel } from './lib/duel-harness.mjs';
 import { multiGrid } from './measure-outnumbered.mjs';
+import { configureLevels } from '../src/characters/adversary/kinds.js';
+// Levels off on purpose: section 10 derives a 2-life run from a 9-life run, which assumes play does not depend on lives. With levels on,
+// the explorer stops engaging once one claw would kill it (matchup), so the premise fails by design. Level play is in check-levels.mjs.
+configureLevels({ levelsEnabled: false });
 
 let failures = 0;
 const check = (ok, msg) => { if (!ok) { failures++; console.error('FAIL:', msg); } };

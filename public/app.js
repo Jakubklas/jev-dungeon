@@ -752,7 +752,7 @@ function drawScene(now) {
     const [gx, gy] = actorPos(a, now);
     ents.push({ depth: Math.max(a.from[0] + a.from[1], a.to[0] + a.to[1]), order: 1, gx, gy, kind: 'ghost', sub: ad.kind === 'troll' ? 'troll' : 'ghost', face: a.face, stepAt: a.t0 || undefined,
       id: ad.id, alpha: ad.visible ? 1 : REVEAL_ALPHA, chase: ad.mode === 'chase', brain: !!ad.brain?.on,
-      maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
+      maxHp: (ad.visible || reveal) && ad.max_hp > 0 ? Math.min(8, ad.max_hp) : 0, hp: Number(ad.hp) || 0, level: Math.min(3, Math.max(0, Math.floor(Number(ad.level)) || 0)), phase: hash(ad.id.length, ad.id.charCodeAt(ad.id.length - 1)) });
   }
   const me = actors.get('@');
   const [mx, my] = actorPos(me, now);
@@ -1211,6 +1211,15 @@ function drawEntity(en, now, cx, cy) {
       b.fillStyle = i < en.hp ? PALETTE.enemy : '#2c3d72';
       b.fillRect(x0 + i * 4, pipY, 2, 2);
     }
+    // Level badge: one 2x2 pip per level (1-3) right of the hp bar, bone coloured, danger red at level 3.
+    // Same fog rule as the bar (maxHp is 0 for a monster not drawn / not revealed). No level = no badge.
+    if (en.level) {
+      const bx = x0 + en.maxHp * 4 + 1;
+      b.fillStyle = PALETTE.brainEdge;
+      b.fillRect(bx, pipY - 1, en.level * 3 + 1, 4);
+      b.fillStyle = en.level >= 3 ? PALETTE.enemy : '#e3daa7';
+      for (let i = 0; i < en.level; i++) b.fillRect(bx + 1 + i * 3, pipY, 2, 2);
+    }
     b.globalAlpha = 1;
   }
   // Brain on: a small cyan pixel diamond floating above the head (distinct from the red chase glow).
@@ -1321,11 +1330,27 @@ function currentApproaches() {
 }
 
 // After every new view. prime: note the current approaches without showing them.
+// The explorer's code-chosen remark (view().explorer.remark, string or null; absent = nothing) shows once per new
+// remark in the explorer's bubble. It borrows the bubble, then the approach key is put back so the approach line
+// does not re-show on the next view.
+let lastRemark = null;
 function updateThoughts(prime = false) {
-  for (const c of currentApproaches()) think(c.id, c.key, prime ? null : c.text, c.kind, c.tag);
+  const list = currentApproaches();
+  for (const c of list) think(c.id, c.key, prime ? null : c.text, c.kind, c.tag);
+  const remark = game?.explorer?.remark;
+  const text = typeof remark === 'string' && remark.trim() ? remark.trim() : null;
+  if (text && text !== lastRemark && !prime) {
+    const t = thoughts.get('@');
+    const approachKey = t?.key ?? null, approachTag = t?.tag ?? null;
+    think('@', `remark:${text}`, text, 'explorer');
+    const t2 = thoughts.get('@');
+    t2.key = approachKey; t2.tag = approachTag;
+  }
+  lastRemark = text;
 }
 
 function clearThoughts() {
+  lastRemark = null;
   thoughts.clear();
   bubbleLayer.replaceChildren();
 }
@@ -1756,7 +1781,10 @@ const EVENT_TEXT = {
   blocked: (id) => `Shield blocked ${id}'s claw`,
   dispelled: (id) => `Jev dispelled ${id}`,
   cleared: () => 'Every adversary is gone: Jev wins',
-  struck: (id, e) => `Jev struck ${id}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`,
+  struck: (id, e) => {
+    const lv = Number(game?.adversaries?.find((a) => a.id === id)?.level);
+    return `Jev struck ${id}${lv > 0 ? ` (level ${lv})` : ''}${Number.isFinite(e.hp) ? ` (${e.hp} hp left)` : ''}`;
+  },
   bump: (id) => `${id} bumped Jev`,
   coin_drop: (id) => `${id} dropped a coin`,
   heart: () => 'Jev picked up a heart: one life back',

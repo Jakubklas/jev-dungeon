@@ -136,6 +136,8 @@ const LIT = {
   ...Object.fromEntries(R.KNOBS.filter((k) => k.type === 'text').map((k) => [k.key, null])),
   // P8
   ...MR.moraleSnapshot(),
+  // levels
+  ...KD.levelsSnapshot(),
   // P7
   ...JV.jevSnapshot(),
   ...Object.fromEntries(Object.entries(UI_CONST).map(([n, c]) => [`ui_${n}`, uiLiteral(c)])),
@@ -360,13 +362,13 @@ check(sortedEntries(backP5) === sortedEntries(Object.fromEntries(Object.entries(
 check(REQUEST_BYTES.explorerChasing === 9500 && REQUEST_BYTES.explorerPatrolling === 10500 && REQUEST_BYTES.adversaryMax === 8000, 'the request-size bounds the checks use are the documented ones');
 
 // 6g. P6: prompt wording. null/absent = built-in; the file replaces it; bad text is refused
-const builtins = { ...BR.explorerPromptDefaults(), ...C.characterPromptDefaults(), ...AM.monsterPromptDefaults(), ...QS.skillPromptDefaults(), ...TX.thoughtDefaults() };
+const builtins = { ...BR.explorerPromptDefaults(), ...C.characterPromptDefaults(), ...AM.monsterPromptDefaults(), ...QS.skillPromptDefaults(), ...TX.thoughtDefaults(), ...EN.explorerRemarkDefaults() };
 const textRows = R.KNOBS.filter((k) => k.type === 'text');
 check(textRows.length === Object.keys(builtins).length && textRows.every((k) => k.key in builtins), 'every text knob has a built-in wording, and every built-in has a knob');
 check(textRows.every((k) => k.def === null && (k.len || k.list ? Array.isArray(builtins[k.key]) : typeof builtins[k.key] === 'string')), 'text knobs default to null and the built-ins have the right shape');
 check(textRows.every((k) => (k.len || k.list ? builtins[k.key].every((x) => x.length <= k.maxLen) : builtins[k.key].length <= k.maxLen)), 'no built-in wording exceeds its own limit');
 check(textRows.filter((k) => k.list).every((k) => builtins[k.key].length >= k.minLen && builtins[k.key].length <= k.maxItems), 'every built-in bubble pool fits its own size range');
-check(Object.keys(TH.THOUGHTS).length + Object.keys(TH.MOOD_THOUGHTS).length + Object.keys(TH.TROLL_THOUGHTS).length === textRows.filter((k) => k.list).length, 'every bubble pool in thoughts.js has a knob and vice versa');
+check(Object.keys(TH.THOUGHTS).length + Object.keys(TH.MOOD_THOUGHTS).length + Object.keys(TH.TROLL_THOUGHTS).length + Object.keys(EN.explorerRemarkDefaults()).length === textRows.filter((k) => k.list).length, 'every bubble pool in thoughts.js has a knob and vice versa');
 const moduleWording = () => ({ ...BR.explorerPromptSnapshot(), ...C.characterPromptSnapshot(), ...AM.monsterPromptSnapshot(), ...QS.skillPromptSnapshot() });
 const builtinsOfModules = () => Object.fromEntries(Object.entries(builtins).filter(([k]) => k in moduleWording()));
 check(sortedEntries(moduleWording()) === sortedEntries(builtinsOfModules()), 'with no config every module speaks its built-in wording');
@@ -448,5 +450,48 @@ await S.saveUserSettings({ 'player.steps': 30 });
 check(S.view().values.injectSteps === 30, 'user scope saves a flagged knob by path');
 check(JSON.parse(readFileSync(own, 'utf8')).injectSteps === 30, 'and writes it to the instance file');
 
+
+// 9. monster levels (PLAN-levels.md): knobs reach kinds.js, off = level 2 and today's stats, the draw stays in range and its own stream
+{
+  const tmpl = L.parseConfig(YAML.parse(L.templateYaml()));
+  check(tmpl.values.levelsEnabled === true && eq(tmpl.values.levelHpMult, [0.5, 1, 1.5]) && eq(tmpl.values.levelWeightTroll, [1, 1]), 'levels: template carries the defaults');
+  const bad = L.parseConfig(YAML.parse('monsters: { levels: { hpMult: [1, 2], weights: { ghost: [1, -1] } } }'));
+  check(bad.warnings.length === 2, 'levels: a short hpMult tuple and a negative weight warn: ' + bad.warnings.join('; '));
+  const good = L.parseConfig(YAML.parse('monsters: { levels: { enabled: false, hpMult: [1, 2, 3], dmgMult: [2, 2, 2], weights: { ghost: [0, 1], troll: [1, 0] } } }'));
+  check(good.warnings.length === 0 && good.values.levelsEnabled === false && eq(good.values.levelHpMult, [1, 2, 3]), 'levels: a file sets the knobs');
+  const seeds = Array.from({ length: 500 }, (_, i) => i + 1);
+  const kinds8 = ['ghost', 'troll', 'ghost', 'troll', 'ghost', 'troll', 'ghost', 'troll'];
+  const draws = seeds.map((s) => KD.assignLevels(s, kinds8));
+  check(draws.every((l) => l.every((v, i) => KD.LEVEL_RANGE[kinds8[i]].includes(v))), 'levels: ghost 1-2, troll 2-3 over 500 seeds');
+  check(draws.flat().includes(1) && draws.flat().includes(3), 'levels: both ends are drawn');
+  check(eq(KD.assignLevels(7, kinds8), KD.assignLevels(7, kinds8)), 'levels: same seed, same levels');
+  check(JSON.stringify(KD.levelStats('ghost', 2)) === JSON.stringify({ hp: 2, clawDamage: 1 }) && JSON.stringify(KD.levelStats('troll', 2)) === JSON.stringify({ hp: 4, clawDamage: 2 }), 'levels: level 2 is today\'s base');
+  check(JSON.stringify(KD.levelStats('ghost', 1)) === JSON.stringify({ hp: 1, clawDamage: 1 }) && JSON.stringify(KD.levelStats('troll', 3)) === JSON.stringify({ hp: 6, clawDamage: 3 }), 'levels: ghost L1 and troll L3 stats');
+  const mk = (kind, level) => new ADV.Adversary({ id: 'a1', pos: [1, 1], kind, level });
+  check(mk('troll', 3).level === 3 && mk('troll', 3).clawDamage === 3 && mk('troll', 3).maxHp === 6, 'levels: an Adversary carries level, clawDamage and the level hp');
+  check(mk('ghost', 1).maxHp === 1 && mk('ghost', 1).skills.skills[0].damage === 1 && mk('ghost').level === 2 && mk('troll').level === 2, 'levels: default level 2; hp matches');
+  let threw = false; try { mk('ghost', 4); } catch { threw = true; }
+  check(threw, 'levels: level 4 throws');
+  // another stream: kinds and spawn cells do not depend on the level knobs
+  const dg = generateDungeon(21);
+  const spawnSig = () => JSON.stringify(ADV.spawnAdversaries(dg).map((a) => [a.id, a.pos, a.kind]));
+  const onSig = spawnSig();
+  KD.configureLevels({ levelHpMult: [3, 3, 3], levelWeightGhost: [0, 1], levelWeightTroll: [1, 0] });
+  check(spawnSig() === onSig, 'levels: weights and multipliers never move spawns or kinds');
+  check(KD.assignLevels(5, ['ghost', 'troll']).join() === '2,2', 'levels: weights [0,1] / [1,0] pin ghost 2 and troll 2');
+  KD.configureLevels({ levelWeightGhost: [0, 0] });
+  check(KD.assignLevels(5, ['ghost']).every((v) => v === 1 || v === 2), 'levels: all-zero weights fall back to even');
+  KD.configureLevels({ levelsEnabled: false });
+  check(ADV.spawnAdversaries(dg).every((a) => a.level === 2) && JSON.stringify(KD.levelStats('troll', 3)) === JSON.stringify({ hp: 4, clawDamage: 2 }) && mk('troll', 3).level === 2 && mk('troll', 3).maxHp === 4, 'levels: off = all level 2, today\'s hp and claw');
+  KD.configureLevels({ levelsEnabled: true, levelHpMult: [0.5, 1, 1.5], levelWeightGhost: [1, 1], levelWeightTroll: [1, 1] });
+  // testbed
+  const arena = (levels, extra = {}) => TB.buildArena({ size: [9, 9], numAdversaries: 4, kinds: ['ghost', 'troll'], levels, ...extra }).adversaries;
+  check(arena(undefined).every((a) => a.level === 2), 'levels: testbed default is level 2');
+  check(arena([1, 3]).map((a) => a.level).join() === '1,3,1,3', 'levels: testbed list is cycled');
+  check(arena('random').every((a) => KD.LEVEL_RANGE[a.kind].includes(a.level)), 'levels: testbed random stays in range');
+  check(arena(3)[1].maxHp === 6 && arena(3)[1].clawDamage === 3 && arena(2)[1].clawDamage === 2 && arena(3)[0].clawDamage === 2, 'levels: testbed troll claws like a real one (troll claw 2 x mult: L2 2, L3 3; ghost L3 2) with 6 hp at level 3');
+  let tbBad = false; try { arena(4); } catch (e) { tbBad = e instanceof TB.TestbedError; }
+  check(tbBad, 'levels: testbed rejects level 4');
+}
 console.log(failed ? `${failed} check(s) failed` : 'All config checks passed.');
 process.exit(failed ? 1 : 0);

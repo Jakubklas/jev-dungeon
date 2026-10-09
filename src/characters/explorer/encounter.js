@@ -8,6 +8,7 @@
 
 import { ADVERSARY_SPEED } from '../adversary/adversary.js';
 import { DIRS } from '../../dungeon.js';
+import { skillConfig } from '../../skills/loadouts.js';
 import { compass, compass8, dirWord, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, sameCell, step } from './known-map.js';
 
 let MAX_GAP = 6; // the route survey looks for closest approaches up to this many steps
@@ -61,6 +62,8 @@ export function threatsOf(world) {
     chasing: a.mode === 'chase',
     hp: a.hp, // the health bar over it (KnownWorld: seen, so fog-safe)
     maxHp: a.maxHp,
+    level: a.level, // level and claw damage are read in sight like the health bar (PLAN-levels.md)
+    clawDamage: a.clawDamage,
     dist: knownFloor(world, a.pos) ? knownDistances(world, a.pos) : null,
   }));
 }
@@ -251,6 +254,39 @@ export function openArea(world) {
   return { cells, set, w: x1 - x0 + 1, h: y1 - y0 + 1, exits: mouths.size, unexplored };
 }
 
+// ---- Levels (PLAN-levels.md): can the explorer take this one? ----
+let CAUTION_CLAWS = 1; // too strong: this many claws or fewer kill the explorer, and one strike does not dispel it (weak: one strike, more claws than this)
+const REMARK_DEFAULTS = {
+  weak_target: ["Ah, that's a weak target.", 'That one looks fragile.', 'One good hit should do it.', 'Easy pickings.'],
+  too_strong: ["I don't have enough health to fight this guy.", 'Too strong for me right now.', 'That one would flatten me. Not today.', 'Better not tangle with that one.'],
+};
+let REMARKS = { weak_target: [...REMARK_DEFAULTS.weak_target], too_strong: [...REMARK_DEFAULTS.too_strong] };
+export const explorerRemarkDefaults = () => ({ the_weak_target: [...REMARK_DEFAULTS.weak_target], the_too_strong: [...REMARK_DEFAULTS.too_strong] });
+
+// " Level 3, its claw takes 3 lives; you have 2." (levels on only; empty otherwise, so requests stay as they were).
+export const levelFact = (world, th) => (world.levelsOn && th.level != null && th.clawDamage != null
+  ? ` Level ${th.level}, its claw takes ${th.clawDamage} ${th.clawDamage === 1 ? 'life' : 'lives'}; you have ${world.health}.` : '');
+// The run_away addition when some monster in sight is too strong to fight: why the explorer is not engaging.
+export function strongFact(world, threats, damage) {
+  const th = threats.find((t) => matchup(world, t, damage) === 'too_strong');
+  return th ? ` ${th.id} is too strong to fight (${levelFact(world, th).trim().replace(/\.$/, '')}).` : '';
+}
+
+// 'weak' | 'even' | 'too_strong' from the health bar, the sword's damage and the explorer's own lives. `th` is a threat
+// or a remembered sighting ({ hp, level, clawDamage }, frozen at the sighting). strikes = hits to dispel it, claws = claws
+// that kill the explorer. Without levels (the knob off, or no level on the record) every monster is 'even': today's play.
+export function matchup(world, th, damage = skillConfig().swordDamage) {
+  if (!world.levelsOn || th.level == null || th.clawDamage == null || !(th.hp > 0)) return 'even';
+  const strikes = Math.ceil(th.hp / Math.max(1, damage));
+  const claws = Math.ceil(world.health / Math.max(1, th.clawDamage));
+  if (strikes === 1 && claws > CAUTION_CLAWS) return 'weak';
+  if (claws <= CAUTION_CLAWS && strikes > 1) return 'too_strong';
+  return 'even';
+}
+
+// The deterministic remark (no rng): the n-th line of the kind's pool, wrapping. kind: 'weak_target' | 'too_strong'.
+export const remarkLine = (kind, n) => REMARKS[kind][n % REMARKS[kind].length];
+
 // "1 of 2 hp": the health bar the explorer sees over a visible adversary.
 export const hpText = (th) => `${th.hp} of ${th.maxHp} hp`;
 
@@ -267,17 +303,37 @@ let HOLD_GAP = 2;
 // duels (check-skills section 12) holding the 2-step gap took no claw and walking in at most one, always before the
 // first strike; two ghosts, a sword cooldown above the stun or no stun gave two. `fight.only`: the one adversary
 // the explorer knows of.
-function fightFacts(th, { damage, only, steady = false }, alone) {
+function fightFacts(world, th, { damage, only, steady = false }, alone) {
   const n = Math.max(1, Math.ceil(th.hp / damage));
+  const weak = matchup(world, th, damage) === 'weak';
   return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it.` +
-    `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}`;
+    `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}` +
+    `${weak ? ` A weak target: it would take ${Math.ceil(world.health / th.clawDamage)} claws to kill you.` : ''}` +
+    `${levelFact(world, th)}`;
 }
-export function engageTarget(world, threats, { stunned = null, fight = null } = {}) {
+// The corner model's verdict for engageTarget, remembered per world, step, position and enemy cells (one tick asks many times).
+const TRAPPED = new WeakMap();
+function trappedBy(world, threats) {
+  const k = `${world.steps}|${world.pos}|${threats.map((t) => `${t.id}:${t.pos}`).join(';')}`;
+  const c = TRAPPED.get(world);
+  if (c?.k === k) return c.v;
+  const v = Boolean(cornerFacts(world, threats, { gateOnly: true }));
+  TRAPPED.set(world, { k, v });
+  return v;
+}
+// `cornered`: the explorer has no way out, so it may fight a monster it would otherwise decline (a 'too_strong' one). The
+// caller's cornerMode flag, or the corner model's own verdict here (cornerFacts, checked only when a too-strong one is in sight).
+export function engageTarget(world, threats, { stunned = null, fight = null, cornered = false } = {}) {
   if (!threats.length) return null;
   const here = world.pos;
   const dist = knownDistances(world, here);
   const cands = [];
+  let trapped = cornered ? true : null; // null = not asked yet
   for (const th of threats) {
+    if (matchup(world, th, fight?.damage) === 'too_strong') {
+      trapped ??= trappedBy(world, threats);
+      if (!trapped) continue; // not worth fighting: engage is left off for it
+    }
     const now = threatDistance(th, here);
     const close = stunned?.has(th.id);
     if (now <= 1) { cands.push({ cell: [...here], steps: 0, th, kind: 'adjacent' }); continue; }
@@ -300,7 +356,7 @@ export function engageTarget(world, threats, { stunned = null, fight = null } = 
     approach: `${where} puts you 2 steps from ${who}: wait there.`,
     close: `${where} puts you next to ${who}, still stunned by your strike.`,
   }[best.kind];
-  return { cell: [...best.cell], steps: best.steps, why: fight ? `${why} ${fightFacts(th, fight, threats.length === 1)}` : why };
+  return { cell: [...best.cell], steps: best.steps, why: fight ? `${why} ${fightFacts(world, th, fight, threats.length === 1)}` : why };
 }
 
 // Per legal move: does it lead into a known dead end (nothing unexplored past it, no loop back)?
@@ -441,7 +497,7 @@ function cornerBreakout(world, threats, trap) {
 // -> null | CornerFacts (see PLAN-corner.md). `hasWayOut` here means: the time-aware safe reach (ESCAPE_KEEP_GAP from every
 // enemy) holds a frontier cell, the portal or a corridor junction. `pocket` counts cells reachable without entering a cell
 // within 1 step of an enemy. `breakout.closest` is the known-path distance of the closest route cell to any enemy NOW.
-export function cornerFacts(world, threats, { bounced = false } = {}) {
+export function cornerFacts(world, threats, { bounced = false, gateOnly = false } = {}) {
   if (!threats?.length) return null;
   const here = world.pos;
   const gap = Math.min(...threats.map((th) => threatDistance(th, here)));
@@ -459,6 +515,7 @@ export function cornerFacts(world, threats, { bounced = false } = {}) {
   const chasing = threats.some((th) => th.chasing) || gap <= CORNER_NEAR;
   const shapeTrap = walls >= CORNER_WALLS || pocket <= CORNER_POCKET;
   if (!bounced && !(chasing && shapeTrap && !hasWayOut)) return null;
+  if (gateOnly) return { walls, pocket, hasWayOut, gap }; // the verdict alone, no breakout route
 
   const trapSet = { has: (c) => safe.has(c) };
   const breakout = cornerBreakout(world, threats, trapSet);
@@ -480,6 +537,11 @@ export function configureExplorerEncounter(o) {
   if (o.encEscapeKeepGap !== undefined) ESCAPE_KEEP_GAP = o.encEscapeKeepGap;
   if (o.encEscapeTravel !== undefined) ESCAPE_TRAVEL = o.encEscapeTravel;
   if (o.encHoldGap !== undefined) HOLD_GAP = o.encHoldGap;
+  if (o.levelCautionClaws !== undefined) CAUTION_CLAWS = o.levelCautionClaws;
+  for (const kind of Object.keys(REMARK_DEFAULTS)) {
+    const v = o[`the_${kind}`];
+    REMARKS[kind] = Array.isArray(v) && v.length ? [...v] : [...REMARK_DEFAULTS[kind]]; // null = the built-in lines
+  }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const explorerEncounterSnapshot = () => ({ encMaxGap: MAX_GAP, encHideMaxSteps: HIDE_MAX_STEPS, encAreaCap: AREA_CAP, encPastCos: PAST_COS, encEscapeFrontier: ESCAPE_FRONTIER, encEscapeThroughExit: ESCAPE_THROUGH_EXIT, encEscapeKeepGap: ESCAPE_KEEP_GAP, encEscapeTravel: ESCAPE_TRAVEL, encHoldGap: HOLD_GAP });
+export const explorerEncounterSnapshot = () => ({ encMaxGap: MAX_GAP, encHideMaxSteps: HIDE_MAX_STEPS, encAreaCap: AREA_CAP, encPastCos: PAST_COS, encEscapeFrontier: ESCAPE_FRONTIER, encEscapeThroughExit: ESCAPE_THROUGH_EXIT, encEscapeKeepGap: ESCAPE_KEEP_GAP, encEscapeTravel: ESCAPE_TRAVEL, encHoldGap: HOLD_GAP, levelCautionClaws: CAUTION_CLAWS });

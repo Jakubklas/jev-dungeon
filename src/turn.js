@@ -144,7 +144,7 @@ export class Run {
       ...game.publicView(),
       adversaries: game.adversaries.map((a) => ({
         id: a.id, pos: [...a.pos], mode: a.mode, visible: seesExplorer(game, a), brain: brainView(a), character: a.character, kind: a.kind, // character, facing: Reveal-only display; hp is drawn over ghosts in sight (the explorer reads the same bar)
-        facing: a.facing, hp: a.hp, max_hp: a.maxHp,
+        facing: a.facing, hp: a.hp, max_hp: a.maxHp, level: a.level, claw_damage: a.clawDamage,
         // Monster morale (PLAN-monster-morale.md): null with the monsterMorale toggle off. Reveal-only display,
         // like `character`: the explorer never reads it, and it never reaches an explorer request.
         morale: a.memory.morale ? { value: a.memory.morale.value, tier: a.memory.morale.tier, mood: a.memory.morale.mood } : null,
@@ -153,6 +153,7 @@ export class Run {
       grace_ticks: graceLeft(game),
       invulnerable: graceLeft(game) > 0,
       over: game.won || game.lost,
+      explorer: { remark: this.explorer.remark ?? null }, // PLAN-levels: what the explorer said about a monster it just sighted, or null
       directive: this.directive, // the live player directive { text, from_step, until_step, steps_left } or null
       testbed: !!game.dungeon.testbed,
       heart_cells: game.heartPiles.map((c) => [...c]), // floating hearts (restore a life)

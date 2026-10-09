@@ -14,7 +14,7 @@ import {
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
 import { assignSpawnCharacters, profileOf, traitsOf } from './character.js';
-import { assignKinds, kindOf } from './kinds.js';
+import { assignKinds, assignLevels, kindOf, defaultLevel, levelStats, levelsOn, clawMult } from './kinds.js';
 import { setSkills } from './memory.js';
 import { buildSkillSet } from '../../skills/loadouts.js';
 import { skillConfig } from '../../skills/config.js';
@@ -96,6 +96,8 @@ export class Adversary {
   #hunt; // brain state (brain.js newHunt)
   #route = null; // cached patrol route, cells still to walk, next first
   #lastRequestBody = null; // exact body of the last Jev request, for auditing
+  #level = 2; // 1-3, fixed at spawn (kinds.js); scales hp and claw damage; 2 with levels off
+  #clawDamage = 1; // lives one claw strike takes, resolved at construction
   #kind; // monster kind id (kinds.js: 'ghost' | 'troll'), fixed at spawn
   #character; // preset id (character.js), fixed at spawn
   #profile; // profileOf(traits) for that preset
@@ -107,8 +109,10 @@ export class Adversary {
   #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
   #stun = 0; // ticks of stun left: no step, no Jev call
 
-  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', hp, skills }) {
+  constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character = 'standard', kind = 'ghost', level, hp, skills }) {
     const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
+    if (level !== undefined && (!Number.isInteger(level) || level < 1 || level > 3)) throw new TypeError(`monster level must be 1, 2 or 3, got ${JSON.stringify(level)}`);
+    this.#level = levelsOn() ? (level ?? defaultLevel(kind)) : defaultLevel(kind); // levels off: every monster is level 2
     this.id = id;
     this.pos = pos;
     this.mode = mode;
@@ -120,12 +124,27 @@ export class Adversary {
     this.#profile = profileOf(traitsOf(character)); // throws on an unknown id
     this.#home = [...pos];
     this.#hunt = newHunt(id, this.#profile, character);
-    this.#hp = this.#maxHp = hp ?? spec.hp();
+    const stats = levelStats(kind, this.#level);
+    this.#hp = this.#maxHp = hp ?? stats.hp; // an explicit hp (testbed ghostHp) is taken as given
     this.#speed = spec.speed();
     const own = skills === undefined; // a kind's own loadout carries its tuning; an explicit one is taken as given
     skills ??= spec.skills;
-    this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills, own ? spec.tuning() : {}) : skills;
+    const built = typeof skills === 'string' || Array.isArray(skills);
+    this.#skills = built ? buildSkillSet(skills, own ? spec.tuning() : {}) : skills;
+    // The level scales the claw this monster was built with (its kind's, or the plain ghost claw for an explicit loadout);
+    // a ready-made SkillSet is taken as given. Levels off leaves the skill untouched.
+    const claw = this.#skills.skills.find((k) => k.kind === 'attack');
+    if (claw && built && levelsOn()) claw.damage = Math.max(1, Math.round(claw.damage * clawMult(this.#level)));
+    this.#clawDamage = claw?.damage ?? stats.clawDamage;
     this.syncSkills();
+  }
+
+  get level() {
+    return this.#level;
+  }
+
+  get clawDamage() {
+    return this.#clawDamage;
   }
 
   get speed() {
@@ -282,7 +301,8 @@ export function spawnAdversaries(dungeon) {
   // Kinds and characters come from their own streams and are drawn after every spawn rng call, so dungeons and ghost cells never change.
   const characters = CHARACTERS_ON ? assignSpawnCharacters(dungeon.seed, picked.length) : [];
   const kinds = assignKinds(dungeon.seed, picked.length, TROLL_SHARE);
-  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i] }));
+  const levels = assignLevels(dungeon.seed, kinds); // its own stream, after the kinds
+  return picked.map((pos, i) => new Adversary({ id: `a${i + 1}`, pos: [...pos], character: characters[i] ?? 'standard', kind: kinds[i], level: levels[i] }));
 }
 
 // The numbers this ghost's code runs with. A standard ghost follows the live settings (today's behaviour);

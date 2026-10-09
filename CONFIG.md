@@ -108,6 +108,12 @@ Ghosts and trolls: speed, packs, spawn, stats, characters.
 | `monsters.morale.bands.eager` | 65 | 0..100 | live | no | Morale from this up reads eager |
 | `monsters.morale.bands.steady` | 40 | 0..100 | live | no | Morale from this up reads steady |
 | `monsters.morale.bands.wavering` | 30 | 0..100 | live | no | Morale from this up reads wavering |
+| `monsters.levels.enabled` | true | on/off | next | no | true = monsters get a level 1-3 scaling hp and claw; false = all level 2 (today) |
+| `monsters.levels.hpMult` | [0.5,1,1.5] | 3 numbers 0.1..10 | next | no | Multiplier on the kind hp at level 1/2/3 (rounded, at least 1) |
+| `monsters.levels.dmgMult` | [1,1,1.5] | 3 numbers 0.1..10 | next | no | Multiplier on the kind claw damage at level 1/2/3 (rounded, at least 1) |
+| `monsters.levels.weights.ghost` | [1,1] | 2 numbers 0..100 | next | no | Relative spawn weight of a ghost at level 1/2 (all 0 = even) |
+| `monsters.levels.weights.troll` | [1,1] | 2 numbers 0..100 | next | no | Relative spawn weight of a troll at level 2/3 (all 0 = even) |
+| `monsters.levels.cautionClaws` | 1 | 1..10 | live | no | Too strong to fight: this many claws or fewer kill the explorer and one strike will not dispel it |
 | `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (0.75 vs 0.25 = a quarter trolls) |
 | `monsters.kinds.troll.weight` | 0.25 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds |
 | `monsters.characters.mix` | "mixed" | "mixed" / "standard" / weights | next | no | Character mix of spawned monsters |
@@ -485,3 +491,5 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.thoughts.troll.alerted` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Troll bubble lines for alerted |
 | `ui.thoughts.troll.gave_up` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Troll bubble lines for gave_up |
 | `ui.thoughts.troll.caught` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Troll bubble lines for caught |
+| `ui.thoughts.explorer.weak_target` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Explorer remark lines on first sighting a weak target (in order) |
+| `ui.thoughts.explorer.too_strong` | (built-in wording) | 1-12 lines, up to 60 chars | live | no | Explorer remark lines on first sighting a too-strong monster (in order) |

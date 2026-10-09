@@ -23,7 +23,7 @@ import {
   compass, compass8, euclid, isFrontier, key, knownDistances, knownFloor, neighbours, pick, plural, reachableFrontier, sameCell, step, wouldReveal,
 } from './known-map.js';
 import {
-  blocksOnlyRoute, encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, safeDistances,
+  blocksOnlyRoute, encounterFacts, engageTarget, escapeTarget, goalsAt, hiddenFromAll, holdGhost, hpText, isRoomCell, strongFact, safeDistances,
   threatDistance, threatsOf,
 } from './encounter.js';
 
@@ -199,7 +199,7 @@ function frozenThreats(world, remembered) {
 // `avoid` (optional Set from avoidZone): the exploration approaches skip frontier cells in it
 // while any other frontier cell exists.
 // `stunned`: ids the explorer stunned with its own strike (the brain's record), for engage; `fight`: see tacticFeasibility.
-export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null, breakout = null } = {}) {
+export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], stunned = null, fight = null, breakout = null, cornered = false } = {}) {
   // Only the leaving approaches may route through the portal; for all others it is a wall.
   const dist = knownDistances(world, world.pos, null, null, null, approachId === 'go_to_exit');
 
@@ -226,7 +226,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
       return { cell: [...exitCell], steps: safe.get(exitCell), why: `The portal is ${plural(safe.get(exitCell), 'step')} away by a known path that keeps the enemy at least ${plural(minGap, 'step')} off.` };
     }
     if (!threats.length) return approachId === 'hide' ? null : noThreatFallback(world, dist);
-    if (approachId === 'engage') return engageTarget(world, threats, { stunned, fight });
+    if (approachId === 'engage') return engageTarget(world, threats, { stunned, fight, cornered });
     // Cornered (cornerMode): the breakout route's end is the slip_past target whatever the gap or `exclude`.
     if (breakout && approachId === 'slip_past') return { cell: [...breakout.cell], steps: breakout.steps, why: breakout.why };
     const safe = safeDistances(world, threats, minGap);
@@ -325,7 +325,7 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
   const s = enc.survey;
   const add = (id, ok) => {
     if (!ok) return;
-    const target = approachTarget(world, id, { minGap, exclude, stunned, fight });
+    const target = approachTarget(world, id, { minGap, exclude, stunned, fight, cornered: Boolean(cornered) });
     // `exclude` (cells a ping-pong bounced between, and the target that led there) rules a tactic out
     // when its only target is one of them; run_away picks another cell by itself.
     if (target && !exclude?.has(key(target.cell))) {
@@ -345,6 +345,7 @@ export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = n
       out.run_away = { target: { cell: [...h.cell], steps: h.steps, why }, fact: why };
     }
   }
+  if (out.run_away) out.run_away = { ...out.run_away, fact: out.run_away.fact + strongFact(world, threats, fight?.damage) };
   add('engage', armed && (!panic || blocksOnlyRoute(world, threats))); // panic fights only an enemy that shuts the only way out
   add('hide', s.hide && s.hide.gap >= minGap);
   add('race_to_exit', exitSeen(world) && s.exit && s.exit.gap >= minGap);
@@ -371,12 +372,16 @@ export function tacticOptions(world, minGap = DEFAULT_MIN_GAP) {
 
 // Remembered adversaries (the brain's frozen sightings, not visible now) as Jev reads them: how long
 // ago, whether it was chasing, and where that frozen cell lies from the explorer's position now.
+// level and claw_lives beside the health bar (levels on only; off, the request is byte-identical to the game without levels).
+const levelFields = (world, th) => (world.levelsOn && th.level != null ? { level: th.level, claw_lives: th.clawDamage } : {});
+
 function rememberedView(world, dist, remembered) {
   return remembered.map((r) => ({
     id: r.id,
     last_seen_steps_ago: world.steps - r.step,
     was_chasing: r.chasing,
     ...(r.hp ? { hp: hpText(r) } : {}), // the health bar as it was at the sighting, frozen like the cell
+    ...levelFields(world, r), // its level and claw, frozen likewise
     direction: sameCell(world.pos, r.cell) ? 'here' : compass8(world.pos, r.cell),
     distance: dist.get(r.cell) ?? Math.round(euclid(world.pos, r.cell)),
   }));
@@ -482,6 +487,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
         distance: threatDistance(th, world.pos),
         chasing: th.chasing,
         hp: hpText(th),
+        ...levelFields(world, th),
       })),
       remembered: rememberedView(world, dist, remembered),
       encounter: encounterFacts(world, threats)?.facts ?? null,
