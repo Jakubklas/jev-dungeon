@@ -460,11 +460,13 @@ The Jev API client: hedging, retries, timeout, model.
 
 ## decision
 
-Decision provider: hosted Jev or local Laya.
+Decision provider: hosted Jev, local Laya or OpenAI Decisions.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
-| `decision.provider` | "jev" | jev / laya | live | no | Decision provider: hosted Jev or local Laya; no automatic fallback |
+| `decision.provider` | "jev" | jev / laya / openai | live | no | Decision provider: hosted Jev, local Laya or OpenAI Decisions; no automatic fallback |
+| `decision.openai.model` | "gpt-6-luna" | /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$/ | live | no | Model sent to the OpenAI Decisions API; requires OPENAI_API_KEY |
+| `decision.openai.timeoutMs` | 30000 | 1000..120000 | live | no | OpenAI Decisions timeout per request, ms; one copy and no retries or fallback |
 | `decision.laya.endpoint` | "http://127.0.0.1:8000/v1/systemone" | /^http://(127\.0\.0\.1\|localhost\|\[::1\])(:[0-9]{1,5})?/[A-Za-z0-9/_-]+$/ | live | no | Local Laya systemone endpoint; only HTTP loopback URLs are accepted |
 | `decision.laya.model` | "multilingual" | /^[a-zA-Z0-9][a-zA-Z0-9/._-]{0,199}$/ | live | no | Model name sent to the local Laya service |
 | `decision.laya.headMaxLen` | 1024 | 256..8192 | live | no | Local Laya token limit for instructions and option descriptions; upstream default is 256 |

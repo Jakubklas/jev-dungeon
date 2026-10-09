@@ -2357,7 +2357,7 @@ async function loadModels() {
     const response = await fetch('api/config');
     const config = await response.json();
     if (!response.ok) throw new Error(config.error || `HTTP ${response.status}`);
-    if (!['jev', 'laya'].includes(config.values?.decisionProvider)) throw new Error('Restart this arena server to enable model selection.');
+    if (!['jev', 'laya', 'openai'].includes(config.values?.decisionProvider)) throw new Error('Restart this arena server to enable model selection.');
     selectedModel = config.values.decisionProvider;
     modelSelect.value = selectedModel;
     modelSelect.disabled = false;

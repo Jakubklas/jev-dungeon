@@ -587,10 +587,13 @@ limits:
   priorityLine: 300 # Longest character priority line sent to Jev
 
 # The Jev API client: hedging, retries, timeout, model.
-# Decision backend. Switch provider to jev to use the hosted API and JEV_API_KEY.
+# Decision backend: jev (JEV_API_KEY), laya (local) or openai (OPENAI_API_KEY).
 # Local Laya uses one request, no API key, and never falls back to hosted Jev.
 decision:
   provider: laya
+  openai:
+    model: gpt-6-luna
+    timeoutMs: 30000
   laya:
     endpoint: http://127.0.0.1:8000/v1/systemone
     model: multilingual

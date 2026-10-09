@@ -1,5 +1,6 @@
-// Talks to hosted Jev or local Laya. Hosted requests are hedged: copy 0 goes at once, each further copy (HEDGE in all) only if no answer has
+// Talks to hosted Jev, local Laya or OpenAI Decisions. Jev requests are hedged: copy 0 goes at once, each further copy (HEDGE in all) only if no answer has
 // come after HEDGE_DELAY_MS, so a normal call costs one request and only a slow one gets a second; the first answer wins, the rest are aborted and each copy retries rate limits and network errors with backoff.
+import { askOpenAIDecider } from './openai-decider.js';
 const API = 'https://api.typesafe.ai/v1/systemone';
 let HEDGE = 2; // copies of a request that may be in flight (jev.hedgeCopies)
 let HEDGE_DELAY_MS = 800; // measured: a call takes ~250 ms, the slow tail is 1-4 s; a second copy only pays for the tail
@@ -8,6 +9,8 @@ let RETRIES = 3;
 let TIMEOUT_MS = 20_000;
 let MODEL = 'jev-latest';
 let PROVIDER = 'jev';
+let OPENAI_MODEL = 'gpt-6-luna';
+let OPENAI_TIMEOUT_MS = 30_000;
 let LAYA_ENDPOINT = 'http://127.0.0.1:8000/v1/systemone';
 let LAYA_MODEL = 'multilingual';
 let LAYA_MAX_LEN = 8192;
@@ -24,6 +27,7 @@ export function validateLayaEndpoint(endpoint) {
 
 export function validateDecisionCredentials() {
   if (PROVIDER === 'jev' && !process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is required for decision.provider=jev');
+  if (PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required for decision.provider=openai');
 }
 
 // Sends one copy, retrying 429/529 and network errors until it succeeds, gives up,
@@ -60,6 +64,10 @@ async function sendCopy(body, abort, copy, transport) {
 // `body` may be passed pre-serialized (the brain does, so it can keep the exact string it sent).
 export async function askJev(state, questions, body = JSON.stringify({ model: jevModel(), state, questions })) {
   validateDecisionCredentials();
+  if (PROVIDER === 'openai') {
+    const request = JSON.parse(body);
+    return askOpenAIDecider(request.state, request.questions, { model: OPENAI_MODEL, timeoutMs: OPENAI_TIMEOUT_MS });
+  }
   const local = PROVIDER === 'laya';
   // Local inference controls are added at the transport boundary; hosted bytes stay unchanged.
   if (local) body = JSON.stringify({ ...JSON.parse(body), max_len: LAYA_MAX_LEN, head_max_len: LAYA_HEAD_MAX_LEN });
@@ -100,13 +108,15 @@ export function shuffle(items) {
 }
 
 // The model name the brains put in their request bodies.
-export const jevModel = () => PROVIDER === 'laya' ? LAYA_MODEL : MODEL;
+export const jevModel = () => PROVIDER === 'openai' ? OPENAI_MODEL : PROVIDER === 'laya' ? LAYA_MODEL : MODEL;
 // Central config hook. Hosted credentials never go to the local endpoint.
 export function configureJev(o) {
   if (o.decisionProvider !== undefined) {
-    if (!['jev', 'laya'].includes(o.decisionProvider)) throw new Error('Unknown decision provider');
+    if (!['jev', 'laya', 'openai'].includes(o.decisionProvider)) throw new Error('Unknown decision provider');
     PROVIDER = o.decisionProvider;
   }
+  if (o.openaiDecisionModel !== undefined) OPENAI_MODEL = o.openaiDecisionModel;
+  if (o.openaiDecisionTimeoutMs !== undefined) OPENAI_TIMEOUT_MS = o.openaiDecisionTimeoutMs;
   if (o.layaEndpoint !== undefined) LAYA_ENDPOINT = validateLayaEndpoint(o.layaEndpoint);
   if (o.layaHeadMaxLen !== undefined) LAYA_HEAD_MAX_LEN = o.layaHeadMaxLen;
   if (o.layaMaxLen !== undefined) LAYA_MAX_LEN = o.layaMaxLen;
@@ -119,4 +129,4 @@ export function configureJev(o) {
   if (o.jevRetryStatus !== undefined) RETRY_STATUS = new Set(o.jevRetryStatus);
   if (o.jevModel !== undefined) MODEL = o.jevModel;
 }
-export const jevSnapshot = () => ({ decisionProvider: PROVIDER, layaEndpoint: LAYA_ENDPOINT, layaModel: LAYA_MODEL, layaMaxLen: LAYA_MAX_LEN, layaHeadMaxLen: LAYA_HEAD_MAX_LEN, layaTimeoutMs: LAYA_TIMEOUT_MS, jevHedgeCopies: HEDGE, jevHedgeDelayMs: HEDGE_DELAY_MS, jevRetries: RETRIES, jevTimeoutMs: TIMEOUT_MS, jevRetryStatus: [...RETRY_STATUS], jevModel: MODEL });
+export const jevSnapshot = () => ({ decisionProvider: PROVIDER, openaiDecisionModel: OPENAI_MODEL, openaiDecisionTimeoutMs: OPENAI_TIMEOUT_MS, layaEndpoint: LAYA_ENDPOINT, layaModel: LAYA_MODEL, layaMaxLen: LAYA_MAX_LEN, layaHeadMaxLen: LAYA_HEAD_MAX_LEN, layaTimeoutMs: LAYA_TIMEOUT_MS, jevHedgeCopies: HEDGE, jevHedgeDelayMs: HEDGE_DELAY_MS, jevRetries: RETRIES, jevTimeoutMs: TIMEOUT_MS, jevRetryStatus: [...RETRY_STATUS], jevModel: MODEL });

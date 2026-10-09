@@ -466,6 +466,15 @@ const resetProvider = JV.jevSnapshot();
 check(resetProvider.decisionProvider === 'jev' && resetProvider.layaEndpoint === 'http://127.0.0.1:8000/v1/systemone' && resetProvider.layaModel === 'multilingual' && resetProvider.layaMaxLen === 8192 && resetProvider.layaHeadMaxLen === 1024 && resetProvider.layaTimeoutMs === 120000 && JV.jevModel() === 'jev-latest', 'removing provider knobs restores hosted defaults and all local defaults');
 
 // 6i. CONFIG.md is generated from the registry and must be current
+writeFileSync(cfg, 'decision: { provider: openai, openai: { model: gpt-6-luna, timeoutMs: 45000 } }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(JV.jevSnapshot().decisionProvider === 'openai' && JV.jevSnapshot().openaiDecisionTimeoutMs === 45000 && JV.jevModel() === 'gpt-6-luna', 'OpenAI provider and timeout follow the file live');
+writeFileSync(cfg, 'explorer: { lives: 2 }\n');
+await new Promise((r) => setTimeout(r, 20));
+await S.refresh();
+check(JV.jevSnapshot().decisionProvider === 'jev' && JV.jevSnapshot().openaiDecisionModel === 'gpt-6-luna' && JV.jevSnapshot().openaiDecisionTimeoutMs === 30000, 'removing OpenAI knobs restores the provider and OpenAI defaults');
+
 check(readFileSync(fileURLToPath(new URL('../CONFIG.md', import.meta.url)), 'utf8') === L.docsMarkdown(), 'CONFIG.md is up to date (run: node scripts/config.mjs docs --write)');
 
 // 7. userSetting: every category has the flag, the scope shows only flagged knobs
