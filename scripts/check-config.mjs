@@ -111,6 +111,7 @@ for (const k of R.KNOBS) {
 
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
+  regenSteps: D.REGEN_STEPS, regenAmount: D.REGEN_AMOUNT,
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
   torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
   bigMinRun: CAT.BIG_MIN_RUN, bigChance: CAT.BIG_CHANCE, clusterSizeMin: CAT.CLUSTER_SIZE_MIN, clusterSizeMax: CAT.CLUSTER_SIZE_MAX, clusterPerCells: CAT.CLUSTER_PER_CELLS,

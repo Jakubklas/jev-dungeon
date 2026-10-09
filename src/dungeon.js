@@ -17,6 +17,8 @@ export let LOOP_SHARE = 0.25; // extra loop corridors as a share of the rooms ..
 export let LOOP_MIN = 2; // ... and at least this many
 export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
 export let EXPLORER_LIVES = 2; // lives the explorer starts with
+export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
+export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 
 // Settings hook (src/settings.js). Light radius, lives, size range and room area only matter to a game
@@ -27,6 +29,8 @@ export function configureWorld(o) {
   if (o.minSize !== undefined) MIN_SIZE = o.minSize;
   if (o.maxSize !== undefined) MAX_SIZE = o.maxSize;
   if (o.lives !== undefined) EXPLORER_LIVES = o.lives;
+  if (o.regenSteps !== undefined) REGEN_STEPS = o.regenSteps;
+  if (o.regenAmount !== undefined) REGEN_AMOUNT = o.regenAmount;
   if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
   if (o.roomMin !== undefined) ROOM_MIN = o.roomMin;
   if (o.roomMax !== undefined) ROOM_MAX = o.roomMax;
@@ -51,6 +55,7 @@ export const STAY = 'stay';
 const STEPS = Object.values(DIRS);
 const key = ([x, y]) => `${x},${y}`;
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
+const round2 = (n) => Math.round(n * 100) / 100; // health can be fractional (regen); keep it free of float noise
 const inBounds = (dungeon, [x, y]) => x >= 0 && x < dungeon.width && y >= 0 && y < dungeon.height;
 
 // mulberry32: small seeded PRNG so a seed always rebuilds the same dungeon.
@@ -301,6 +306,7 @@ export class Game {
     this.caughtBy = null;
     this.health = EXPLORER_LIVES;
     this.maxHealth = EXPLORER_LIVES;
+    this.regenAt = null; // the step of the last regen heal (Run.playTurn turns it into a `regen` event)
     this.graceTicks = 0; // ticks of hit protection left (adversary.js GRACE_TICKS counts it down)
     this.trail = [[...dungeon.start]];
     this.adversaries = [];
@@ -330,7 +336,7 @@ export class Game {
   // No-op once won or lost. Returns the state after the hit.
   damage(amount = 1, sourceId = null) {
     if (this.won || this.lost) return { health: this.health, lost: this.lost };
-    this.health = Math.max(0, this.health - amount);
+    this.health = Math.max(0, round2(this.health - amount));
     if (this.health === 0) {
       this.lost = true;
       this.caughtBy = sourceId;
@@ -375,7 +381,8 @@ export class Game {
   applyMove(dir) {
     if (dir === STAY && !this.won && !this.lost) {
       this.steps++;
-      return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won };
+      const regen = this.regenerate();
+      return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won, regen };
     }
     if (this.won || this.lost || !this.legalMoves().includes(dir)) {
       return { moved: false, revealed: 0, revisit: false, won: this.won };
@@ -397,12 +404,24 @@ export class Game {
     let healed = 0;
     if (this.health < this.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
       this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
-      this.health++;
-      healed = 1;
+      healed = round2(Math.min(this.maxHealth, this.health + 1) - this.health); // a fractional health never goes above max
+      this.health = round2(this.health + healed);
     }
+    const regen = this.regenerate();
     this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
     if (this.won) this.winBy = 'chest';
-    return { moved: true, revealed, revisit, won: this.won, coins: here, healed };
+    return { moved: true, revealed, revisit, won: this.won, coins: here, healed, regen };
+  }
+
+  // Slow natural healing: every REGEN_STEPS steps a hurt, living explorer gets REGEN_AMOUNT lives back, up to max.
+  // Called by applyMove after the step is counted (a stay counts too). Returns the lives healed (0 if none).
+  regenerate() {
+    if (!REGEN_STEPS || !REGEN_AMOUNT || this.steps % REGEN_STEPS !== 0) return 0;
+    if (this.won || this.lost || this.health >= this.maxHealth) return 0;
+    const gained = round2(Math.min(this.maxHealth, this.health + REGEN_AMOUNT) - this.health);
+    this.health = round2(this.health + gained);
+    this.regenAt = this.steps;
+    return gained;
   }
 
   // Known = lit. Cells past the map edge are rock: known once lit, unknown otherwise,

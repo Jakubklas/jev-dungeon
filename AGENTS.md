@@ -321,6 +321,10 @@ Rare, fixed pickups that restore one life (built on the heart sprite and the tes
 - **Explorer (fog-safe)**: `KnownWorld.seenHearts()` returns lit hearts only. Only while hurt does Jev hear of hearts: `surroundings.hearts` (nearest two, direction and distance), the move facts `Picks up a heart: restores a life.` / `Toward a seen heart (N steps after this).` and one `next_move` priority line. At full lives requests are byte-identical to before.
 - **The `heal` approach** (perception.js `heartTarget`, `needsHeart`): offered in reviews only while a heart is reachable and the explorer is hurt. In the brain a quiet tick (no enemy in sight, no directive, not leaving, not in a tactic) switches to it by code, with no call: at half the lives or fewer for any reachable heart, above half for one within `HEAL_NEAR` = 12 known-path steps. It ends (back to `nearest_frontier`, no `plan.tried` row) when lives are full or no heart is reachable. A tactic parks it like any approach. Check: `scripts/check-hearts.mjs`.
 
+## Regen (natural healing)
+
+A hurt, living explorer heals `REGEN_AMOUNT` (0.5) lives every `REGEN_STEPS` (30) steps of `game.steps` (a stay counts), never above `maxHealth` (`Game.regenerate`, called from `applyMove`; dungeon.js `export let`s set by `configureWorld`). Knobs `explorer.regen.steps` (0 = off) / `explorer.regen.amount` (file-only, `live`). **Health can be fractional** (`1.5`): `damage` and hearts round to 2 decimals, a heart heals at most up to max (`healed` may be 0.5), the loss is still at exactly 0. `applyMove` returns `regen` (lives healed, 0 if none) and sets `game.regenAt`; `Run.playTurn` emits `{ id: 'explorer', type: 'regen', at, health }` (a `heart` event now fires only when a heart pile was taken). Jev reads only the fractional `self.lives`; no rules sentence mentions regen. The pane draws a half-filled heart. Check: `scripts/check-regen.mjs` (free).
+
 ## Victory
 
 Two ways to win, recorded in `game.winBy` (`'chest'` | `'cleared'`, `null` while playing) and sent as `view().won_by`:

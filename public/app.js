@@ -1604,7 +1604,7 @@ function renderSkills() {
   }
 }
 
-// 8-bit hearts: one per life, filled while it lasts.
+// 8-bit hearts: one per life, filled while it lasts (half filled for a half life left by regen).
 const HEART_ROWS = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
 function renderHearts() {
   const max = game?.max_health ?? 0, hp = game?.health ?? 0;
@@ -1613,11 +1613,13 @@ function renderHearts() {
   for (let i = 0; i < max; i++) {
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 7 6');
-    svg.setAttribute('class', i < hp ? 'full' : 'empty');
+    const part = Math.min(1, Math.max(0, hp - i)); // regen can leave a fractional life: a half heart fills its left half
+    svg.setAttribute('class', part >= 1 ? 'full' : 'empty');
     HEART_ROWS.forEach((row, y) => [...row].forEach((c, x) => {
       if (c !== 'X') return;
       const r = document.createElementNS(NS, 'rect');
       r.setAttribute('x', x); r.setAttribute('y', y); r.setAttribute('width', 1); r.setAttribute('height', 1);
+      if (part > 0 && part < 1 && x < Math.round(7 * part)) r.setAttribute('class', 'on');
       svg.append(r);
     }));
     svgs.push(svg);
@@ -1767,7 +1769,7 @@ function renderDanger() {
   $('danger').className = status === 'safe' ? 'muted' : '';
 
   $('events').replaceChildren(...eventLog.map((e) => {
-    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop', 'heart'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
+    const li = el('li', `${e.text} `, ['caught', 'hit', 'strike', 'blocked', 'dispelled', 'struck', 'bump', 'coin', 'coin_drop', 'heart', 'regen'].includes(e.type) ? e.type : e.type.startsWith('brain_') || e.type === 'decision' ? e.type : '');
     li.append(el('span', `(step ${e.step})`));
     return li;
   }));
@@ -1791,6 +1793,7 @@ const EVENT_TEXT = {
   bump: (id) => `${id} bumped Jev`,
   coin_drop: (id) => `${id} dropped a coin`,
   heart: () => 'Jev picked up a heart: one life back',
+  regen: (id, e) => `Jev healed a little — ${lives(e.health)}`,
   coin: (id, e) => `Jev picked up a coin${Number.isFinite(e.total) ? ` (${e.total})` : ''}`,
   alerted: (id, e) => `${id} heard ${e.by}'s call and joins the hunt`,
   brain_on: (id, e) => `${id} brain on${e.reason ? `: ${e.reason}` : ''}`,
