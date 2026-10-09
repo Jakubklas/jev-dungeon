@@ -43,7 +43,7 @@ const TX = await import('../src/config/texts.js');
 const TH = await import('../public/thoughts.js');
 const appSrc = readFileSync(fileURLToPath(new URL('../public/app.js', import.meta.url)), 'utf8');
 // The browser's timing constants, read from app.js itself: the registry default must be the literal the page falls back to.
-const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', fireMs: 'FIRE_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
+const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', fireMs: 'FIRE_MS', fireCallMs: 'FIRE_CALL_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
 const uiLiteral = (name) => { const m = new RegExp(`\\b${name} = (\\.?[0-9][0-9._]*)`).exec(appSrc); return m ? Number(m[1].replace(/_/g, '')) : undefined; };
 const { eq } = L;
 const { generateDungeon } = D;
@@ -86,7 +86,7 @@ const OLD = [
   ['maxHearts', 6, 'next'],
   ['coinDropChance', 0.6, 'next'],
   ['stunTicks', 2, 'next'],
-  ['lives', 2, 'next'],
+  ['lives', 4, 'next'],
   ['lightRadius', 7, 'next'],
   ['minSize', 25, 'next'],
   ['maxSize', 90, 'next'],

@@ -307,7 +307,7 @@ function fightFacts(world, th, { damage, only, steady = false }, alone) {
   const n = Math.max(1, Math.ceil(th.hp / damage));
   const weak = matchup(world, th, damage) === 'weak';
   return `${plural(n, 'strike')} dispel${n === 1 ? 's' : ''} it.` +
-    `${only ? ' Dispelling it may clear the dungeon (a win).' : ''}` +
+    ' Dispelling it permanently removes this enemy; it cannot pursue you again.' +
     `${weak ? ` A weak target: it would take ${Math.ceil(world.health / th.clawDamage)} claws to kill you.` : ''}` +
     `${levelFact(world, th)}`;
 }

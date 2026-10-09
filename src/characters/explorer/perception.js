@@ -36,18 +36,18 @@ export const APPROACHES = {
   far_side: { text: 'Travel to the part of the dungeon farthest from where the explorer has already been.', thought: "Let's try the far side of this place." },
   collect_coins: { text: 'Go for the best seen pile of coins: coins are the score, so a detour for them can pay.', thought: 'Coins! Worth the detour.', needsCoins: true },
   heal: { text: 'Go for the nearest seen heart: it restores a life, and you are hurt.', thought: 'A heart! I need that.', needsHeart: true },
-  go_to_exit: { text: 'The portal has been seen: walk the shortest known path to it and leave.', thought: 'The portal! Time to leave.', needsExit: true },
+  go_to_exit: { text: 'Win through the seen portal: follow the shortest known path, clearing enemies in the way or slipping past them.', thought: 'The portal! Go for the win.', needsExit: true },
   slip_past: {
     text: 'Slip past the enemy: follow a known route around it toward unexplored space, never letting it closer than the minimum gap, using the speed edge.',
     thought: 'I can slip past!', tactic: true, brief: 'Slip past it along a known route, keeping the minimum gap.',
   },
-  run_away: { text: 'Pull back for now: get clear of the enemy, keep escape routes open, avoid dead ends, and come back for the loot once you have regrouped.', thought: 'Run away!', tactic: true, brief: 'Pull back for now: get clear, regroup, come back later.' },
+  run_away: { text: 'Pull back to recover or reposition, keeping escape routes open; then resume advancing toward the portal. Retreat alone cannot win.', thought: 'Regroup, then press forward.', tactic: true, brief: 'Pull back to recover or reposition, then advance again.' },
   engage: {
     text: 'Engage: fight the enemy with the sword: let a hunting one step next to you and strike first, close in on one you stunned, until it is dispelled or the way is clear.',
     thought: 'Have at you!', tactic: true, brief: 'Fight it with the sword: let it step in, strike first.',
   },
   hide: { text: "Duck out of sight: reach a known cell outside the enemy's line of sight before it gets there.", thought: 'Duck out of sight.', tactic: true, brief: 'Get out of its line of sight before it arrives.' },
-  race_to_exit: { text: 'Race the enemy to the seen portal along the known path, staying out of its reach.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Race it to the seen portal along the known path.' },
+  race_to_exit: { text: 'Win by reaching the seen portal along the known path before the enemy can stop you.', thought: 'Go for the portal!', tactic: true, needsExit: true, brief: 'Reach the seen portal along the known path and win.' },
   carry_on: { text: 'The enemy is patrolling and has not seen the explorer: keep exploring, but stay out of its sight.', thought: "It hasn't seen me, keep going.", tactic: true, brief: 'It has not seen you: keep exploring out of its sight.' },
 };
 export const TACTICS = Object.keys(APPROACHES).filter((id) => APPROACHES[id].tactic);
@@ -257,7 +257,15 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
   }
 
   if (approachId === 'collect_coins') return coinTarget(world, dist, avoid);
-  if (approachId === 'heal') return heartTarget(world, dist, avoid);
+  if (approachId === 'heal') {
+    if (world.health >= world.maxHealth) return null;
+    // A heart is a deliberate recovery trip. Keep its destination while it is still lit and
+    // reachable, rather than replacing it with whichever heart happens to score best next tick.
+    if (goal && !sameCell(goal, world.pos) && dist.has(goal) && world.seenHearts().some((c) => sameCell(c, goal))) {
+      return { cell: [...goal], steps: dist.get(goal), why: `Seen heart to the ${compass(world.pos, goal)}, ${plural(dist.get(goal), 'step')} away.` };
+    }
+    return heartTarget(world, dist, avoid);
+  }
 
   const frontier = reachableFrontier(world, dist);
 
@@ -273,6 +281,11 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
     return { ...near, why: `No fully known path to the portal yet; this edge of the known map is closest to it, ${plural(near.steps, 'step')} away.` };
   }
 
+  // Keep an exploration destination through a temporary encounter. Reaching it may reveal
+  // enough that it stops being a frontier; only then do we choose a new edge.
+  if (goal && !sameCell(goal, world.pos) && dist.has(goal) && isFrontier(world, goal) && !avoid?.has(key(goal))) {
+    return { cell: [...goal], steps: dist.get(goal), why: `Chosen edge of the known map to the ${compass(world.pos, goal)}, ${plural(dist.get(goal), 'step')} away.` };
+  }
   if (!frontier.length) return null;
   const open = avoid?.size ? frontier.filter((f) => !avoid.has(key(f.cell))) : frontier;
   const cands = open.length ? open : frontier;
@@ -312,11 +325,12 @@ function hereKind(world) {
 // closing in is the point).
 // `fight` ({ damage, only }, the brain's): engage's fact then says the fight in numbers (see engageTarget).
 let HEART_RUN_GAP = 2; // the route to the heart keeps this many steps from every enemy (as run_away's ESCAPE_KEEP_GAP)
-// `retreat` false (the mid and high confidence tiers): Jev leans on any safe option it is shown, so pulling back (run_away, hide,
-// race_to_exit) is left off the menu while a forward tactic (engage, slip_past, carry_on) is open. With no forward tactic, or
+// `retreat` false (the mid and high confidence tiers): Jev leans on any safe option it is shown, so pulling back
+// (run_away, hide) is left off the menu while a forward tactic (engage, slip_past, carry_on) is open.
+// The portal remains a winning tactic. With no forward tactic, or
 // `cornered` (cornerMode), nothing is trimmed.
 const FORWARD_TACTICS = ['engage', 'slip_past', 'carry_on'];
-const RETREAT_TACTICS = ['run_away', 'hide', 'race_to_exit'];
+const RETREAT_TACTICS = ['run_away', 'hide'];
 export function tacticFeasibility(world, minGap = DEFAULT_MIN_GAP, { exclude = null, armed = false, stunned = null, fight = null, panic = false, heartRun = false, retreat = true, cornered = null } = {}) {
   const threats = threatsOf(world);
   if (!threats.length) return {};
@@ -507,10 +521,10 @@ const bumpSentence = () => 'Steps into the enemy: only bumps it back, no life lo
 
 // What an adversary next to you can do: strike with its claw (costs a life; the last one ends the game), or
 // nothing while the hit protection after an earlier hit lasts. Fog-safe: no cooldown or hit points of the ghost.
-function clawSentence(world) {
+function clawSentence(world, damage = 1) {
   if (world.graceLeft > 0) return 'An adjacent enemy can strike you, but no life is lost while your hit protection lasts.';
-  if (world.health <= 1) return 'An adjacent enemy can strike you: costs your last life and the game is lost.';
-  return `An adjacent enemy can strike you (costs 1 life, ${world.health - 1} of ${world.maxHealth} left).`;
+  if (world.health <= damage) return `An adjacent enemy can strike you: its claw costs ${damage} ${damage === 1 ? 'life' : 'lives'} and ends the game.`;
+  return `An adjacent enemy can strike you (costs ${damage} ${damage === 1 ? 'life' : 'lives'}, ${world.health - damage} of ${world.maxHealth} left).`;
 }
 
 // Threat sentences for one move, one per visible adversary.
@@ -528,7 +542,7 @@ function threatSentences(world, threats, dest, minGap) {
     if (after > before) facts.push(`Moves away from ${who} ${gap}.`);
     else if (after < before) facts.push(`Moves toward ${who} ${gap}.`);
     else facts.push(`Keeps the same distance from ${who} ${gap}.`);
-    if (th.chasing && after <= 1) facts.push(clawSentence(world)); // a hunting ghost next to you strikes with its claw
+    if (th.chasing && after <= 1) facts.push(clawSentence(world, th.clawDamage ?? 1)); // a hunting ghost next to you strikes with its claw
   }
   return facts;
 }
@@ -588,8 +602,10 @@ export function describeMoves(world, approachId, opts = {}) {
 // The same facts split in two: `shared` (threats, sightings, portal, reveal, visits, dead ends: they do
 // not depend on the approach) and `target` (progress toward this approach's target). A move that wins
 // has only `whole`. Several tactics asked about the same position can then share one copy of `shared`.
-export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false, breakout = null, noGapWarn = false } = {}) {
-  const target = approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned, breakout });
+export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP, goal = null, targetOverride = null, avoid = null, exclude = null, remembered = [], prev = null, backAndForth = 0, stunned = null, multiHold = false, breakout = null, noGapWarn = false } = {}) {
+  // A decision tick evaluates tactics once. Reuse that exact observed target for its move
+  // options so the selected tactic cannot lose its target between the two prompt sections.
+  const target = targetOverride ?? (approachId === 'go_to_exit' ? null : approachTarget(world, approachId, { minGap, goal, avoid, exclude, remembered, stunned, breakout }));
   const warnGap = noGapWarn ? 0 : minGap; // cornered: no "below your minimum gap" warnings
   const toTarget = target ? knownDistances(world, target.cell) : null;
   const t = world.seenTreasure();

@@ -196,7 +196,7 @@ The knight: lives and protection after a hit.
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
 | `explorer.graceTicks` | 4 | 0..12 | live | no | Steps of protection after the explorer is hit |
-| `explorer.lives` | 2 | 1..9 | next | yes | Lives the explorer starts with |
+| `explorer.lives` | 4 | 1..9 | next | yes | Lives the explorer starts with |
 | `explorer.regen.steps` | 30 | 0..200 | live | no | Steps between natural heals of a hurt explorer (0 = no regen) |
 | `explorer.regen.amount` | 0.5 | 0..3 | live | no | Lives healed per natural heal (fractions allowed, up to max lives) |
 | `explorer.skills` | ["sword_strike","shield_block","fire_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
@@ -455,6 +455,7 @@ Browser timings and thought-bubble lines (served at api/ui).
 | `ui.strikeMs` | 800 | 100..4000 | live | no | Strike overlay duration, ms |
 | `ui.slashMs` | 340 | 50..2000 | live | no | Slash crescent duration, ms |
 | `ui.fireMs` | 1490 | 200..5000 | live | no | Fire strike blast duration (18 frames), ms |
+| `ui.fireCallMs` | 550 | 0..3000 | live | no | How long the explorer's 'Fire Strike!' shout shows before the blast, ms |
 | `ui.revealAlpha` | 0.42 | 0.1..1 | live | no | Opacity of cells and monsters shown by Reveal map |
 | `ui.bubbleIn` | 200 | 0..2000 | live | no | Thought bubble fade-in, ms |
 | `ui.bubbleOut` | 400 | 0..3000 | live | no | Thought bubble fade-out, ms |

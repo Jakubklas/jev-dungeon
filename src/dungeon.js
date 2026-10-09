@@ -16,7 +16,7 @@ export let MIN_ROOMS = 4; // fewest rooms a map gets (a layout with fewer is red
 export let LOOP_SHARE = 0.25; // extra loop corridors as a share of the rooms ...
 export let LOOP_MIN = 2; // ... and at least this many
 export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
-export let EXPLORER_LIVES = 2; // lives the explorer starts with
+export let EXPLORER_LIVES = 4; // lives the explorer starts with
 export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus loops; 'linear': one winding path of rooms to the portal, with side rooms
 export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
 export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
