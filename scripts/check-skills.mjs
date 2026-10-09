@@ -404,10 +404,10 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     check(/claw costs 2 lives/.test(await rulesOf()), 'rules: the claw damage follows the clawDamage setting');
   } finally { configureSkills(before); }
 
-  // b. Engage's fact: strikes needed from the visible hp; the clear sentence only for the one ghost ever seen.
+  // b. Engage facts explain visible combat and permanent removal without promising a win.
   const solo = await withBrain(hunting(arena(ROOM)), async (b, calls) => { await b.takeTurn(); return tacticOf(calls); });
   check(solo?.engage && /2 strikes dispel it\./.test(solo.engage) && !/at most one claw/.test(solo.engage), `engage fact has the strikes and no claw claim (${solo?.engage})`);
-  check(/Dispelling it may clear the dungeon \(a win\)\./.test(solo?.engage ?? ''), 'engage fact: a lone adversary may clear the dungeon');
+  check(!/clear the dungeon|a win|cleared win/.test(solo?.engage ?? '') && /permanent|gone for good|pursuer/.test(solo?.engage ?? ''), 'engage fact: permanent removal, never a clearing win');
   // Twin: a second ghost sealed away and never seen changes nothing.
   const SEALED = ['#############', '#...........#', '#...........#', '#..@...A....#', '#...........#', '#...........#', '#############', '#...........#', '#.....A.....#', '#############'];
   const lone = await withBrain(hunting(arena(SEALED.map((r, i) => (i > 5 ? r.replace('A', '.') : r)))), async (b, calls) => { await b.takeTurn(); return dump(calls); });
@@ -427,7 +427,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     check(!/may drop a coin|pays a coin/.test(prio ?? 'pays a coin'), `coinDropChance 0: the tactic priorities promise no coin (${prio})`);
   } finally { configureSkills(before); }
   {
-    // A ghost the explorer dispelled no longer counts: the lone survivor in sight may still clear the dungeon.
+    // Dispelling one ghost never makes the survivor a claimed winning objective.
     const g = hunting(arena(TWO));
     const dir = mkdtempSync(join(tmpdir(), 'jev-check-'));
     const calls = [];
@@ -451,7 +451,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
       const n = calls.length;
       await brain.takeTurn();
       const t = tacticOf(calls.slice(n));
-      check(/clear the dungeon/.test(t?.engage ?? ''), `after dispelling a1, the lone a2 in sight may clear the dungeon (${t?.engage})`);
+      check(t?.engage && !/clear the dungeon|a win|cleared win/.test(t.engage), `after dispelling a1, no false win claim for a2 (${t?.engage})`);
     } finally { Math.random = rnd; rmSync(dir, { recursive: true, force: true }); }
   }
   {

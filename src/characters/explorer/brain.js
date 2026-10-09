@@ -67,70 +67,70 @@ export const SENTIMENTS = {
   // Low tier (C <= 35). Panic is entered by code below C 20 and never offered to Jev; its gap is ignored in spirit (1).
   panic: {
     min_gap: 1, end_ticks: 8,
-    move_priority: 'Panic: get away at any cost; nothing else matters.',
+    move_priority: 'Panic: escape danger; resume the portal route.',
     when: 'Entered by code when confidence collapses; never offered as a choice.',
-    priority: 'Panic: get away at any cost. Only a clear path matters: ignore coins, claws and fights, and keep running from every enemy. Strike only an enemy that blocks the only way.',
-    note: 'Flees at any cost: only the way out matters.',
+    priority: 'Panic: escape danger, ignoring coins and optional fights. Strike a blocker; reach the portal to win.',
+    note: 'Escapes immediate danger to continue toward the portal.',
     skill_priority: 'Strike only an enemy that blocks your only way; otherwise keep running.',
   },
   wary: {
     min_gap: 4, end_ticks: 5,
-    move_priority: 'Wary: never move toward an enemy; grow the distance, keep exits open, avoid dead ends.',
-    when: 'Upside: gets you out alive. Risk: gives up coins and progress. Offered when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by.',
-    priority: 'Wary: getting away comes first. Never move toward an enemy; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it.',
-    note: 'Gets away first: runs, hides, never moves toward an enemy.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.',
+    move_priority: 'Wary: recover, then advance to the portal.',
+    when: 'Upside: recover to advance. Risk: enemies keep hunting. Pick with low confidence, last life or no sword near a chaser.',
+    priority: 'Wary: keep 4 steps when possible; heal, ready the sword or reposition, then advance. Distance alone is not progress.',
+    note: 'Recovers or repositions, then resumes forward progress.',
+    skill_priority: 'Strike adjacent enemies if ready to buy distance; else block an incoming claw.',
   },
   guarded: {
     min_gap: 3, end_ticks: 4,
-    move_priority: 'Guarded: explore away from enemies; skip loot and fights.',
-    when: 'Upside: keeps exploring while staying clear of trouble. Risk: misses loot and fights. Pick when `self.confidence` is low but you are not running: an enemy is known and fighting it looks bad, or nothing else fits.',
-    priority: 'Guarded: explore, but away from known enemies. Skip loot that lies near one, avoid fights, keep at least 3 steps from enemies and favour well-connected ground over dead ends.',
-    note: 'Explores away from enemies; no detours, no fights.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.',
+    move_priority: 'Guarded: find a workable advance.',
+    when: 'Upside: less exposure. Risk: avoidance stalls progress. Pick with low confidence when a fight looks bad.',
+    priority: 'Guarded: advance toward the portal, keeping 3 steps when possible. Skip optional loot; slip past or regroup for blockers.',
+    note: 'Seeks a workable advance; regrouping prepares the next attempt.',
+    skill_priority: 'Strike adjacent enemies if ready to buy distance; else block an incoming claw.',
   },
   // Midlow tier (36..49): the one middle tier that pulls back. A retreat for a while, not for good.
   cautious: {
     min_gap: 4, end_ticks: 4,
-    move_priority: 'Cautious: pull back for now; keep your distance, then come back for the loot.',
-    when: 'Upside: lives to fight again: pull back, regroup (hit protection, the sword ready), come back for the loot. Risk: the enemy keeps hunting and the coins wait. Pick when a fight went badly or you are hurt.',
-    priority: 'Cautious: pull back for a while. Keep at least 4 steps from enemies and regroup, then return to the loot; fight a hurt monster or when cornered.',
-    note: 'Pulls back for a while to regroup (to a seen heart if hurt), then returns for the loot.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
+    move_priority: 'Cautious: regroup, then resume the route.',
+    when: 'Upside: a better fight and renewed progress. Risk: enemies keep hunting. Pick when hurt; retreat must improve the next attempt.',
+    priority: 'Cautious: heal, ready the sword or reposition, keeping 4 steps if possible; return to the route. Repeated retreat without recovery fails.',
+    note: 'Regroups (to a seen heart if hurt), then resumes the interrupted route.',
+    skill_priority: 'Strike adjacent enemies if ready; else block an incoming claw.',
   },
   // Midlow and mid tiers (36..69).
   steady: {
     min_gap: 3, end_ticks: 4,
-    move_priority: 'Steady: follow the plan; favour well-connected ground over dead ends.',
-    when: 'Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits: a plan to follow, no coins in sight, little left to explore nearby; not to dodge a fight.',
-    priority: 'Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready.',
-    note: 'Sticks to the plan: explores, coins on the way, fights a single or hurt monster.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.',
+    move_priority: 'Steady: advance; clear manageable enemies.',
+    when: 'Upside: progress without detours. Risk: fights cost lives. Pick to follow the route and clear manageable obstacles.',
+    priority: 'Steady: explore toward the portal; take coins on the way. Clear manageable enemies; distance prepares a fight, not endless avoidance.',
+    note: 'Advances along the route and clears manageable obstacles.',
+    skill_priority: 'Strike adjacent enemies if ready; else block an incoming claw.',
   },
   greedy: {
     min_gap: 3, end_ticks: 2,
-    move_priority: 'Greedy: prefer coins, then the move revealing the most new cells; detours are fine.',
-    when: 'Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no enemy in sight and full lives or hit protection.',
-    priority: 'Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from enemies.',
+    move_priority: 'Greedy: loot on the way; seen portal first.',
+    when: 'Upside: loot and new rooms. Risk: detours into danger. Pick with coins or unexplored ground, no visible enemy and full lives or hit protection.',
+    priority: 'Greedy: take nearby coins and explore; detours are fine until the portal is seen, then reach it. Keep 3 steps unless fighting.',
     note: 'Goes after coins and unexplored rooms; detours are fine.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready, then carry on looting.',
+    skill_priority: 'Strike adjacent enemies if ready; then carry on looting.',
   },
   // High tier (>= 70).
   bold: {
     min_gap: 2, end_ticks: 1,
-    move_priority: 'Bold: take the fight; moving toward an enemy is fine.',
-    when: 'Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and you want the fight: a single monster, a hurt one, or several.',
-    priority: 'Bold: take the fight. Engage enemies you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking.',
-    note: 'Takes fights it can win, single or several.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready, and step up to a hurt one.',
+    move_priority: 'Bold: clear the way; finish wounded enemies.',
+    when: 'Upside: removes enemies and pursuers for good. Risk: claws cost lives. Pick with a ready sword for favourable fights or wounded targets.',
+    priority: 'Bold: win favourable fights to clear the way to the portal. Finish wounded enemies; keep 2 steps unless striking or closing on a stunned target.',
+    note: 'Takes favourable fights to remove obstacles and pursuers.',
+    skill_priority: 'Strike adjacent enemies if ready; close on stunned, wounded targets.',
   },
   fearless: {
     min_gap: 1, end_ticks: 1,
-    move_priority: 'Fearless: hunt enemies down; close in on the nearest.',
-    when: 'Upside: the fastest way to the cleared win and to the coins enemies drop. Risk: claws cost lives. Pick when the sword is ready and nothing says to hold back: dispelling them is your aim.',
-    priority: 'Fearless: hunt enemies down. Close in on the nearest one and strike whenever the sword is ready; being outnumbered does not stop you, dispelling them is your aim.',
-    note: 'Hunts enemies down, even several at once.',
-    skill_priority: 'Strike an adjacent enemy whenever the sword is ready and keep closing in on the next.',
+    move_priority: 'Fearless: hunt visible enemies for glory.',
+    when: 'Upside: glory and permanent threat removal. Risk: extra claw exposure. Pick with a ready sword to actively hunt rather than wait.',
+    priority: 'Fearless: hunt visible enemies for glory, finish wounded targets and strike when ready, even outnumbered. Only the portal wins the game.',
+    note: 'Actively hunts visible enemies for glory and accepts extra risk.',
+    skill_priority: 'Strike adjacent enemies if ready; pursue the next visible target.',
   },
 };
 // Moods the sentiment question lists, with the short gloss for its first sentence (panic is never listed).
@@ -181,8 +181,7 @@ const TACTIC_MOVE_HINT = {
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
 const rules = (hasSkills = true, combat = null, directive = false) =>
-  'Goal: clear this dark dungeon alive by dispelling every enemy. Your score is the coins you hold when you win, so loot on the way. ' +
-  'The portal is only an early way out that ends the game: take it when clearing the dungeon is out of reach. At 0 lives you lose, coins and all. ' +
+  'Goal: reach and step through the portal at the end of this dark dungeon; only the portal wins. Advance toward it: dispel enemies in your way to permanently clear obstacles and pursuers, or slip past when fighting would stop you reaching it. Retreat to recover or reposition, then resume advancing. Your score is the coins you hold when you win. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
   `A touch only bumps. An adjacent enemy's claw costs ${skillConfig().clawDamage} ${skillConfig().clawDamage === 1 ? 'life' : 'lives'} (you start with ${EXPLORER_LIVES}); after a hit you are safe for ${GRACE_TICKS} steps. ` +
@@ -192,7 +191,7 @@ const rules = (hasSkills = true, combat = null, directive = false) =>
   (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '');
 
 // What a dispel pays, for the tactic priority line: "may drop a coin" (the chance is never stated), nothing at 0.
-const engagePays = (p) => `dispelling it brings the cleared win closer${p > 0 ? ' and may drop a coin' : ''}`;
+const engagePays = (p) => `dispelling it permanently removes an obstacle or pursuer on the way to the portal${p > 0 ? ' and may drop a coin' : ''}`;
 const chancePhrase = (p) => (p >= 1 ? 'every time' : p === 0.5 ? 'half the time' : `${Math.round(p * 100)}% of the time`);
 // What the sword does, with the live numbers: the facts that make a fight worth weighing.
 // The "next strike lands first" clause is claimed only while the stun outlasts the sword's cooldown and lasts 2+
@@ -578,7 +577,7 @@ export class ExplorerBrain {
   // What engage's option fact needs to say the fight in numbers: the sword's damage, whether the stun outlasts the
   // sword's cooldown (`steady`: the claw clause holds only then), and whether the adversary in sight is the only one
   // this explorer knows of (nothing remembered, no other id seen this game except the ones it dispelled). Own sight
-  // only: it never claims it is the last one, only that it may clear the dungeon.
+  // only: no hidden enemy state or total count reaches the request.
   #fight() {
     const k = this.#skills.skills.find((x) => x.kind === 'attack');
     if (!k) return null;
@@ -774,7 +773,7 @@ export class ExplorerBrain {
             `${TRIGGER_TEXT[trigger]} Which tactic? Feeling ${memory.sentiment.id} (\`self.mind\`), the explorer keeps enemies ` +
             `${profile.min_gap}+ steps away: only tactics allowing that are listed${this.#cornerOpt() ? ' (cornered: slip past is listed whatever the gap)' : ''}. Judge from \`threats\`.`,
           priorities: liveDirective
-            ? [directiveLine(liveDirective.text), 'Pick the tactic that best serves the directive without breaking the safety rule; racing to the portal ends the game.']
+            ? [directiveLine(liveDirective.text), 'Pick the tactic that best serves the directive without breaking the safety rule; reaching and stepping through the portal wins the game.']
             : loneEngage
             ? [
               ...this.#cornerTacticLine(),
@@ -782,12 +781,12 @@ export class ExplorerBrain {
                 ? 'Default: engage while the sword is ready (you act first; hold off the nearest). Run away when cramped or without the sword.'
                 : 'Default: engage a lone enemy while the sword is ready (you act first). Run away when cramped or without the sword.',
               profile.priority,
-              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+              'Prefer a tactic that keeps making progress (slip past, carry on); reaching and stepping through the portal wins the game.',
             ]
             : [
               ...this.#cornerTacticLine(),
               ...(this.#cornerOpt() ? [] : [profile.priority]),
-              'Prefer a tactic that keeps making progress (slip past, carry on); racing to the portal ends the game.',
+              'Prefer a tactic that keeps making progress (slip past, carry on); reaching and stepping through the portal wins the game.',
               'Engage while the sword is ready: hold 2 steps off the nearest enemy so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
             ],
         },
@@ -1117,9 +1116,9 @@ export class ExplorerBrain {
       sentiment: {
         type: 'choice',
         instructions:
-          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} ${caps ? `What should the explorer go after right now? Only the moods your confidence allows are listed: ${ids.map((id) => MOOD_GLOSS[id]).join(', ')}.` : 'What should the explorer go after right now: safety (wary), the plan (steady), loot (greedy) or the fight (bold)?'} ` +
+          `${TRIGGER_TEXT[trigger]}${this.#stakes(sit, trigger)} ${caps ? `Which stance best helps the explorer advance to the portal through this situation? Only the moods your confidence allows are listed: ${ids.map((id) => MOOD_GLOSS[id]).join(', ')}.` : 'Which stance best helps the explorer advance to the portal: wary, steady, greedy or bold?'} ` +
           'The mood sets how close enemies may come (min gap) and how long it stays alert after losing sight of them. Judge from `surroundings`, ' +
-          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick what the circumstances call for, not the last mood by habit.' +
+          '`threats` (in sight, remembered, encounter), `recent` and `self.mind`. Pick a stance for progress: clearing an enemy permanently removes a pursuer; regrouping should enable renewed advance.' +
           CAPS_SENTENCE +
           (this.directive ? " The player's `directive` outranks every mood's `when`: pick the mood that serves it best." : ''),
         criteria,

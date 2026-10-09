@@ -180,116 +180,116 @@ explorer:
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
       when: Entered by code when confidence collapses; never offered as a choice.
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Flees at any cost: only the way out matters."
+      note: "Escapes immediate danger to continue toward the portal."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Panic: get away at any cost. Only a clear path matters: ignore coins, claws and fights, and keep running from every enemy. Strike only an enemy that blocks the only way."
+      priority: "Panic: escape danger, ignoring coins and optional fights. Strike a blocker; reach the portal to win."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Panic: get away at any cost; nothing else matters."
+      movePriority: "Panic: escape danger; resume the portal route."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
       skillPriority: Strike only an enemy that blocks your only way; otherwise keep running.
     wary:
       minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 5 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: gets you out alive. Risk: gives up coins and progress. Offered when the odds are poor: low `self.confidence`, your last life, or no sword against a chaser close by."
+      when: "Upside: recover to advance. Risk: enemies keep hunting. Pick with low confidence, last life or no sword near a chaser."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Gets away first: runs, hides, never moves toward an enemy."
+      note: "Recovers or repositions, then resumes forward progress."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Wary: getting away comes first. Never move toward an enemy; keep at least 4 steps from them, take the move that leaves the most steps between you, keep several exits open and avoid dead ends. Leave by the portal only if leaving is already worth it."
+      priority: "Wary: keep 4 steps when possible; heal, ready the sword or reposition, then advance. Distance alone is not progress."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Wary: never move toward an enemy; grow the distance, keep exits open, avoid dead ends."
+      movePriority: "Wary: recover, then advance to the portal."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); block when none is adjacent but one can reach you.
+      skillPriority: "Strike adjacent enemies if ready to buy distance; else block an incoming claw."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: safety (wary)
     guarded:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: keeps exploring while staying clear of trouble. Risk: misses loot and fights. Pick when `self.confidence` is low but you are not running: an enemy is known and fighting it looks bad, or nothing else fits."
+      when: "Upside: less exposure. Risk: avoidance stalls progress. Pick with low confidence when a fight looks bad."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Explores away from enemies; no detours, no fights."
+      note: "Seeks a workable advance; regrouping prepares the next attempt."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Guarded: explore, but away from known enemies. Skip loot that lies near one, avoid fights, keep at least 3 steps from enemies and favour well-connected ground over dead ends."
+      priority: "Guarded: advance toward the portal, keeping 3 steps when possible. Skip optional loot; slip past or regroup for blockers."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Guarded: explore away from enemies; skip loot and fights."
+      movePriority: "Guarded: find a workable advance."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: Strike an adjacent enemy whenever the sword is ready (the stun buys distance); else block if one can reach you.
+      skillPriority: "Strike adjacent enemies if ready to buy distance; else block an incoming claw."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: caution while exploring (guarded)
     cautious:
       minGap: 4 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 4 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: lives to fight again: pull back, regroup (hit protection, the sword ready), come back for the loot. Risk: the enemy keeps hunting and the coins wait. Pick when a fight went badly or you are hurt."
+      when: "Upside: a better fight and renewed progress. Risk: enemies keep hunting. Pick when hurt; retreat must improve the next attempt."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: Pulls back for a while to regroup (to a seen heart if hurt), then returns for the loot.
+      note: "Regroups (to a seen heart if hurt), then resumes the interrupted route."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Cautious: pull back for a while. Keep at least 4 steps from enemies and regroup, then return to the loot; fight a hurt monster or when cornered."
+      priority: "Cautious: heal, ready the sword or reposition, keeping 4 steps if possible; return to the route. Repeated retreat without recovery fails."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Cautious: pull back for now; keep your distance, then come back for the loot."
+      movePriority: "Cautious: regroup, then resume the route."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      skillPriority: "Strike adjacent enemies if ready; else block an incoming claw."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: regrouping (cautious)
     steady:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 3 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: no wasted risk or detours. Risk: misses loot and fights. Pick when nothing else clearly fits: a plan to follow, no coins in sight, little left to explore nearby; not to dodge a fight."
+      when: "Upside: progress without detours. Risk: fights cost lives. Pick to follow the route and clear manageable obstacles."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Sticks to the plan: explores, coins on the way, fights a single or hurt monster."
+      note: "Advances along the route and clears manageable obstacles."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Steady: follow the plan: explore, take coins that lie on the way, keep at least 3 steps from enemies and favour well-connected ground with several exits over dead ends and long corridors. A single or hurt monster is worth a fight while the sword is ready."
+      priority: "Steady: explore toward the portal; take coins on the way. Clear manageable enemies; distance prepares a fight, not endless avoidance."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Steady: follow the plan; favour well-connected ground over dead ends."
+      movePriority: "Steady: advance; clear manageable enemies."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: Strike an adjacent enemy whenever the sword is ready; else block if one can reach you.
+      skillPriority: "Strike adjacent enemies if ready; else block an incoming claw."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: the plan (steady)
     greedy:
       minGap: 3 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 2 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: more coins and rooms seen. Risk: wanders into trouble. Pick when coins are in sight (`surroundings.coins`) or plenty is unexplored (`surroundings.unexplored_by_direction`), with no enemy in sight and full lives or hit protection."
+      when: "Upside: loot and new rooms. Risk: detours into danger. Pick with coins or unexplored ground, no visible enemy and full lives or hit protection."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
       note: Goes after coins and unexplored rooms; detours are fine.
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Greedy: loot comes first. Go for seen coins, then the move that would reveal the most new cells or a never-visited room; detours, corridors and side branches are fine. Still keep at least 3 steps from enemies."
+      priority: "Greedy: take nearby coins and explore; detours are fine until the portal is seen, then reach it. Keep 3 steps unless fighting."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Greedy: prefer coins, then the move revealing the most new cells; detours are fine."
+      movePriority: "Greedy: loot on the way; seen portal first."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: "Strike an adjacent enemy whenever the sword is ready, then carry on looting."
+      skillPriority: "Strike adjacent enemies if ready; then carry on looting."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: loot (greedy)
     bold:
       minGap: 2 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 1 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: dispelling may drop a coin and brings the cleared win closer. Risk: a claw costs a life. Pick when the sword is ready (`self.skills`) and you want the fight: a single monster, a hurt one, or several."
+      when: "Upside: removes enemies and pursuers for good. Risk: claws cost lives. Pick with a ready sword for favourable fights or wounded targets."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Takes fights it can win, single or several."
+      note: "Takes favourable fights to remove obstacles and pursuers."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Bold: take the fight. Engage enemies you can beat, the nearest first; moving toward one is fine; keep at least 2 steps unless striking."
+      priority: "Bold: win favourable fights to clear the way to the portal. Finish wounded enemies; keep 2 steps unless striking or closing on a stunned target."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Bold: take the fight; moving toward an enemy is fine."
+      movePriority: "Bold: clear the way; finish wounded enemies."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: "Strike an adjacent enemy whenever the sword is ready, and step up to a hurt one."
+      skillPriority: "Strike adjacent enemies if ready; close on stunned, wounded targets."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: the fight (bold)
     fearless:
       minGap: 1 # Closest an enemy may come, steps (decides which tactics are open)
       endTicks: 1 # Ticks with no enemy in sight before an encounter is over
       # What Jev reads when picking this mood (the built-in wording; edit to change it, delete to restore)
-      when: "Upside: the fastest way to the cleared win and to the coins enemies drop. Risk: claws cost lives. Pick when the sword is ready and nothing says to hold back: dispelling them is your aim."
+      when: "Upside: glory and permanent threat removal. Risk: extra claw exposure. Pick with a ready sword to actively hunt rather than wait."
       # One-line summary shown with the mood (the built-in wording; edit to change it, delete to restore)
-      note: "Hunts enemies down, even several at once."
+      note: "Actively hunts visible enemies for glory and accepts extra risk."
       # The mood's priority line on a normal move request (the built-in wording; edit to change it, delete to restore)
-      priority: "Fearless: hunt enemies down. Close in on the nearest one and strike whenever the sword is ready; being outnumbered does not stop you, dispelling them is your aim."
+      priority: "Fearless: hunt visible enemies for glory, finish wounded targets and strike when ready, even outnumbered. Only the portal wins the game."
       # The short priority line on tactic move questions (the built-in wording; edit to change it, delete to restore)
-      movePriority: "Fearless: hunt enemies down; close in on the nearest."
+      movePriority: "Fearless: hunt visible enemies for glory."
       # The mood's stance on using skills (the built-in wording; edit to change it, delete to restore)
-      skillPriority: Strike an adjacent enemy whenever the sword is ready and keep closing in on the next.
+      skillPriority: "Strike adjacent enemies if ready; pursue the next visible target."
       # Short label for the mood in the sentiment question (the built-in wording; edit to change it, delete to restore)
       gloss: the hunt (fearless)
     tiers:
