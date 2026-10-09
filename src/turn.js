@@ -118,7 +118,6 @@ export class Run {
     const wasLost = game.lost;
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
     const coinsBefore = game.coins;
-    const heartsBefore = game.heartPiles.length;
     const stepsBefore = game.steps;
     const explorer = await this.explorer.takeTurn();
     // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
@@ -128,7 +127,8 @@ export class Run {
     // nothing once the game is won or lost.
     const { events: adversaryEvents, turns } = await stepAdversaries(game, { decide: this.#decide });
     const coinEvents = game.coins > coinsBefore ? [{ id: 'explorer', type: 'coin', at: [...game.pos], gained: game.coins - coinsBefore, total: game.coins }] : [];
-    const heartEvents = game.heartPiles.length < heartsBefore ? [{ id: 'explorer', type: 'heart', at: [...game.pos], health: game.health }] : [];
+    // A heart pickup this step (Game.heartAt), not a count of heartPiles: a heart respawning the same step would hide it.
+    const heartEvents = game.steps > stepsBefore && game.heartAt === game.steps ? [{ id: 'explorer', type: 'heart', at: [...game.pos], health: game.health }] : [];
     // Natural healing (Game.regenerate): the step's regen, logged apart from a heart pickup.
     const regenEvents = game.steps > stepsBefore && game.regenAt === game.steps ? [{ id: 'explorer', type: 'regen', at: [...game.pos], health: game.health }] : [];
     const events = [...skillEvents, ...coinEvents, ...heartEvents, ...regenEvents, ...adversaryEvents];

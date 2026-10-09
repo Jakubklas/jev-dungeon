@@ -97,7 +97,7 @@ export class Game {
   //   coinPiles /* [[x, y]] one entry per coin on the floor (duplicates = a bigger pile); replaced, never spliced */,
   //   coins /* the explorer's coin total */, coinRand /* coin-drop RNG, null until the first roll */
   // coinPiles starts as a copy of dungeon.coins (src/coins.js spawnCoins; [] when absent, e.g. hand-built maps).
-  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won, coins }. No-op when won or lost. STAY keeps the cell, counts a step.
+  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won, coins, healed, regen, respawned }. No-op when won or lost. STAY keeps the cell, counts a step. Hearts due back (heartsTaken, HEART_RESPAWN) respawn before the pickup, except one on the explorer's cell.
                          //    A move picks up every pile on the destination (coins += n, `coins: n` in the return, 0 otherwise).
                          //    A null treasure never wins.
   damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
