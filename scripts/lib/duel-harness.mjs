@@ -33,9 +33,9 @@
 //   confidence  { fixedMood: true } (default: C never changes the mood, PLAN-moods), an arm object ({ start: 80 } forces the history score) or 'caps' (PLAN-confidence-mood: C caps
 //               the moods; implies hold 'multi'). Passed to ExplorerBrain `confidence` through newTestGame.
 //   skills      'sword' (default: sword only, like check-skills section 12), 'default' (sword and shield), or a loadout list.
-//   health      lives (default 9, so a claw never ends a duel early; hits are counted, not survived). Death at L lives =
-//               hitsTaken >= L (the stub ghosts ignore lives, so a run is identical up to the L-th hit); health 2 plays
-//               the real thing (r.lost), used by the spot check. maxHealth = health, so lives 2, 3, 4 are real settings.
+//   health      lives (default 9, so a claw rarely ends a duel early; hits are counted, not survived).
+//               Low-health movement guards and natural regen can change the trace: measure r.lost
+//               directly. maxHealth = health, so lives 2, 3, 4 are real settings.
 //   seed        seeds the arena AND the duel's own PRNG (default 1).
 //   maxTicks    default 60.
 //   ask         (additive, measure-corners --live) replaces the scripted Jev: an async ({ kind, state, questions, body }) => answers, e.g. the real

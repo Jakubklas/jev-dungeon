@@ -759,7 +759,7 @@ export class ExplorerBrain {
       const sentiment = await this.#askSentiment(sit, trigger);
       apiMs += sentiment.ms;
       const profile = this.#profile();
-      decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities }, tactic: null, apiMs: sentiment.ms };
+      decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities, options: sentiment.options, automatic: sentiment.automatic }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
         const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() });
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target]));
@@ -919,7 +919,10 @@ export class ExplorerBrain {
         // The skill and move answers arrive together. Do not let a bare movement choice walk
         // into a claw that the explorer knows will take every remaining life before its sword can
         // land; hold position and let the tactic be reconsidered instead.
-        if (this.#lethalWalkIn(dir, skillKey) && legal.includes(STAY)) dir = STAY;
+        if (this.#lethalWalkIn(dir, skillKey) && legal.includes(STAY)) {
+          dir = STAY;
+          info.pending = 'tactic_failed';
+        }
         moveDecision = { choice: dir, probabilities: a.probabilities, confidence: a.confidence, options: moveOptions[moveFor] };
       }
 
@@ -1123,16 +1126,17 @@ export class ExplorerBrain {
     return ' A single enemy you strike first costs little and a dispel removes it for good; running may leave it hunting you.';
   }
 
-  // Request 1 of a decision step. Sets memory.sentiment and returns { choice, probabilities, ms }.
+  // Request 1 of a decision step. Record eligibility separately from returned probabilities,
+  // and distinguish code-selected panic / sole moods from actual Jev choices.
   async #askSentiment(sit, trigger) {
     const world = this.#world;
     const memory = this.#memory;
-    if (memory.sentiment.id === 'panic') return { choice: 'panic', probabilities: { panic: 1 }, ms: 0 }; // panic is code's, not Jev's, until C is back at PANIC_EXIT
+    if (memory.sentiment.id === 'panic') return { choice: 'panic', probabilities: { panic: 1 }, options: ['panic'], automatic: true, ms: 0 }; // panic is code's, not Jev's, until C is back at PANIC_EXIT
     const caps = this.#capState();
     const ids = this.#allowed(caps);
     if (ids.length === 1) { // only one mood left: code takes it, no one-option Choice
       setSentiment(memory, { id: ids[0] }, world.steps + 1);
-      return { choice: ids[0], probabilities: { [ids[0]]: 1 }, ms: 0 };
+      return { choice: ids[0], probabilities: { [ids[0]]: 1 }, options: ids, automatic: true, ms: 0 };
     }
     const inSight = sit.threats.visible.length > 0;
     // With an adversary in sight, each mood also says which tactics its minimum gap leaves open here.
@@ -1165,7 +1169,7 @@ export class ExplorerBrain {
     const a = answers.sentiment;
     const choice = ids.includes(a?.choice) ? a.choice : ids.includes(memory.sentiment.id) ? memory.sentiment.id : defaultMood(ids);
     setSentiment(memory, { id: choice }, world.steps + 1);
-    return { choice, probabilities: a?.probabilities ?? null, ms };
+    return { choice, probabilities: a?.probabilities ?? null, options: Object.keys(criteria), automatic: false, ms };
   }
 
   // next_move for one approach. speculative: asked once per tactic on a decision tick, so it keeps
@@ -1386,7 +1390,7 @@ export class ExplorerBrain {
       // A frontier chosen before the fight can sit beyond the last place a chaser was seen.
       // Resume the exploration approach, but pick a fresh safe edge while that sighting is still
       // remembered; preserving a destination must never turn the explorer back toward a threat.
-      if (this.#remembered.some((r) => r.chasing)) this.#approachGoal = null;
+      if (this.#approachGoal?.id !== 'heal' && this.#remembered.some((r) => r.chasing)) this.#approachGoal = null;
       if (!resumeApproach(memory, prev, thoughtOf)) {
         interruptApproach(memory, approachOf('nearest_frontier'), 'encounter over', prev);
         a.interrupted = null;
@@ -1502,10 +1506,15 @@ export class ExplorerBrain {
     const world = this.#world;
     if (dir === STAY || skillKey !== 'none' || world.graceLeft > 0) return false;
     const dest = nextCell(world.pos, dir);
-    return world.visibleAdversaries().some((th) =>
-      th.mode === 'chase' && !this.#stunnedIds().has(th.id) && !sameCell(dest, th.pos) &&
+    // Winning movement ends the game before enemies act. Distances follow known floor,
+    // so a monster behind a wall is not treated as adjacent.
+    if (world.seenTreasure() && sameCell(dest, world.seenTreasure())) return false;
+    const health = world.seenHearts().some((c) => sameCell(c, dest))
+      ? Math.min(world.maxHealth, world.health + 1) : world.health;
+    return threatsOf(world).some((th) =>
+      th.chasing && !this.#stunnedIds().has(th.id) && !sameCell(dest, th.pos) &&
       threatDistance(th, world.pos) > 1 && threatDistance(th, dest) <= 1 &&
-      world.health <= (th.clawDamage ?? 1));
+      health <= (th.clawDamage ?? 1));
   }
 
   // The kept goal of the current tactic or ordinary approach (null when it belongs to another plan).

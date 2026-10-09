@@ -8,13 +8,13 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { newTestGame } from '../src/turn.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
-import { tacticFeasibility } from '../src/characters/explorer/perception.js';
+import { approachTarget, tacticFeasibility } from '../src/characters/explorer/perception.js';
 import { SENTIMENTS } from '../src/characters/explorer/brain.js';
 import { validateMemory } from '../src/characters/explorer/memory.js';
 
 const root = mkdtempSync(join(tmpdir(), 'jev-portal-check-'));
 let n = 0;
-function build(config, { tactic = 'engage', advance = false } = {}) {
+function build(config, { tactic = 'engage', advance = false, move = null } = {}) {
   const folder = join(root, String(++n));
   mkdirSync(folder);
   const dir = pathToFileURL(folder + '/');
@@ -29,7 +29,7 @@ function build(config, { tactic = 'engage', advance = false } = {}) {
       else if (key === 'tactic') choice = ids.includes(tactic) ? tactic : ids[0];
       else if (key === 'skill') choice = ids.includes('none') ? 'none' : ids[0];
       else if (key === 'next_move' || key.startsWith('move_if_')) {
-        choice = advance ? ids.find(id => /Closer to the (?:target|portal)|Steps onto the portal/.test(String(q.criteria[id]))) ?? 'stay' : 'stay';
+        choice = move ?? (advance ? ids.find(id => /Closer to the (?:target|portal)|Steps onto the portal/.test(String(q.criteria[id]))) ?? 'stay' : 'stay');
         if (!ids.includes(choice)) choice = ids[0];
       }
       return [key, { choice, probabilities: { [choice]: 1 }, confidence: 1 }];
@@ -39,6 +39,47 @@ function build(config, { tactic = 'engage', advance = false } = {}) {
   return { run, requests };
 }
 try {
+  // Traversing explored ground toward a distant heart is progress; stalling still gets reviewed.
+  for (const progressing of [false, true]) {
+    const wall = '#'.repeat(45);
+    const { run, requests } = build({ map: [wall, '#@' + '.'.repeat(42) + '#', wall, wall, wall], numAdversaries: 0, hearts: [[30, 1]], treasure: null }, { move: progressing ? 'right' : 'stay' });
+    for (let i = 0; i < 35; i++) run.game.applyMove('right');
+    for (let i = 0; i < 35; i++) run.game.applyMove('left');
+    run.game.health = run.game.maxHealth / 2;
+    for (let i = 0; i < 20; i++) await run.explorer.takeTurn();
+    assert.equal(requests.some(r => r.questions.approach_working), !progressing);
+    if (progressing) assert.equal(run.explorer.memory.approach.id, 'heal');
+  }
+  // Recovery ends when natural regeneration fills health, even with a kept heart goal.
+  {
+    const { run } = build({ map: ['#########', '#@......#', '#########', '#########', '#########'], numAdversaries: 0, hearts: [[6, 1]], treasure: null });
+    run.game.health = run.game.maxHealth - 0.5;
+    await run.explorer.takeTurn();
+    assert.equal(run.explorer.memory.approach.id, 'heal');
+    const world = new KnownWorld(run.game);
+    assert.deepEqual(approachTarget(world, 'heal', { goal: [6, 1] }).cell, [6, 1]);
+    run.game.health = run.game.maxHealth;
+    assert.equal(approachTarget(world, 'heal', { goal: [6, 1] }), null);
+    await run.explorer.takeTurn();
+    assert.notEqual(run.explorer.memory.approach.id, 'heal');
+  }
+  // Bare lethal adjacency is held, but reaching the portal must always be allowed.
+  for (const portal of [false, true]) {
+    const { run } = build({ map: ['#########', '#.......#', portal ? '#.@TA...#' : '#.@.A...#', '#.......#', '#########'], treasure: portal ? [3, 2] : null, ghostSkills: 'none' }, { move: 'right' });
+    run.game.health = 1;
+    run.game.adversaries[0].mode = 'chase';
+    await run.explorer.takeTurn();
+    assert.deepEqual(run.game.pos, portal ? [3, 2] : [2, 2]);
+    assert.equal(run.game.won, portal);
+  }
+  // Diagonal proximity is not claw adjacency; a heart pickup can also make the step survivable.
+  for (const diagonal of [false, true]) {
+    const { run } = build({ map: ['#########', diagonal ? '#...A...#' : '#.......#', diagonal ? '#.@.....#' : '#.@.A...#', '#.......#', '#########'], treasure: null, ghostSkills: 'none', hearts: diagonal ? [] : [[3, 2]] }, { move: 'right' });
+    run.game.health = 1;
+    run.game.adversaries[0].mode = 'chase';
+    await run.explorer.takeTurn();
+    assert.deepEqual(run.game.pos, [3, 2]);
+  }
   // Portal is known at creation: low hypothetical leave_now confidence never keeps exploring.
   {
     const { run, requests } = build({ map: ['#########', '#@..T...#', '#########', '#########', '#########'], numAdversaries: 0 });

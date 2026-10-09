@@ -258,6 +258,7 @@ export function approachTarget(world, approachId, { minGap = DEFAULT_MIN_GAP, go
 
   if (approachId === 'collect_coins') return coinTarget(world, dist, avoid);
   if (approachId === 'heal') {
+    if (world.health >= world.maxHealth) return null;
     // A heart is a deliberate recovery trip. Keep its destination while it is still lit and
     // reachable, rather than replacing it with whichever heart happens to score best next tick.
     if (goal && !sameCell(goal, world.pos) && dist.has(goal) && world.seenHearts().some((c) => sameCell(c, goal))) {

@@ -166,23 +166,22 @@ for (const r of today) {
   check(/^Holds this cell, 2 steps from the nearest: /.test(stay(two) ?? ''), `two ghosts: the stay fact names the nearest (${stay(two)})`);
 }
 
-// 10. The health 2 spot check: the death derived from the health-9 runs (hits >= 2) equals the real loss when the
-// explorer really has 2 lives. 20 runs of today's hold against 3 ghosts, hp 3 (where deaths happen), plus 10 multi runs.
+// 10. Low-health execution may now hold a lethal walk-in, and natural regen can restore fractional
+// lives. Measure real loss instead of assuming a health-9 trace is identical at two lives.
 {
   const groups = [];
   for (const n of [0, 1, 2, 3]) for (const [i, g] of openGroups(3, n, 'pairfront').entries()) if (i % 2 === 0) groups.push(g);
-  let n = 0, derivedDeaths = 0;
+  let n = 0, realDeaths = 0;
   for (const g of groups) {
     if (n >= 20) break;
     const nine = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: true, health: 9, maxTicks: 90 });
     const two = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: true, health: 2, maxTicks: 90 });
-    const derived = nine.hitsTaken >= 2;
-    check(derived === two.lost, `health 2 spot check ${JSON.stringify(g)}: derived death ${derived} equals the real loss ${two.lost} (hits at health 9: ${nine.hitsTaken})`);
-    check(two.hitsTaken === Math.min(2, nine.hitsTaken), `health 2 spot check ${JSON.stringify(g)}: the real hits (${two.hitsTaken}) are the first ${Math.min(2, nine.hitsTaken)} of the ${nine.hitsTaken}`);
-    n++; if (derived) derivedDeaths++;
+    check(!two.lost || nine.hitsTaken >= 2, `health 2 spot check ${JSON.stringify(g)}: safe reference must not become a real loss`);
+    check(two.hitsTaken <= nine.hitsTaken, `health 2 spot check ${JSON.stringify(g)}: guarding lethal movement must not increase hits (${two.hitsTaken} vs ${nine.hitsTaken})`);
+    n++; if (two.lost) realDeaths++;
   }
   check(n === 20, `health 2 spot check: 20 runs (got ${n})`);
-  check(derivedDeaths >= 1, `health 2 spot check: at least one run really dies, so the check can fail (got ${derivedDeaths})`);
+  check(realDeaths >= 1, `health 2 spot check: actual losses remain covered (got ${realDeaths})`);
   for (const g of groups.slice(0, 10)) {
     const r = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: 'multi', health: 2, maxTicks: 90 });
     check(!r.lost && r.dispelled === 3, `multi hold, really at 2 lives, ${JSON.stringify(g)}: alive and all dispelled (lost ${r.lost}, dispelled ${r.dispelled})`);

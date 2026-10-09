@@ -284,6 +284,7 @@ check(explorerCalls > 0, 'stub explorer was asked');
   hg.health = 1;
   const r = hg.applyMove('right');
   check(r.healed === 1 && hg.health === 2 && hg.heartPiles.length === 1, 'hearts: stepping on one restores a life');
+  hg.health = hg.maxHealth;
   check(hg.applyMove('right').healed === 0 && hg.health === hg.maxHealth, 'hearts: never above max');
 }
 
