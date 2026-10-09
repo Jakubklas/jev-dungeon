@@ -458,6 +458,19 @@ The Jev API client: hedging, retries, timeout, model.
 | `jev.retryStatus` | [429,502,503,504,529] | list of 408, 425, 429, 500, 502, 503, 504, 529 (max 8) | live | no | HTTP statuses that are retried |
 | `jev.model` | "jev-latest" | /^[a-z0-9][a-z0-9._-]{0,63}$/ | live | no | Model name sent with every request (endpoint and API key stay in code and ../.env) |
 
+## decision
+
+Decision provider: hosted Jev or local Laya.
+
+| path | default | range | applies | player UI | what it does |
+| --- | --- | --- | --- | --- | --- |
+| `decision.provider` | "jev" | jev / laya | live | no | Decision provider: hosted Jev or local Laya; no automatic fallback |
+| `decision.laya.endpoint` | "http://127.0.0.1:8000/v1/systemone" | /^http://(127\.0\.0\.1\|localhost\|\[::1\])(:[0-9]{1,5})?/[A-Za-z0-9/_-]+$/ | live | no | Local Laya systemone endpoint; only HTTP loopback URLs are accepted |
+| `decision.laya.model` | "multilingual" | /^[a-zA-Z0-9][a-zA-Z0-9/._-]{0,199}$/ | live | no | Model name sent to the local Laya service |
+| `decision.laya.headMaxLen` | 1024 | 256..8192 | live | no | Local Laya token limit for instructions and option descriptions; upstream default is 256 |
+| `decision.laya.maxLen` | 8192 | 512..8192 | live | no | Local Laya token limit for state and questions; prevents default 512-token truncation |
+| `decision.laya.timeoutMs` | 120000 | 1000..600000 | live | no | Local inference timeout per request, ms; one copy and no retries |
+
 ## ui
 
 Browser timings and thought-bubble lines (served at api/ui).

@@ -587,6 +587,17 @@ limits:
   priorityLine: 300 # Longest character priority line sent to Jev
 
 # The Jev API client: hedging, retries, timeout, model.
+# Decision backend. Switch provider to jev to use the hosted API and JEV_API_KEY.
+# Local Laya uses one request, no API key, and never falls back to hosted Jev.
+decision:
+  provider: laya
+  laya:
+    endpoint: http://127.0.0.1:8000/v1/systemone
+    model: multilingual
+    headMaxLen: 1024 # Preserve tactic instructions and option descriptions
+    maxLen: 8192 # Preserve the full game state and questions within the model context
+    timeoutMs: 120000
+
 jev:
   hedgeCopies: 2 # Copies of a request that may be in flight (1 = no hedging)
   hedgeDelayMs: 800 # Wait for an answer before a further copy goes out, ms

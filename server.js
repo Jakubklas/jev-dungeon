@@ -7,8 +7,8 @@ import { resolve } from 'node:path';
 
 // .env lives at the repo root, shared with the other projects. Load it before
 // importing the turn module (it pulls in the brain and jev.js, which may read the key at load).
-process.loadEnvFile(new URL('../.env', import.meta.url));
-if (!process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is missing from .env');
+try { process.loadEnvFile(new URL('../.env', import.meta.url)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
+const { validateDecisionCredentials } = await import('./src/jev.js');
 const { newGame, newTestGame } = await import('./src/turn.js');
 const { TestbedError } = await import('./src/testbed.js');
 const settings = await import('./src/settings.js');
@@ -26,6 +26,7 @@ const gameOpts = () => ({
 });
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
 await settings.loadSettings(DATA ? new URL('settings.json', DATA) : new URL(`settings-${PORT}.json`, import.meta.url));
+validateDecisionCredentials();
 // TESTBED=size=9x9&numAdversaries=2 (or a JSON object) makes this server a testbed: every new game
 // without its own { testbed } body is that arena. Empty means a normal dungeon server.
 const TESTBED = !process.env.TESTBED ? null
