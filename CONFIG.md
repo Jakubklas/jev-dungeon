@@ -168,6 +168,9 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.props.kinds.storage_chest.weight` | 2 | 0..10 | next | no | How often storage_chest is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.fountain.weight` | 1 | 0..10 | next | no | How often fountain is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.forge.weight` | 1 | 0..10 | next | no | How often forge is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.ore.weight` | 2 | 0..10 | next | no | How often ore is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.statue.weight` | 1 | 0..10 | next | no | How often statue is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.candle_table.weight` | 1 | 0..10 | next | no | How often candle_table is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.pots.weight` | 3 | 0..10 | next | no | How often pots is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.skull.weight` | 2 | 0..10 | next | no | How often skull is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.tools.weight` | 2 | 0..10 | next | no | How often tools is picked, relative to its class (0 = never picked at random) |
@@ -178,6 +181,7 @@ Dungeon layout, light, coins and hearts. Developer only.
 | `world.props.kinds.arch.weight` | 2 | 0..10 | next | no | How often arch is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.gate.weight` | 2 | 0..10 | next | no | How often gate is picked, relative to its class (0 = never picked at random) |
 | `world.props.kinds.banner.weight` | 2 | 0..10 | next | no | How often banner is picked, relative to its class (0 = never picked at random) |
+| `world.props.kinds.candle_nook.weight` | 2 | 0..10 | next | no | How often candle_nook is picked, relative to its class (0 = never picked at random) |
 
 ## player
 

@@ -69,8 +69,8 @@ const PAGE_ROWS = [
 
 // ---- P1: world, props, testbed. File-only (page: false); each default is the literal the module used to hold. ----
 const num = (key, path, def, min, max, step, doc) => ({ key, path, group: 'World', label: path, hint: doc, doc, type: 'range', min, max, step, def, when: 'next', page: false });
-const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner'];
-const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2 };
+const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'ore', 'statue', 'candle_table', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner', 'candle_nook'];
+const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, ore: 2, statue: 1, candle_table: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2, candle_nook: 2 };
 const P1_ROWS = [
   num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
   num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),

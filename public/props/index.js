@@ -8,6 +8,7 @@
 //   p.wall[kind].R[band]     -> the mirrored right face
 //   p.wallTall[kind], p.metaTall[kind] -> the 2-block variant of big kinds (canvas TH+2*wallH, draw 1 block higher)
 //   p.floorMeta[kind]        -> { glow } for glowing floor props (x, y in sprite px, flipped with the sprite)
+//   p.floorVariants[kind]    -> [floor bands per look] for kinds with several looks (image-art.js)
 //   p.meta[kind]             -> { frameMs, glow, w, h } for decor (glow in front-view art coords)
 //
 // bands: number of light bands. navy: [r, g, b] cold stone target of band 0. tw/th/wallH/bottomRow:
@@ -75,21 +76,30 @@ const sprite = (frames, w, h, anchorX, anchorY) =>
   ({ canvas: frames[0], w, h, anchorX, anchorY, ...(frames.length > 1 ? { frames: frames.map((canvas) => ({ canvas, w, h, anchorX, anchorY })) } : {}) });
 
 export async function buildProps({ bands, navy, tw, th, wallH, bottomRow }) {
-  const [FLOOR_ART, WALL_ART] = await Promise.all([
+  const [FLOOR_ART, WALL_ART, IMAGE_ART] = await Promise.all([
     loadArt('./floor-art.js', 'FLOOR_ART'),
     loadArt('./wall-art.js', 'WALL_ART'),
+    loadArt('./image-art.js', 'IMAGE_ART'),
   ]);
   const geom = { tw, th, wallH, bottomRow };
-  const out = { floor: {}, floorMeta: {}, wall: {}, meta: {}, wallTall: {}, metaTall: {} };
+  const out = { floor: {}, floorMeta: {}, floorVariants: {}, wall: {}, meta: {}, wallTall: {}, metaTall: {} };
 
-  for (const [kind, def] of Object.entries(FLOOR_ART)) {
-    if (!def?.frames?.length) continue;
+  const floorBands = (def) => {
     const gr = rows(def.frames[0]), w = Math.max(...gr.map((r) => r.length)), h = gr.length;
-    if (def.glow) out.floorMeta[kind] = { glow: def.glow };
-    out.floor[kind] = Array.from({ length: bands }, (_, band) => {
+    return Array.from({ length: bands }, (_, band) => {
       const pal = bandPalette(def, band, bands, navy);
       return sprite(def.frames.map((f) => floorFrame(f, pal)), w, h, def.anchorX ?? w >> 1, def.anchorY ?? h - 1);
     });
+  };
+  // Image art is in the floor format (already isometric); `variants` = one kind with several looks:
+  // floor[kind] is the first, floorVariants[kind] all of them (the renderer picks one per cell).
+  for (const [kind, def] of Object.entries({ ...FLOOR_ART, ...IMAGE_ART })) {
+    const looks = (def?.variants ?? [def]).filter((d) => d?.frames?.length);
+    if (!looks.length) continue;
+    if (looks[0].glow) out.floorMeta[kind] = { glow: looks[0].glow };
+    const built = looks.map(floorBands);
+    out.floor[kind] = built[0];
+    if (built.length > 1) out.floorVariants[kind] = built;
   }
 
   for (const [kind, def] of Object.entries(WALL_ART)) {

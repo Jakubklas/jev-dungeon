@@ -65,6 +65,12 @@ world:
         weight: 1 # How often fountain is picked, relative to its class (0 = never picked at random)
       forge:
         weight: 1 # How often forge is picked, relative to its class (0 = never picked at random)
+      ore:
+        weight: 2 # How often ore is picked, relative to its class (0 = never picked at random)
+      statue:
+        weight: 1 # How often statue is picked, relative to its class (0 = never picked at random)
+      candle_table:
+        weight: 1 # How often candle_table is picked, relative to its class (0 = never picked at random)
       pots:
         weight: 3 # How often pots is picked, relative to its class (0 = never picked at random)
       skull:
@@ -85,6 +91,8 @@ world:
         weight: 2 # How often gate is picked, relative to its class (0 = never picked at random)
       banner:
         weight: 2 # How often banner is picked, relative to its class (0 = never picked at random)
+      candle_nook:
+        weight: 2 # How often candle_nook is picked, relative to its class (0 = never picked at random)
 
 # The knight: lives and protection after a hit.
 explorer:

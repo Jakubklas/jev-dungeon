@@ -40,6 +40,7 @@ const STATIC = {
   '/props/index.js': ['props/index.js', 'text/javascript; charset=utf-8'],
   '/props/floor-art.js': ['props/floor-art.js', 'text/javascript; charset=utf-8'],
   '/props/wall-art.js': ['props/wall-art.js', 'text/javascript; charset=utf-8'],
+  '/props/image-art.js': ['props/image-art.js', 'text/javascript; charset=utf-8'],
 };
 
 // One game for the whole playground.

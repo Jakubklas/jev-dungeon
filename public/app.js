@@ -312,6 +312,8 @@ import('./props/index.js')
 let solidProp = null;   // Uint8Array(W*H): 1 where a solid prop stands (tiles say '#' there)
 let floorProps = [];    // game.props with .phase
 let decorAt = new Map(); // y*W+x -> [decor] of that wall cell
+let isoDecor = [];       // decor whose art is already isometric (image-art.js): drawn as entities, not on the face
+const ISO_DECOR = new Set(['candle_nook']);
 const GLOW_COLOR = '#ffb458';
 function indexProps() {
   const { width: W, height: H } = game;
@@ -324,9 +326,19 @@ function indexProps() {
   }
   indexHeights();
   decorAt = new Map();
+  isoDecor = [];
   for (const d of game.decor ?? []) {
     const k = d.y * W + d.x;
     (decorAt.get(k) ?? decorAt.set(k, []).get(k)).push({ ...d, phase: hash(d.x, d.y, 5), blocks: 1 + Math.floor(hash(d.x, d.y, (Number(game.seed) | 0) ^ 0x7b19) * 2) });
+    if (ISO_DECOR.has(d.kind)) {
+      // Already-isometric decor (the candle nook) is drawn as an entity, and its wall run is always full height so
+      // the arch has a wall behind it. Visual only, like every wall height.
+      isoDecor.push({ ...d, phase: hash(d.x, d.y, 5) });
+      for (const t of [-1, 0, 1]) {
+        const [wx, wy] = d.face === 'L' ? [d.x + t, d.y] : [d.x, d.y + t];
+        if (wx >= 0 && wy >= 0 && wx < W && wy < H) wallBlocks[wy * W + wx] = MAX_BLOCKS;
+      }
+    }
   }
 }
 const isSolidProp = (x, y) => solidProp[y * game.width + x] === 1;
@@ -739,7 +751,8 @@ function drawScene(now) {
   if (propArt) {
     for (const p of floorProps) {
       if (p.w) { pushForge(ents, p, known, shown, reveal); continue; }
-      const art = propArt.floor[p.kind];
+      const looks = propArt.floorVariants[p.kind]; // ore, statue: one look per cell, from the cell's hash
+      const art = looks ? looks[Math.floor(p.phase * looks.length) % looks.length] : propArt.floor[p.kind];
       const lit = known(p.x, p.y);
       if (!art || !(lit || reveal)) continue;
       const px = isoX(p.x + .5, p.y + .5) - cx, py = isoY(p.x + .5, p.y + .5) - cy;
@@ -747,6 +760,16 @@ function drawScene(now) {
       const s = lit ? shown[p.y][p.x] : 0;
       ents.push({ depth: p.depth, order: -1, kind: 'prop', prop: p.kind, gx: p.x, gy: p.y, art: art[bandOf(s)], face: p.flip ? -1 : 1,
         phase: p.phase, alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
+    }
+    // Iso wall decor: anchored on its wall cell's centre, sorted one diagonal later (after the neighbour wall it
+    // overhangs, before anything standing in front of it). Face R mirrors the face-L art.
+    for (const d of isoDecor) {
+      const art = propArt.floor[d.kind];
+      const lit = known(d.x, d.y); // like face decor: only once its wall is known
+      if (!art || !(lit || reveal)) continue;
+      const s = lit ? shown[d.y][d.x] : 0;
+      ents.push({ depth: d.x + d.y + 1, order: -2, kind: 'prop', prop: d.kind, gx: d.x, gy: d.y, art: art[bandOf(s)], face: d.face === 'L' ? 1 : -1,
+        phase: d.phase, alpha: lit ? Math.min(1, s / .2) : REVEAL_ALPHA });
     }
   }
   for (const ad of drawnAdversaries()) {
