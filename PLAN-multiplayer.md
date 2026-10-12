@@ -1,4 +1,82 @@
-# Jev Dungeon: Cloud and Multiplayer Implementation Plan (rev. 4)
+# Jev Dungeon: Cloud and Multiplayer Implementation Plan (rev. 4, verified 2026-10-12)
+
+## 0. Priority order (what to implement next)
+
+Set after a verification pass against `f552c3d` on 2026-10-12 (section 0.1 lists the findings). The phases in section 8 still hold as a dependency structure. This list is the order to work through them, with a few items pulled forward because the code now has a second paid provider and an open live-config write path.
+
+| # | Item | Why here | Size | Phase |
+| --- | --- | --- | --- | --- |
+| 1 | **Close the open write surfaces.** Bind `hub.js` to `127.0.0.1` (`hub.js:233` binds every interface today). Gate `POST /api/config` and `POST /api/settings` behind a dev flag. | Any caller can switch `decisionProvider` to the paid OpenAI path, set hedge×retries to 4×9 = 36 posts per call, and rewrite the 135 prompt-text knobs. The board's model dropdown already uses this route. This is the biggest live risk and the cheapest fix. | S | 0 (from 2.4) |
+| 2 | **Close the paid paths for every provider.** The `JevGateway` becomes a `DecisionGateway` covering `jev`, `openai` and `laya`. It is the only reader of `JEV_API_KEY` and `OPENAI_API_KEY`. `JD_JEV_LIVE` becomes `JD_DECIDER_LIVE`. `ask`/`decide` become required (remove `askReal` from `explorer/brain.js:56,335` and `jevAsk` from `adversary/brain.js:96,464`). `check-paid-paths.mjs` also greps `askOpenAIDecider(` and `api.openai.com`. | The plan's "only Jev spends money" is no longer true. | M | 0.3 |
+| 3 | **Shared fetch tripwire, and make paid scripts opt in.** Cover the scripts that have no tripwire (`check-props`, `check-memory-kit`, `check-confidence`, `check-moods-ui`, `check-img2sprite`, `check-hearts`, `check-regen`, `run-testbed`, `config.mjs`). `live-progress.mjs` must stop being paid by default: change `--dry` to `--live`. | Cheap. It makes the "free unless `--live`" rule true again. | S | 0.1 |
+| 4 | **No-egress CI.** Block `api.typesafe.ai`, `api.openai.com` and every non-loopback host. There is no `.github/` yet. | Locks in items 2 and 3. | S | 0.2 |
+| 5 | **Transport options and a per-post `onAttempt` hook for all providers.** Today the OpenAI path is 1 copy with no retries and its own timeout. Laya is 1 copy, 0 retries and a 120 s timeout. | The ledger and cost guard need a uniform count of posts. | M | 0.6 |
+| 6 | **Minimal cost guard, pulled into Phase 0.** An in-memory daily post cap, a per-game `max_posts` and pause-on-cap, enforced in the gateway per provider. Size the per-tick cap from the profile's hedge and retries (up to 36 posts per call, not 8). A Postgres counter comes later. | It has to exist before any server-side ticking. | S–M | 1.1 → 0 |
+| 7 | **Split settings profiles into rules and decider policy.** The rules profile is the frozen merged config layers (defaults < YAML < instances < `settings.json`), with mtime `refresh()` turned off in workers. Prompt-text knobs count as rules. Provider, model, hedge and retries are per-game spend policy, outside the rules hash. | Today all of these are process-wide `live` knobs, re-read on every `/api/step`. | M | 0.10 |
+| 8 | **Fix the view leaks.** `view().route` (the spine to the portal, built from hidden tiles), `heart_cells` (unlit hearts included), each monster's `level`/`claw_damage`/`morale`, and `explorer.remark` all need rulings in section 10. Gate the route to owner-only, show it after reveal, drop it in races, and make `waypoints` admin-only. | Cheap now, and much harder to fix once spectators exist. | S–M | 1.10 |
+| 9 | **Fix the RNG stream collision, then inject `rand`.** The level draw (`kinds.js:102`) and `coinRand` (`dungeon.js:685`) both use `seed ^ 0x3c6ef372`. Decide on a new constant (it moves coin drops, so regenerate fixtures on purpose) before persisting draw counts. Then swap the explorer shuffle's `Math.random` for an injected `rand` (55 assignments in 17 files) and regenerate `request-hashes.json`. | A collision should not be persisted. | M | 0.7 |
+| 10 | **Draw-count wrappers** for `skillRand`, `coinRand`, `patrolRand` and the per-ghost patrol streams. | Needed for restore. | S | 0.8 |
+| 11 | **`KnownWorld.revoke()` and its revocation test.** | Needed before deadline fallback (1.6). | S | 0.11 |
+| 12 | **Serialize/restore, with the scope rewritten from section 0.1.** The scope grew by about half again: hearts, regen, morale, kinds and levels, retreat progress, corner breakout, the route tracker and the queued directive. Add a check that restores mid-game and compares request hashes. | The largest item. It depends on items 9 and 10. | L | 0.9 |
+| 13 | **Store interface and `MemoryStore`.** | Phase 1 entry. | M | 0.4/0.5 |
+| 14 | **Phase 1 runtime: registry, actor, scheduler, `fallbackMove`.** The deadline `D` needs a per-provider value (Laya's local latency cannot meet 4 s), or such profiles are marked non-realtime. `fallbackMove` targets the portal, not the chest. | Depends on all of the above. | L | 1 |
+| 15 | **Then Phases 2–5 as in section 8,** with BYOK, the ledger (a `provider` column), quotas and the disclosure text covering OpenAI too. | | | 2–5 |
+
+### 0.1 Verification findings (2026-10-12, HEAD `f552c3d`)
+
+Two read-only passes checked the plan against the code. The body of the plan below has **not** been rewritten yet: where it disagrees with this list, this list is right (AGENTS.md rule 3: the code wins).
+
+**Wrong or missing (affects design):**
+- **There is a second paid provider.** `src/jev.js` has a module-level `PROVIDER` (`jev` | `laya` | `openai`), and `decisionProvider` is a `live` knob (`registry.js:384`). `src/openai-decider.js:25` posts to `api.openai.com` with `OPENAI_API_KEY`. `validateDecisionCredentials` (`server.js`) checks only the provider set at boot, so a live switch with no key fails on the first step. This touches the paid paths, env vars (§4.5 is missing `OPENAI_API_KEY` and `JEV_CONFIG`), `jev_calls` (needs a `provider` column), BYOK, the disclosure text ("goes to TypeSafe") and the deadline `D`.
+- **Posts per call** (§2.1 #5, §6.5): `jevHedgeCopies` goes up to 4 and `jevRetries` up to 8 (`registry.js:379-381`), so the worst case is 36 posts per call, not 8.
+- **Exposure list** (§1, §2.1 #11, 2.4): add `POST /api/config` (the full schema, including the provider) and `POST /api/inject`.
+- **Process-wide rules** (§1, §2.1 #2): `src/settings.js` is now a shim. `src/config/runtime.js:70-96` calls about 27 `configure*` hooks over layered config, re-read by mtime (`server.js:174`).
+- **`AgentConfig`** (§6.2): `MOOD_IDS` has eight moods (`panic`, `wary`, `guarded`, `cautious`, `steady`, `greedy`, `bold`, `fearless`), offered by confidence tier (`allowedMoods`). Mood gaps and review cadence are already registry knobs, which conflicts with per-agent overrides under one profile per process.
+- **§7.1 `Game` snapshot** is missing `heartPiles`, `heartsTaken`, `heartAt`, `regenAt` (health can be fractional) and `dispelled`. Restore must also freeze `REGEN_STEPS`, `REGEN_AMOUNT`, `HEART_RESPAWN` and `SIGHT_RANGE`.
+- **§7.2 `Adversary` restore** through `new Adversary({ id, pos, character, hp, skills })` is wrong:
+  - With no `kind` or `level`, every monster comes back as a level-2 ghost.
+  - An explicit `hp` sets both `#hp` and `#maxHp` (`adversary.js:131`).
+  - An explicit `skills` skips the kind's `tuning()`.
+  - Missing state: `#kind`, `#level`, `#clawDamage`, `#speed` and `#facing`. In `hunt`, also `swept` (a Set), `restUntil` and the morale fields (`morale`, `moraleQueue`, `mood`, `tier`, `rout`, `knobs`). `moraleQueue` carries events into the next tick.
+  - The `TRAPPED` WeakMap (`encounter.js:315`) is one more derivable cache.
+- **§7.3 `ExplorerBrain`**:
+  - `#csOn`, `#csAct` and `#caps` are gone. In their place are `#fixedMood`, `#wExtra`, `#holdOn` and `#progressOn`.
+  - Missing state: `#approachGoal`, `#corner`, `#route`, `#remark`, `#remarkN` and the progress fields (`#entry`, `#entryDistance`, `#furthestEntry`, `#samples`, `#retreatAt`, `#retreats`, `#forward`, `#backtrack`).
+  - `#cs` now also holds `idle`, `enc`, `counts.coins` and `counts.hearts`.
+- **New `Run` and spectator state:** `Run.#pending` (the queued directive), `#lastInjectAt`, and the private `RouteTracker` state behind `view().route`.
+- **RNG table** (§2.2, §7.4): add kinds `seed^0x7f4a7c15`, levels `seed^0x3c6ef372`, hearts `seed^0x2f6b1d57`, props `seed^0x2c1b3c6d`, and the per-ghost patrol streams `seed^0x85ebca6b^hash(id)`. **Levels and `coinRand` share one constant** (see item 9).
+- **§6.4 event types**: add `coin`, `coin_drop`, `heart`, `regen`, `routed` and `cleared`.
+- **§9 API surface** is missing `POST /api/inject`, `GET/POST /api/config?scope=user`, `GET /api/ui`, `POST /api/new { seed }` (a seed the client chooses) and the hub's `/arena/<name>/` and `/gym/<name>/` proxy.
+- **§10 view rules** need rulings for `route`, `heart_cells`, monster `kind`/`level`/`claw_damage`/`morale` (all sent for every monster, `turn.js:155-171`) and `explorer.remark`.
+- **§12 security:**
+  - The "never place player text in questions" bullet contradicts the directive, which is quoted into the priority lines (`explorer/brain.js:169,1002`).
+  - The 135 `text` knobs (up to 800 characters) reach the prompts. `load.js:28-31` strips C0 control characters but not bidi or zero-width ones, and there is no size check at save time.
+  - The OpenAI adapter reshapes the body, so `request_sha` and `request_bytes` must be recorded per provider.
+- **Deadline** (1.5, §3): Laya defaults to a 120 s timeout with 0 retries, and OpenAI to about 30 s. A 4 s `D` does not fit either.
+
+**Stale (citations or wording):**
+- Line numbers:
+
+  | What | Now at |
+  | --- | --- |
+  | `askReal` | `explorer/brain.js:56,335` |
+  | `jevAsk` | `adversary/brain.js:96,464` |
+  | `shuffle` | `jev.js:101-108` |
+  | `loop()` | `app.js:2222` |
+  | hub listen | `hub.js:233` |
+  | `byId` / `Promise.all` | `adversary.js:727/760` |
+  | `randomSeed` | `dungeon.js:77` |
+  | `lightAround` | `dungeon.js:559` |
+  | `skillRand` | `dungeon.js:685` |
+  | `Game` fields | `dungeon.js:625-662` |
+  | `takeTurn` tail | `brain.js:1076-1122` |
+  | grace comment (still wrong) | `adversary.js:31-32` |
+
+- The `Math.random` swaps are now 55 assignments in 17 files, not 47 in 12. `request-hashes-caps.json` no longer exists.
+- The dependency rule (§3, Q17) has already ended: `yaml` is a runtime dependency and `fast-check` a dev dependency.
+- §5 proposes `src/config.js` next to the existing `src/config/` directory, and reuses the name `profileOf` (already taken twice). Rename both.
+- Win and score: the portal is the only win where one exists, and score = coins held. The "first on the chest" and "steps to chest" wording (Phase 4, 4.8, 2.12) and `fallbackMove`'s chest target (1.6) should say portal. The cleared-win part of Q5 is mostly moot.
+- `busy.catch(() => {})` is still at `server.js:75` (2.11 open). `scripts/measure-latency.mjs` exists, but no p50/p95 is recorded (§2.3, Q15).
 
 ## 1. Bottom line
 
