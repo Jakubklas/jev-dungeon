@@ -493,7 +493,7 @@ export function buildRequest(view, a, tick, cfg) {
   let options = null;
   if (legal.length > 1) {
     const moves = describeMoves(view, a, h, approachIds, speed);
-    options = Object.fromEntries(shuffle(legal).map((d) => [d, moves[d]]));
+    options = Object.fromEntries(shuffle(legal, () => view.optionRandom()).map((d) => [d, moves[d]]));
     const priorities = searching
       ? [
           h.pickApproach
@@ -531,7 +531,7 @@ export function buildRequest(view, a, tick, cfg) {
       instructions:
         'The explorer just went out of sight (`last_seen`). Which search approach gives this adversary the best chance to catch it? Use `last_seen.heading`, the map facts and how far each target is.' +
         (special && h.profile.preferredSearch ? ` Your nature favours ${h.profile.preferredSearch}, but pick the other if it is clearly better. ${h.profile.priority}` : special ? ` ${h.profile.priority}` : ''),
-      criteria: Object.fromEntries(shuffle(SEARCH_APPROACHES).map((id) => [id, approachOption(view, a, h, id)])),
+      criteria: Object.fromEntries(shuffle(SEARCH_APPROACHES, () => view.optionRandom()).map((id) => [id, approachOption(view, a, h, id)])),
     };
   }
   if (searching) {

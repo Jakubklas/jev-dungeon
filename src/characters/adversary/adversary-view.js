@@ -15,7 +15,7 @@
 // Every read is live (never cached across ticks). Never exposed: the treasure, the explorer's
 // light/visits/health, real tiles. The explorer's position and heading come out only while this
 // ghost has it in sight (hunt.inSight, set by brain.js from seesExplorer / team sight).
-import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor } from '../../dungeon.js';
+import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
 
 const euclid = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 const stepCell = ([x, y], dir) => [x + DIRS[dir][0], y + DIRS[dir][1]];
@@ -33,6 +33,7 @@ export class AdversaryView {
   #inView = []; // [x, y] cells in view from #viewAt (real line of sight), limited mode
   #viewAt = null;
   #forgotten = 0; // cells that faded or were evicted so far
+  #optionRand;
   mode;
 
   constructor(game, adversary, { limited = false } = {}) {
@@ -40,7 +41,31 @@ export class AdversaryView {
     this.#a = adversary;
     this.#limited = limited;
     this.mode = limited ? 'limited' : 'full';
+    let hash = 2166136261;
+    for (const c of adversary.id) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619) >>> 0;
+    this.#optionRand = rng(((game.dungeon.seed ?? 1) ^ hash ^ 0x4369ee47) >>> 0);
     if (limited) this.#buildHome();
+  }
+
+  optionRandom() { return this.#optionRand(); }
+  optionRandomState() { return this.#optionRand.state(); }
+  restoreOptionRandom(state) { this.#optionRand.restore(state); }
+
+  serialize() {
+    return { v: 1, mode: this.mode, home: this.#home === null ? null : [...this.#home],
+      seen: [...this.#seen], inView: this.#inView.map((c) => [...c]),
+      viewAt: this.#viewAt === null ? null : [...this.#viewAt], forgotten: this.#forgotten,
+      optionRandom: this.#optionRand.state() };
+  }
+
+  restore(saved) {
+    if (saved?.v !== 1 || saved.mode !== this.mode) throw new TypeError('invalid adversary view snapshot');
+    this.#home = saved.home === null ? null : new Set(saved.home);
+    this.#seen = new Map(saved.seen);
+    this.#inView = saved.inView.map((c) => [...c]);
+    this.#viewAt = saved.viewAt === null ? null : [...saved.viewAt];
+    this.#forgotten = saved.forgotten;
+    this.#optionRand.restore(saved.optionRandom);
   }
 
   // H: floor cells whose real path distance from the spawn cell is within homeRadius (null = the whole

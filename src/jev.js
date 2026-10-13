@@ -80,10 +80,10 @@ export async function askJev(state, questions, body = JSON.stringify({ model: je
   return winner.answers;
 }
 
-export function shuffle(items) {
+export function shuffle(items, rand = Math.random) {
   const a = [...items];
   for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;

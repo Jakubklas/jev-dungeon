@@ -29,6 +29,9 @@ export class DashSkill extends Skill {
   attachTime() {} // the step-based time source does not apply: Dash counts seconds
   turnPassed() {} // seconds elapse even while the game is paused
 
+  serialize() { return { ...super.serialize(), dashReadyAt: this.#readyAt }; }
+  restoreState(saved) { super.restoreState(saved); this.#readyAt = saved.dashReadyAt; }
+
   summary() {
     const left = this.cooldownLeft;
     return { ...super.summary(), ready: left === 0, cooldown_left: left };

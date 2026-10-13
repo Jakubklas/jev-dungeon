@@ -14,6 +14,10 @@
 import { MonotonicClock } from './clock.js';
 import { ExplorerActor } from './explorer-actor.js';
 import { MonsterActor } from './monster-actor.js';
+import { Game } from '../dungeon.js';
+import { Adversary, adversaryView } from '../characters/adversary/adversary.js';
+import { KnownWorld } from '../characters/explorer/known-world.js';
+import { ExplorerBrain } from '../characters/explorer/brain.js';
 
 export class GameActor {
   #game;
@@ -29,17 +33,21 @@ export class GameActor {
   #monsters = new Map();
   #hooks;
   #outcome = null;
+  #gameId = null;
+  #coldEvery = 50;
 
   // explorers: [{ id, brain }] (each brain already built on KnownWorld(game, id) with its own asker). decideMonster: the
   // monsters' paid call ({ id, state, questions, body, signal } -> answers). rules: optional { stepMs, cadenceMs } override.
   // Hooks: onEvent(record), onKeyRejected(actorId), onServerKeyRejected(), onFinished(summary), onError(err).
   // `store` is reserved for the persistence work package; the runtime only publishes through onEvent.
-  constructor({ game, clock = new MonotonicClock(), rules = null, explorers = [], decideMonster = null, store = null, autoplay = false, startSeq = 0,
+  constructor({ game, clock = new MonotonicClock(), rules = null, explorers = [], decideMonster = null, store = null, gameId = null, coldEvery = 50, autoplay = false, startSeq = 0,
     onEvent = null, onKeyRejected = null, onServerKeyRejected = null, onFinished = null, onError = null } = {}) {
     if (!game) throw new Error('GameActor needs a game');
     this.#game = game;
     this.#clock = clock;
     this.store = store;
+    this.#gameId = gameId;
+    this.#coldEvery = coldEvery;
     this.decideMonster = decideMonster;
     this.#seq = startSeq;
     this.#hooks = { onEvent, onKeyRejected, onServerKeyRejected, onFinished, onError };
@@ -61,6 +69,41 @@ export class GameActor {
   get inLock() { return this.#inLock; }
   get seq() { return this.#seq; }
   get outcome() { return this.#outcome; }
+
+  serialize() {
+    return { v: 1, event_seq: this.#seq, status: this.#state, outcome: this.#outcome,
+      game: this.#game.serialize(),
+      brains: Object.fromEntries([...this.#explorers].map(([id, x]) => [id, x.brain.serialize()])),
+      explorers: Object.fromEntries([...this.#explorers].map(([id, x]) => [id, { status: x.status, generation: x.generation }])),
+      monsters: Object.fromEntries([...this.#monsters].map(([id, x]) => [id, { status: x.status, generation: x.generation }])),
+      views: Object.fromEntries(this.#game.adversaries.map((a) => [a.id, adversaryView(this.#game, a).serialize()])),
+    };
+  }
+
+  // Restore always starts paused. Calls in flight at the crash are discarded; no old answer can apply.
+  static restore(saved, { clock = new MonotonicClock(), askFor, decideMonster = null, store = null,
+    gameId = null, onEvent = null, onKeyRejected = null, onServerKeyRejected = null, onFinished = null, onError = null } = {}) {
+    if (saved?.v !== 1 || !saved.game || !saved.brains) throw new TypeError('invalid game actor snapshot');
+    const game = Game.restore(saved.game, { restoreAdversary: (a) => Adversary.restore(a) });
+    const explorers = Object.entries(saved.brains).map(([id, brain]) => ({ id,
+      brain: ExplorerBrain.restore(new KnownWorld(game, id), brain, { ask: askFor(id), persistMemory: !store }) }));
+    const actor = new GameActor({ game, clock, explorers, decideMonster, store, gameId,
+      startSeq: saved.event_seq, onEvent, onKeyRejected, onServerKeyRejected, onFinished, onError });
+    actor.#state = saved.status === 'finished' ? 'finished' : 'paused';
+    actor.#outcome = saved.outcome;
+    for (const [id, state] of Object.entries(saved.explorers)) {
+      const x = actor.#explorers.get(id);
+      x.status = state.status;
+      x.generation = state.generation + 1;
+    }
+    for (const [id, state] of Object.entries(saved.monsters)) {
+      const x = actor.#monsters.get(id);
+      if (x) { x.status = state.status; x.generation = state.generation + 1; }
+    }
+    for (const a of game.adversaries) if (saved.views[a.id]) adversaryView(game, a).restore(saved.views[a.id]);
+    game.freeze();
+    return actor;
+  }
   after(ms, fn) { return this.#clock.setTimeout(fn, ms); }
   cancel(handle) { this.#clock.clearTimeout(handle); }
   track(promise) {
@@ -117,6 +160,15 @@ export class GameActor {
   // increases; `applied_at` is the world time the record was written.
   record(type, fields = {}) {
     const rec = { seq: ++this.#seq, type, actor: null, generation: null, observed_at: null, completed_at: null, ...fields, applied_at: this.#game.clock };
+    if (this.store) {
+      if (!this.#gameId) throw new Error('gameId is required for persisted actors');
+      this.store.appendEvent(this.#gameId, rec);
+      const snapshot = this.serialize();
+      this.store.writeJson(this.#gameId, 'state.json', snapshot);
+      if (type === 'game_started' || type === 'game_over' || (this.#coldEvery > 0 && rec.seq % this.#coldEvery === 0)) {
+        this.store.writeCold(this.#gameId, rec.seq, snapshot);
+      }
+    }
     try {
       this.#hooks.onEvent?.(rec);
     } catch (err) {
@@ -293,6 +345,7 @@ export class GameActor {
 
   // ---- read-only views for the service and the checks ---------------------------------------------------------------
   actorStatus(id) { return (this.#explorers.get(id) ?? this.#monsters.get(id))?.status ?? null; }
+  brain(id) { return this.#explorers.get(id)?.brain ?? null; }
   generation(id) { return (this.#explorers.get(id) ?? this.#monsters.get(id))?.generation ?? null; }
   inFlight(id) { return Boolean((this.#explorers.get(id) ?? this.#monsters.get(id))?.inFlight); }
 }

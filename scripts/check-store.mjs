@@ -21,11 +21,11 @@ const root = mkdtempSync(join(tmpdir(), 'jd-store-'));
   a.lock();
   check(readFileSync(join(a.root, 'server.lock'), 'utf8').trim() === String(process.pid), 'lock holds our pid');
   const b = new FileStore(join(root, 'a'), { isAlive: () => true });
-  // our own pid in the file: a second store in this process is allowed to take over (same pid) ...
-  b.lock();
-  b.unlock();
+  // A second store in this process must not take over an active lock just because the pid matches.
+  throws(() => b.lock(), /another store in this process/, 'same-process second store refuses');
+  a.unlock();
   check(!existsSync(join(a.root, 'server.lock')), 'unlock removes the lock');
-  // ... but a different live pid refuses
+  // A different live pid also refuses.
   writeFileSync(join(a.root, 'server.lock'), '999999\n');
   const live = new FileStore(join(root, 'a'), { isAlive: (p) => p === 999999 });
   throws(() => live.lock(), /another server \(pid 999999\)/, 'live other pid refuses');
@@ -97,12 +97,13 @@ const root = mkdtempSync(join(tmpdir(), 'jd-store-'));
   check(g.meta.status === 'running' && g.rules.rules_revision === 1 && g.state.v === 2 && Array.isArray(g.dungeon.tiles), 'readGame returns the files');
   // a torn last line is ignored
   writeFileSync(join(s.root, 'games', 'gm_one', 'events.jsonl'), '{"seq":1}\n{"seq":2', { flag: 'a' });
-  check(s.readEvents('gm_one').length === 5, 'torn last line skipped');
+  check(s.readEvents('gm_one').length === 3, 'torn last line skipped after uncommitted events were truncated');
   // crash between append and state write: event 5 is on disk, state still says 4 -> 5 dropped
   s.writeJson('gm_one', 'state.json', { event_seq: 4 });
   s.createGameDir('gm_two');
   s.appendEvent('gm_two', { seq: 1 });
-  check(s.readGame('gm_two').state === null && s.readGame('gm_two').events.length === 0 && s.readGame('gm_two').dropped === 1, 'no state yet: nothing replays');
+  const noState = s.readGame('gm_two');
+  check(noState.state === null && noState.events.length === 0 && noState.dropped === 1 && s.readEvents('gm_two').length === 0, 'no state yet: nothing replays');
   s.writeCold('gm_one', 12, { event_seq: 12 });
   check(existsSync(join(s.root, 'games', 'gm_one', 'state-12.json')), 'cold snapshot state-<seq>.json');
   throws(() => s.writeCold('gm_one', -1, {}), /bad snapshot/, 'bad cold seq');

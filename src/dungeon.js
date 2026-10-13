@@ -71,13 +71,19 @@ const inBounds = (dungeon, [x, y]) => x >= 0 && x < dungeon.width && y >= 0 && y
 // mulberry32: small seeded PRNG so a seed always rebuilds the same dungeon.
 export function rng(seed) {
   let a = seed >>> 0;
-  return () => {
+  const next = () => {
     a = (a + 0x6d2b79f5) >>> 0;
     let t = a;
     t = Math.imul(t ^ (t >>> 15), t | 1);
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+  next.state = () => a;
+  next.restore = (state) => {
+    if (!Number.isInteger(state) || state < 0 || state > 0xffffffff) throw new TypeError('invalid RNG state');
+    a = state >>> 0;
+  };
+  return next;
 }
 
 function randomSeed() {
@@ -646,6 +652,14 @@ export class ExplorerState {
     this.status = 'active'; // 'active' | 'dead' | 'forfeited' | 'won'
     this.outcome = { strikes: 0, dispels: 0, diedAt: null, portal: false }; // for the ranking
   }
+
+  serialize() { return { v: 1, ...structuredClone(Object.fromEntries(Object.entries(this))) }; }
+  static restore(saved) {
+    if (saved?.v !== 1 || !saved.id || !Array.isArray(saved.pos)) throw new TypeError('invalid explorer snapshot');
+    const e = new ExplorerState(saved.id, saved.pos, saved.maxHealth);
+    for (const [name, value] of Object.entries(saved)) if (name !== 'v') e[name] = structuredClone(value);
+    return e;
+  }
 }
 
 // The game state and everything that mutates or reads it directly. It lives in this file (not its
@@ -688,6 +702,38 @@ export class Game {
     this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
     for (const e of this.explorers) lightAround(this, e.pos); // shared, max-only light
+  }
+
+  serialize() {
+    const fields = [
+      'light', 'knownCount', 'knownFloor', 'floorCount', 'won', 'lost', 'caughtBy', 'adversaryTicks',
+      'clock', 'rules', 'managed', 'frozen', 'inTick', 'tickAt', 'strikes', 'dispelled',
+      'coinPiles', 'heartPiles', 'heartsTaken', 'winBy',
+    ];
+    const state = Object.fromEntries(fields.map((name) => [name, structuredClone(this[name])]));
+    return { v: 1, dungeon: structuredClone(this.dungeon), explorers: this.explorers.map((e) => e.serialize()),
+      adversaries: this.adversaries.map((a) => a.serialize()), litOutside: [...this.litOutside],
+      rng: { patrol: this.patrolRand?.state() ?? null, skill: this.skillRand?.state() ?? null,
+        coin: this.coinRand?.state() ?? null }, state };
+  }
+
+  // `restoreAdversary` is injected to keep dungeon.js independent of relative imports (check-props copies this file).
+  static restore(saved, { restoreAdversary } = {}) {
+    if (saved?.v !== 1 || !saved.dungeon || !Array.isArray(saved.explorers)) throw new TypeError('invalid game snapshot');
+    const game = new Game(structuredClone(saved.dungeon), { explorers: saved.explorers.map((e) => ({ id: e.id, start: e.pos })) });
+    game.explorers = saved.explorers.map((e) => ExplorerState.restore(e));
+    for (const [name, value] of Object.entries(saved.state)) game[name] = structuredClone(value);
+    game.litOutside = new Set(saved.litOutside);
+    if (saved.adversaries.length && !restoreAdversary) throw new TypeError('restoreAdversary is required');
+    game.adversaries = saved.adversaries.map((a) => restoreAdversary(a));
+    for (const name of ['patrol', 'skill', 'coin']) {
+      const state = saved.rng?.[name];
+      if (state === null || state === undefined) continue;
+      const stream = rng(0);
+      stream.restore(state);
+      game[`${name}Rand`] = stream;
+    }
+    return game;
   }
 
   // ---- World clock (WP-D) -------------------------------------------------------------------------------

@@ -1,5 +1,17 @@
 # PLAN-multiplayer: implementation design (branch `multiplayer-v1`)
 
+## Progress (2026-10-13)
+
+| Package | Status | Evidence / next step |
+| --- | --- | --- |
+| WP-A–E, WP-I foundations | Complete before this pass | Existing gateway, intent, shared world, clock, runtime, lobby, ranking and mock UI checks. |
+| WP-F | Implemented; final suite running | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. Request hashes intentionally regenerated. |
+| WP-G | In progress | Revision worker and player projection started. HTTP service, routes, worker registry and service checks remain. |
+| WP-H | Pending | Monster target choice, help calls, multiplayer fog checks. |
+| WP-J / final review | Pending | Health and counters, kill tests, operations docs, contract and full branch review. |
+
+Live measurement remains unrun because it makes paid Jev calls and needs explicit authorisation.
+
 This file turns PLAN-multiplayer.md into concrete seams, files and work packages (WP). PLAN-multiplayer.md
 is the product spec; this file is how we build it. If the two disagree on *product* behaviour, PLAN-multiplayer.md
 wins; on *code structure*, this file wins. Every deliberate deviation from the plan is listed in "Deviations" at

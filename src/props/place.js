@@ -111,7 +111,7 @@ export function placeProps(dungeon, rand) {
     }
   };
   const torches = (r) => {
-    const walls = shuffle(roomWalls(r));
+    const walls = shuffle(roomWalls(r), rand);
     const want = TORCH_MIN + Math.floor(rand() * (TORCH_MAX - TORCH_MIN + 1));
     let placed = 0;
     for (const gap of [TORCH_GAP, 2]) { // second pass only if the room got none
@@ -134,7 +134,6 @@ export function placeProps(dungeon, rand) {
       if (floor0[at(x + 1, y)] && roomAt[at(x + 1, y)] < 0) corr.push([x, y, 'R']);
     }
   }
-  shuffle(corr);
   const wantCorr = Math.floor(rooms.length * CORRIDOR_TORCH_PER_ROOM + rand());
   for (let i = 0, placed = 0; i < corr.length && placed < wantCorr; i++) {
     const [x, y, face] = corr[i];
@@ -228,7 +227,6 @@ export function placeProps(dungeon, rand) {
     if (!target) continue;
     const cands = [];
     for (let y = r.y + 1; y < r.y + r.h - 1; y++) for (let x = r.x + 1; x < r.x + r.w - 1; x++) if (ok(x, y)) cands.push([x, y]);
-    shuffle(cands);
     let placed = 0, tries = 0;
     for (const [sx, sy] of cands) {
       if (placed >= target || tries >= CLUSTER_TRIES) break;
@@ -278,13 +276,11 @@ export function placeProps(dungeon, rand) {
   for (const r of rooms) {
     const cells = [];
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) if (smallOk(x, y)) cells.push([x, y]);
-    shuffle(cells);
     const n = Math.min(SMALL_MAX, Math.floor(r.w * r.h / SMALL_PER_CELLS + rand()), cells.length);
     for (let k = 0; k < n; k++) addSmall(cells[k]);
   }
   const lanes = [];
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) if (roomAt[at(x, y)] < 0 && smallOk(x, y)) lanes.push([x, y]);
-  shuffle(lanes);
   const nLane = Math.min(Math.floor(lanes.length / CORRIDOR_SMALL_PER_CELLS + rand()), lanes.length);
   for (let k = 0; k < nLane; k++) addSmall(lanes[k]);
 

@@ -52,6 +52,11 @@ const WINDOW = 10; // revisits_last_10
 // The rolling window of revisit flags lives outside the memory object, so it never
 // reaches JSON.stringify (Jev's state, memory.json, the browser).
 const revisitWindows = new WeakMap();
+export const snapshotRevisitWindow = (memory) => [...(revisitWindows.get(memory) ?? [])];
+export function restoreRevisitWindow(memory, window) {
+  if (!Array.isArray(window) || window.length > WINDOW) throw new TypeError('invalid revisit window');
+  revisitWindows.set(memory, window.map(Boolean));
+}
 
 // The mood ids (brain.js SENTIMENTS has exactly these keys; check-dungeon asserts it). Validation accepts nothing else.
 export const MOOD_IDS = ['panic', 'wary', 'guarded', 'cautious', 'steady', 'greedy', 'bold', 'fearless'];

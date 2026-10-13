@@ -21,6 +21,8 @@ import { buildSkillSet } from '../../skills/loadouts.js';
 import { skillConfig } from '../../skills/config.js';
 import { ROUT_REST } from './morale.js';
 import { resolveAttack } from '../../skills/resolve.js';
+import { SkillSet } from '../../skills/skill-set.js';
+import { encodeSnapshot, decodeSnapshot } from '../shared/snapshot.js';
 
 export { brainView } from './brain.js';
 
@@ -110,6 +112,7 @@ export class Adversary {
   #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
   #stun = 0; // ticks of stun left: no step, no Jev call (mirror of the deadline below, and the only record without a game)
   #stunUntil = null; // world ms (Game.now timeline) the stun lasts until (exclusive); null = none or gameless
+  #patrolRand = null; // the character's private patrol stream (seeded lazily)
 
   constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character, kind = 'ghost', level, hp, skills }) {
     const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
@@ -140,6 +143,44 @@ export class Adversary {
     if (claw && built && levelsOn()) claw.damage = Math.max(1, Math.round(claw.damage * clawMult(this.#level)));
     this.#clawDamage = claw?.damage ?? stats.clawDamage;
     this.syncSkills();
+  }
+
+  serialize() {
+    return { v: 1, id: this.id, pos: [...this.pos], mode: this.mode, budget: this.budget,
+      lastSeen: encodeSnapshot(this.lastSeen), goal: encodeSnapshot(this.goal),
+      kind: this.#kind, character: this.#character, level: this.#level, clawDamage: this.#clawDamage,
+      speed: this.#speed, hp: this.#hp, maxHp: this.#maxHp, facing: this.#facing,
+      stun: this.#stun, stunUntil: this.#stunUntil, home: [...this.#home],
+      hunt: encodeSnapshot(this.#hunt), route: encodeSnapshot(this.#route),
+      lastRequestBody: this.#lastRequestBody, skills: this.#skills.serialize(),
+      patrolRandom: this.#patrolRand?.state() ?? null };
+  }
+
+  static restore(saved) {
+    if (saved?.v !== 1 || !saved.id) throw new TypeError('invalid adversary snapshot');
+    const a = new Adversary({ id: saved.id, pos: [...saved.pos], mode: saved.mode, budget: saved.budget,
+      lastSeen: decodeSnapshot(saved.lastSeen), goal: decodeSnapshot(saved.goal), character: saved.character,
+      kind: saved.kind, level: saved.level, hp: saved.hp, skills: SkillSet.restore(saved.skills) });
+    a.#clawDamage = saved.clawDamage;
+    a.#speed = saved.speed;
+    a.#maxHp = saved.maxHp;
+    a.#facing = saved.facing;
+    a.#stun = saved.stun;
+    a.#stunUntil = saved.stunUntil;
+    a.#home = [...saved.home];
+    a.#hunt = decodeSnapshot(saved.hunt);
+    a.#route = decodeSnapshot(saved.route);
+    a.#lastRequestBody = saved.lastRequestBody;
+    if (saved.patrolRandom !== null) {
+      a.#patrolRand = rng(0);
+      a.#patrolRand.restore(saved.patrolRandom);
+    }
+    return a;
+  }
+
+  patrolRandom(seed) {
+    this.#patrolRand ??= rng(seed);
+    return this.#patrolRand;
   }
 
   get level() {
@@ -434,13 +475,9 @@ function routeTo(dungeon, from, to) {
 }
 
 // Per-ghost patrol streams (adversaryCharacters on): one ghost's draws never shift another's.
-const patrolRands = new WeakMap();
 const hashId = (id) => [...id].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7);
 function patrolRandOf(game, a) {
-  let m = patrolRands.get(game);
-  if (!m) patrolRands.set(game, (m = new Map()));
-  if (!m.has(a.id)) m.set(a.id, rng((game.dungeon.seed ^ 0x85ebca6b ^ hashId(a.id)) >>> 0));
-  return m.get(a.id);
+  return a.patrolRandom((game.dungeon.seed ^ 0x85ebca6b ^ hashId(a.id)) >>> 0);
 }
 
 // Patrol pool of a non-standard ghost: rooms within homeRadius path steps of its spawn cell (and its

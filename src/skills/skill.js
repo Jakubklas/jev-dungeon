@@ -52,6 +52,20 @@ export class Skill {
   }
   get readyAt() { return this.#time ? this.#readyAt : null; }
 
+  serialize() {
+    return { v: 1, kind: this.kind, spec: { ...this }, cooldownLeft: this.#cooldownLeft,
+      uses: this.#uses, lastUsedStep: this.#lastUsedStep, stepMs: this.#stepMs, readyAt: this.#readyAt };
+  }
+
+  restoreState(saved) {
+    if (saved?.v !== 1 || saved.kind !== this.kind || saved.spec?.id !== this.id) throw new TypeError('invalid skill snapshot');
+    this.#cooldownLeft = saved.cooldownLeft;
+    this.#uses = saved.uses;
+    this.#lastUsedStep = saved.lastUsedStep;
+    this.#stepMs = saved.stepMs;
+    this.#readyAt = saved.readyAt;
+  }
+
   // The owner's turn ended: count the cooldown down (a no-op once a time source is attached).
   turnPassed() {
     if (!this.#time && this.#cooldownLeft > 0) this.#cooldownLeft--;

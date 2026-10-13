@@ -28,13 +28,15 @@ import { cornerFacts, holdGhost, knownLineOfSight, matchup, remarkLine, speedPhr
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
-  LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
+  LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach, snapshotRevisitWindow, restoreRevisitWindow,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
   allowedMoods, defaultMood, panicNext, retreatTier, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { shuffle, jevModel } from '../../jev.js';
+import { SkillSet } from '../../skills/skill-set.js';
+import { encodeSnapshot, decodeSnapshot } from '../shared/snapshot.js';
 import { add as tabuAdd, age as tabuAge, clearStrikes, createTabu, endEncounter as tabuEndEncounter, entryOf, filterOptions, isTabu, snapshot as tabuSnapshot, strike as tabuStrike } from '../shared/tabu.js';
 
 let REVIEW_EVERY = 8; // steps between approach reviews
@@ -272,6 +274,7 @@ export class ExplorerBrain {
   #world;
   #ask;
   #memoryDir;
+  #persistMemory = true;
   #memory;
   // { step, targetSteps }: when the approach was last reviewed (or started) and how far its target
   // was then, so a review can tell travelling toward a far target from wandering.
@@ -377,7 +380,7 @@ export class ExplorerBrain {
   #capFired = new Set();
   #visibleIds = new Set();
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
+  constructor(world, { ask = null, memoryDir = null, persistMemory = true, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
     this.#progressOn = progress !== false; // measurement arm (scripts/measure-progress.mjs): false = track progress but never redirect
     this.#wExtra = confidence && typeof confidence === 'object' ? confidence.wPerExtra : undefined; // arm object only: the measurement compares W_PER_EXTRA 0.35 and 0.5
     this.#fixedMood = confidence?.fixedMood === true;
@@ -389,6 +392,7 @@ export class ExplorerBrain {
     if (typeof ask !== 'function') throw new Error('ask is required: build it with the gateway');
     this.#ask = ask;
     this.#memoryDir = memoryDir ?? MEMORY_DIR;
+    this.#persistMemory = persistMemory;
     const memory = createMemory({
       approachId: 'nearest_frontier',
       approachText: APPROACHES.nearest_frontier.text,
@@ -405,6 +409,144 @@ export class ExplorerBrain {
     this.#cs = createConfidence(confidence && typeof confidence === 'object' ? confidence : {}); // an arm object = start / weights / model (checks and measurements)
     this.#syncConfidence();
     this.#csLast = this.#capState().C;
+  }
+
+  serialize() {
+    return { v: 1, id: this.#world.id, optionRandom: this.#world.optionRandomState(),
+      revisitWindow: snapshotRevisitWindow(this.#memory),
+      skills: this.#skills.serialize(), state: {
+        memory: encodeSnapshot(this.#memory),
+        review: encodeSnapshot(this.#review),
+        encounter: encodeSnapshot(this.#encounter),
+        coinKnown: encodeSnapshot(this.#coinKnown),
+        coinDue: encodeSnapshot(this.#coinDue),
+        coinStep: encodeSnapshot(this.#coinStep),
+        dirAskStep: encodeSnapshot(this.#dirAskStep),
+        leaveDue: encodeSnapshot(this.#leaveDue),
+        tacticGoal: encodeSnapshot(this.#tacticGoal),
+        approachGoal: encodeSnapshot(this.#approachGoal),
+        corner: encodeSnapshot(this.#corner),
+        route: encodeSnapshot(this.#route),
+        entry: encodeSnapshot(this.#entry),
+        entryDist: null, // derived known-map cache, rebuilt after restore
+        entryKey: '',
+        entryDistance: encodeSnapshot(this.#entryDistance),
+        furthestEntry: encodeSnapshot(this.#furthestEntry),
+        samples: encodeSnapshot(this.#samples),
+        retreatAt: encodeSnapshot(this.#retreatAt),
+        retreats: encodeSnapshot(this.#retreats),
+        forward: encodeSnapshot(this.#forward),
+        backtrack: encodeSnapshot(this.#backtrack),
+        progressOn: encodeSnapshot(this.#progressOn),
+        exclude: encodeSnapshot(this.#exclude),
+        bounceCells: encodeSnapshot(this.#bounceCells),
+        tabu: encodeSnapshot(this.#tabu),
+        track: encodeSnapshot(this.#track),
+        wins: encodeSnapshot(this.#wins),
+        winStep: encodeSnapshot(this.#winStep),
+        gapNow: encodeSnapshot(this.#gapNow),
+        tabuTick: encodeSnapshot(this.#tabuTick),
+        moodTrack: encodeSnapshot(this.#moodTrack),
+        moodTick: encodeSnapshot(this.#moodTick),
+        reviewMood: encodeSnapshot(this.#reviewMood),
+        cellRing: encodeSnapshot(this.#cellRing),
+        stayRun: encodeSnapshot(this.#stayRun),
+        moveTick: encodeSnapshot(this.#moveTick),
+        told: encodeSnapshot(this.#told),
+        seen: encodeSnapshot(this.#seen),
+        remark: encodeSnapshot(this.#remark),
+        remarkN: encodeSnapshot(this.#remarkN),
+        everSeen: encodeSnapshot(this.#everSeen),
+        remembered: encodeSnapshot(this.#remembered),
+        zone: encodeSnapshot(this.#zone),
+        lastBodies: encodeSnapshot(this.#lastBodies),
+        struck: encodeSnapshot(this.#struck),
+        hold: encodeSnapshot(this.#hold),
+        holdOn: encodeSnapshot(this.#holdOn),
+        ctx: encodeSnapshot(this.#ctx),
+        seq: encodeSnapshot(this.#seq),
+        skillEvents: encodeSnapshot(this.#skillEvents),
+        cs: encodeSnapshot(this.#cs),
+        csLast: encodeSnapshot(this.#csLast),
+        csWhy: encodeSnapshot(this.#csWhy),
+        fixedMood: encodeSnapshot(this.#fixedMood),
+        wExtra: encodeSnapshot(this.#wExtra),
+        capFired: encodeSnapshot(this.#capFired),
+        visibleIds: encodeSnapshot(this.#visibleIds),
+      } };
+  }
+
+  restore(saved) {
+    if (saved?.v !== 1 || saved.id !== this.#world.id) throw new TypeError('invalid explorer brain snapshot');
+    this.#memory = decodeSnapshot(saved.state.memory);
+    this.#review = decodeSnapshot(saved.state.review);
+    this.#encounter = decodeSnapshot(saved.state.encounter);
+    this.#coinKnown = decodeSnapshot(saved.state.coinKnown);
+    this.#coinDue = decodeSnapshot(saved.state.coinDue);
+    this.#coinStep = decodeSnapshot(saved.state.coinStep);
+    this.#dirAskStep = decodeSnapshot(saved.state.dirAskStep);
+    this.#leaveDue = decodeSnapshot(saved.state.leaveDue);
+    this.#tacticGoal = decodeSnapshot(saved.state.tacticGoal);
+    this.#approachGoal = decodeSnapshot(saved.state.approachGoal);
+    this.#corner = decodeSnapshot(saved.state.corner);
+    this.#route = decodeSnapshot(saved.state.route);
+    this.#entry = decodeSnapshot(saved.state.entry);
+    this.#entryDist = decodeSnapshot(saved.state.entryDist);
+    this.#entryKey = decodeSnapshot(saved.state.entryKey);
+    this.#entryDistance = decodeSnapshot(saved.state.entryDistance);
+    this.#furthestEntry = decodeSnapshot(saved.state.furthestEntry);
+    this.#samples = decodeSnapshot(saved.state.samples);
+    this.#retreatAt = decodeSnapshot(saved.state.retreatAt);
+    this.#retreats = decodeSnapshot(saved.state.retreats);
+    this.#forward = decodeSnapshot(saved.state.forward);
+    this.#backtrack = decodeSnapshot(saved.state.backtrack);
+    this.#progressOn = decodeSnapshot(saved.state.progressOn);
+    this.#exclude = decodeSnapshot(saved.state.exclude);
+    this.#bounceCells = decodeSnapshot(saved.state.bounceCells);
+    this.#tabu = decodeSnapshot(saved.state.tabu);
+    this.#track = decodeSnapshot(saved.state.track);
+    this.#wins = decodeSnapshot(saved.state.wins);
+    this.#winStep = decodeSnapshot(saved.state.winStep);
+    this.#gapNow = decodeSnapshot(saved.state.gapNow);
+    this.#tabuTick = decodeSnapshot(saved.state.tabuTick);
+    this.#moodTrack = decodeSnapshot(saved.state.moodTrack);
+    this.#moodTick = decodeSnapshot(saved.state.moodTick);
+    this.#reviewMood = decodeSnapshot(saved.state.reviewMood);
+    this.#cellRing = decodeSnapshot(saved.state.cellRing);
+    this.#stayRun = decodeSnapshot(saved.state.stayRun);
+    this.#moveTick = decodeSnapshot(saved.state.moveTick);
+    this.#told = decodeSnapshot(saved.state.told);
+    this.#seen = decodeSnapshot(saved.state.seen);
+    this.#remark = decodeSnapshot(saved.state.remark);
+    this.#remarkN = decodeSnapshot(saved.state.remarkN);
+    this.#everSeen = decodeSnapshot(saved.state.everSeen);
+    this.#remembered = decodeSnapshot(saved.state.remembered);
+    this.#zone = decodeSnapshot(saved.state.zone);
+    this.#lastBodies = decodeSnapshot(saved.state.lastBodies);
+    this.#struck = decodeSnapshot(saved.state.struck);
+    this.#hold = decodeSnapshot(saved.state.hold);
+    this.#holdOn = decodeSnapshot(saved.state.holdOn);
+    this.#ctx = decodeSnapshot(saved.state.ctx);
+    this.#seq = decodeSnapshot(saved.state.seq);
+    this.#skillEvents = decodeSnapshot(saved.state.skillEvents);
+    this.#cs = decodeSnapshot(saved.state.cs);
+    this.#csLast = decodeSnapshot(saved.state.csLast);
+    this.#csWhy = decodeSnapshot(saved.state.csWhy);
+    this.#fixedMood = decodeSnapshot(saved.state.fixedMood);
+    this.#wExtra = decodeSnapshot(saved.state.wExtra);
+    this.#capFired = decodeSnapshot(saved.state.capFired);
+    this.#visibleIds = decodeSnapshot(saved.state.visibleIds);
+    this.#skills = SkillSet.restore(saved.skills);
+    if (typeof this.#world.timeNow === 'function') this.#skills.attachTime(() => this.#world.timeNow(), this.#world.stepMs);
+    this.#world.restoreOptionRandom(saved.optionRandom);
+    restoreRevisitWindow(this.#memory, saved.revisitWindow);
+    this.#signal = null;
+    return this;
+  }
+
+  static restore(world, saved, { ask, memoryDir = null, persistMemory = true } = {}) {
+    const brain = new ExplorerBrain(world, { ask, memoryDir, persistMemory, skills: 'none' });
+    return brain.restore(saved);
   }
 
   // Applies one confidence event with the lives left now (own state: fog-safe) and mirrors the result into memory.
@@ -850,7 +992,8 @@ export class ExplorerBrain {
   async decide({ signal } = {}) {
     if (signal?.aborted) throw new CallAborted();
     const info = this.#encounter;
-    const saved = { pending: info.pending, lastDecision: info.lastDecision, leaveDue: this.#leaveDue, coinDue: this.#coinDue, coinStep: this.#coinStep, dirAskStep: this.#dirAskStep };
+    const saved = { pending: info.pending, lastDecision: info.lastDecision, leaveDue: this.#leaveDue, coinDue: this.#coinDue, coinStep: this.#coinStep, dirAskStep: this.#dirAskStep,
+      optionRandom: this.#world.optionRandomState() };
     this.#signal = signal ?? null;
     this.#ctx = null;
     try {
@@ -864,6 +1007,7 @@ export class ExplorerBrain {
       this.#coinDue = saved.coinDue;
       this.#coinStep = saved.coinStep;
       this.#dirAskStep = saved.dirAskStep;
+      this.#world.restoreOptionRandom(saved.optionRandom);
       this.#ctx = null;
       throw e;
     } finally {
@@ -1047,7 +1191,7 @@ export class ExplorerBrain {
               'Engage while the sword is ready: hold 2 steps off the nearest enemy so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
             ],
         },
-        criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
+        criteria: Object.fromEntries(shuffle(tacticIds, () => this.#world.optionRandom()).map((id) => [id, decision.tactic.options[id]])),
       };
       if (!skip) {
         for (const id of tacticIds) {
@@ -1359,7 +1503,7 @@ export class ExplorerBrain {
   // the turn's memory files after apply(), outside its mutation lock; takeTurn() calls it itself.
   async save() {
     this.#syncSkills();
-    await saveMemory(this.#memory, this.#memoryDir);
+    if (this.#persistMemory) await saveMemory(this.#memory, this.#memoryDir);
   }
 
   async #save() {
@@ -1472,7 +1616,7 @@ export class ExplorerBrain {
       if (!allowed.has(k)) allowed.set(k, Object.keys(this.#menu(tacticFeasibility(world, g, { exclude: this.#excluded(), armed: this.#armed(), stunned: this.#stunnedIds(), retreat }), world.steps + 1, false)).map((t) => t.replace(/_/g, ' ')));
       return allowed.get(k);
     };
-    const criteria = Object.fromEntries(shuffle(ids).map((id) => {
+    const criteria = Object.fromEntries(shuffle(ids, () => this.#world.optionRandom()).map((id) => {
       const s = SENTIMENTS[id];
       const here = inSight ? ` Tactics it leaves here: ${leaves(id).join(', ') || 'none, only luck'}.` : '';
       return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
@@ -1532,7 +1676,7 @@ export class ExplorerBrain {
     // Option order is shuffled every tick because Jev leans toward the first option.
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`
     // (same for every move_if_<tactic>); each option keeps only its progress toward this tactic's target.
-    const dirs = shuffle(avail);
+    const dirs = shuffle(avail, () => this.#world.optionRandom());
     // A live directive parks the approach: on an ordinary tick the moves lose their "progress toward the target" part.
     const live = this.directive;
     const parked = Boolean(live) && !speculative && !isTactic(approachId);
@@ -1640,7 +1784,7 @@ export class ExplorerBrain {
 
   // A next_approach Choice over `ids` (shuffled), each option saying what it means and where it leads from here.
   #nextApproachQuestion(ids, instructions) {
-    return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids).map((id) => [id, this.#approachOption(id)])) };
+    return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids, () => this.#world.optionRandom()).map((id) => [id, this.#approachOption(id)])) };
   }
 
   // Remembers which piles were seen. A pile seen for the first time within COIN_NEAR known-path steps queues a

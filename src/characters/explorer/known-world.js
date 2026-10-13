@@ -4,19 +4,27 @@
 // check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
 import { levelsOn } from '../adversary/kinds.js';
-import { hasLineOfSight } from '../../dungeon.js';
+import { hasLineOfSight, rng } from '../../dungeon.js';
 import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
 export class KnownWorld {
   #game;
   #id;
+  #optionRand;
 
   // One window per explorer: `explorerId` (default: the primary) says whose position, purse and sight every read is.
   // Light is shared, so isKnown / knownTile are the same for every explorer of a game.
   constructor(game, explorerId = null) {
     this.#game = game;
     this.#id = game.explorer(explorerId).id;
+    let hash = 2166136261;
+    for (const c of this.#id) hash = Math.imul(hash ^ c.charCodeAt(0), 16777619) >>> 0;
+    this.#optionRand = rng(((game.dungeon.seed ?? 1) ^ hash ^ 0x738da5c1) >>> 0);
   }
+
+  optionRandom() { return this.#optionRand(); }
+  optionRandomState() { return this.#optionRand.state(); }
+  restoreOptionRandom(state) { this.#optionRand.restore(state); }
 
   get #me() { return this.#game.explorer(this.#id); }
   get id() { return this.#id; }

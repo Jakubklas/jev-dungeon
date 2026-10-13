@@ -16,6 +16,7 @@ export const DEFAULT_ROOT = fileURLToPath(new URL('../../runs/server/', import.m
 const JSON_FILES = new Set(['meta.json', 'rules.json', 'dungeon.json', 'state.json']);
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const FORBIDDEN_CALL_FIELDS = /^(key|api_key|apikey|authorization|token|body|request|response|headers|cookie)$/i;
+const HELD_ROOTS = new Set();
 
 export class StoreError extends Error {}
 
@@ -46,6 +47,7 @@ export class FileStore {
 
   // ---------- lock ----------
   lock() {
+    if (HELD_ROOTS.has(this.root)) throw new StoreError(`another store in this process holds ${this.root}`);
     const path = join(this.root, 'server.lock');
     if (existsSync(path)) {
       let other = NaN;
@@ -62,6 +64,7 @@ export class FileStore {
       throw err;
     }
     this.#locked = true;
+    HELD_ROOTS.add(this.root);
   }
 
   unlock() {
@@ -71,6 +74,7 @@ export class FileStore {
       if (Number(readFileSync(path, 'utf8').trim()) === process.pid) unlinkSync(path);
     } catch { /* already gone */ }
     this.#locked = false;
+    HELD_ROOTS.delete(this.root);
   }
 
   // ---------- host token ----------
@@ -178,6 +182,13 @@ export class FileStore {
     const all = this.readEvents(id);
     const cut = state?.event_seq ?? 0;
     const events = all.filter((e) => e.seq <= cut);
+    // A crash may leave an appended event without its state write. Remove it before new events reuse that seq.
+    // Also strips a torn final line. The lock makes this the only writer during recovery.
+    const eventPath = join(this.#dir(id), 'events.jsonl');
+    if (existsSync(eventPath)) {
+      const canonical = events.map((e) => JSON.stringify(e)).join('\n') + (events.length ? '\n' : '');
+      if (readFileSync(eventPath, 'utf8') !== canonical) atomicWrite(eventPath, canonical);
+    }
     return {
       meta: this.#readJson(id, 'meta.json'),
       rules: this.#readJson(id, 'rules.json'),
