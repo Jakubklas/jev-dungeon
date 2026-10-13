@@ -244,7 +244,7 @@ const withoutKeys = (o, keys) => Object.fromEntries(Object.entries(o).filter(([k
 
 // self.skills as Jev reads it: id -> 'ready' | 'ready in N' (the id names the skill; the rules sentence and
 // the skill options carry the rest), so the request stays small.
-const skillStates = (summaries) => Object.fromEntries(summaries.map((k) => [k.id, k.ready ? 'ready' : `ready in ${k.cooldown_left}`]));
+const skillStates = (summaries) => Object.fromEntries(summaries.map((k) => [k.id, k.ready ? 'ready' : `ready in ${k.cooldown_left}${k.kind === 'dash' ? ' seconds' : ''}`]));
 
 // "steady×3 → wary": the mind picks as runs, oldest first.
 function mindRuns(history) {
@@ -630,6 +630,7 @@ export class ExplorerBrain {
       visibleOpponents: visible.map((v) => ({ id: v.id, pos: [...v.pos], mode: v.mode, distance: v.distance, hp: v.hp, maxHp: v.maxHp, stun: v.stun })),
       opponentsNear,
       threatNear,
+      availableMoves: world.availableMoves(),
       stunTicks: skillConfig().stunTicks,
       coinChance: skillConfig().coinDropChance,
     };
@@ -998,7 +999,7 @@ export class ExplorerBrain {
       };
       if (!skip) {
         for (const id of tacticIds) {
-          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions, decisionTargets[id], moves);
+          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions && !('dash' in skillOptions), decisionTargets[id], moves);
           questions[`move_if_${id}`] = q.question;
           moveOptions[id] = q.options;
           // engage judges moves without the minimum gap; the shared facts keep the mood's gap warnings.
@@ -1006,7 +1007,7 @@ export class ExplorerBrain {
         }
       }
     } else if (!skip && !held) {
-      const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions, null, moves);
+      const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions && !('dash' in skillOptions), null, moves);
       questions.next_move = q.question;
       moveOptions[memory.approach.id] = q.options;
     }
@@ -1060,6 +1061,8 @@ export class ExplorerBrain {
     // The fire strike is offered only when outnumbered, which is when the low moods say "keep running": one clause, sent only
     // with that option on the question, says the blast is the way to break out (other requests stay byte-identical).
     const fireLine = !liveDirective && 'fire_strike' in skillOptions ? ` ${FIRE_LINE}` : '';
+    // The skill question already carries the mood's skill rule. When Dash is offered, omit the
+    // same line from every move question (up to six copies on a tactic decision).
     const skillQ = hasSkillOptions ? skillQuestion(skillOptions, (liveDirective ? directiveLine(liveDirective.text) : profile.skill_priority) + fireLine, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
@@ -1134,11 +1137,18 @@ export class ExplorerBrain {
     if (decision) decision.apiMs = apiMs;
     // (apiMs is the whole decision tick: sentiment + tick request)
 
-    // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
-    if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
+    // The skill resolves before movement. Dash extends that move only when a legal direction was chosen.
+    let distance = 1;
+    if (skillKey !== 'none') {
+      const chosenSkill = this.#skills.get(skillKey)?.skill;
+      if (chosenSkill?.kind !== 'dash' || (dir !== STAY && legal.includes(dir))) {
+        skillDecision.used = this.#useSkill(skillKey, step);
+        if (skillDecision.used && chosenSkill?.kind === 'dash') distance = chosenSkill.distance;
+      }
+    }
 
     const from = world.pos;
-    const result = world.move(dir);
+    const result = world.move(dir, distance);
     this.#noteMove(dir, held, from, world.steps);
     recordStep(memory, {
       step: world.steps,

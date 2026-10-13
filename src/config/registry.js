@@ -111,7 +111,7 @@ const P1_ROWS = [
   { key: 'testbedProps', path: 'testbed.props', group: 'Testbed', label: 'testbed.props', hint: 'Default prop preset', doc: 'Default prop preset: none, few or many', type: 'choice', options: ['none', 'few', 'many'], def: 'none', when: 'next', page: false },
 ];
 // ---- P2: skills, kinds, characters. File-only. Lists and tuples are compared by value (load.js eq). ----
-const LOADOUT_IDS = ['sword_strike', 'shield_block', 'fire_strike', 'claw_strike'];
+const LOADOUT_IDS = ['sword_strike', 'shield_block', 'fire_strike', 'dash', 'claw_strike'];
 const list = (key, path, def, doc) => ({ key, path, group: 'Skills', label: path, hint: doc, doc, type: 'list', options: LOADOUT_IDS, maxLen: 4, def, when: 'next', page: false });
 const TRAIT_TABLE = [ // [knob, def (levels 1/2/3), min, max, step, doc]; max = the default's largest where a memory limit caps it
   ['chaseRange', [5, 7, 7], 1, 20, 1, 'Cells within which a seen explorer starts a hunt'],
@@ -137,11 +137,12 @@ const TRAIT_TABLE = [ // [knob, def (levels 1/2/3), min, max, step, doc]; max = 
   ['moralePack', [0, 0.5, 1], 0, 3, 0.1, 'Worth of each nearby packmate to its morale'],
 ];
 const P2_ROWS = [
-  list('explorerSkills', 'explorer.skills', ['sword_strike', 'shield_block', 'fire_strike'], 'Skills the explorer starts with (at most 4; empty = none)'),
+  list('explorerSkills', 'explorer.skills', ['sword_strike', 'shield_block', 'fire_strike', 'dash'], 'Skills the explorer starts with (at most 4; empty = none)'),
   list('ghostSkills', 'monsters.kinds.ghost.skills', ['claw_strike'], 'Skills a ghost has (at most 4; empty = none)'),
   list('trollSkills', 'monsters.kinds.troll.skills', ['claw_strike'], 'Skills a troll has (at most 4; empty = none)'),
   { ...num('fireDamage', 'skills.fire_strike.damage', 2, 1, 5, 1, 'Hit points the fire strike takes from every enemy in its 9x9 area'), group: 'Skills' },
   { ...num('fireCooldown', 'skills.fire_strike.cooldown', 120, 0, 1000, 1, 'Steps before the fire strike is ready again'), group: 'Skills' },
+  { ...num('dashCooldown', 'skills.dash.cooldown', 20, 0, 300, 1, 'Seconds before Dash is ready again'), group: 'Skills' },
   { ...num('ghostSpeed', 'monsters.kinds.ghost.speed', 1, 0.2, 1, 0.05, 'Share of the global monster speed (1 = full)'), group: 'Skills' },
   { ...num('ghostClawCooldown', 'monsters.kinds.ghost.clawCooldown', null, 0, 6, 1, 'Ghost claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },
   { ...num('trollClawCooldown', 'monsters.kinds.troll.clawCooldown', null, 0, 6, 1, 'Troll claw cooldown, steps (null = the global clawCooldown)'), group: 'Skills', nullable: true },

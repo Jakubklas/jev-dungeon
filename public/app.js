@@ -1778,7 +1778,7 @@ function renderSkills() {
       el('i', null, 'skill-pip'),
       el('b', k.name ?? label(id), 'skill-name'),
       el('span', k.kind ? label(k.kind) : '', 'skill-kind'),
-      el('span', ready ? 'ready' : `cooldown ${k.cooldown_left ?? '?'}`, 'skill-state'),
+      el('span', ready ? 'ready' : `cooldown ${k.cooldown_left ?? '?'}${k.kind === 'dash' ? 's' : ''}`, 'skill-state'),
     );
     if (used) li.append(el('span', 'used', 'skill-used'));
     return li;

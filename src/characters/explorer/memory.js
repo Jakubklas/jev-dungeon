@@ -284,7 +284,7 @@ export function renderMarkdown(m) {
   lines.push('', '## Encounters', `- ${e.count} met, ${e.escaped} escaped, ${e.hits} hit${e.hits === 1 ? '' : 's'}, ${e.dispelled} dispelled${e.last_at_step ? `, last at step ${e.last_at_step}` : ''}`);
   lines.push('', '## Skills');
   if (!m.skills.length) lines.push('_None._');
-  for (const k of m.skills) lines.push(`- **${k.name}** (${k.kind}): ${k.ready ? 'ready' : `ready again in ${k.cooldown_left} step${k.cooldown_left === 1 ? '' : 's'}`}${k.text ? ` — ${k.text}` : ''}`);
+  for (const k of m.skills) lines.push(`- **${k.name}** (${k.kind}): ${k.ready ? 'ready' : k.kind === 'dash' ? `ready again in ${k.cooldown_left} second${k.cooldown_left === 1 ? '' : 's'}` : `ready again in ${k.cooldown_left} step${k.cooldown_left === 1 ? '' : 's'}`}${k.text ? ` — ${k.text}` : ''}`);
   if (m.directive) lines.push('', '## Directive', `“${m.directive.text}” (steps ${m.directive.from_step}-${m.directive.until_step})`);
   lines.push('', '## Events');
   if (!m.events.length) lines.push('_None yet._');

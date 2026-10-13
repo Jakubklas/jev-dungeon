@@ -97,7 +97,7 @@ export class Game {
   //   coinPiles /* [[x, y]] one entry per coin on the floor (duplicates = a bigger pile); replaced, never spliced */,
   //   coins /* the explorer's coin total */, coinRand /* coin-drop RNG, null until the first roll */
   // coinPiles starts as a copy of dungeon.coins (src/coins.js spawnCoins; [] when absent, e.g. hand-built maps).
-  applyMove(dir)         // -> { moved, stayed?, revealed, revisit, won, coins, healed, regen, respawned }. No-op when won or lost. STAY keeps the cell, counts a step. Hearts due back (heartsTaken, HEART_RESPAWN) respawn before the pickup, except one on the explorer's cell.
+  applyMove(dir, distance = 1) // -> { moved, stayed?, revealed, revisit, won, coins, healed, regen, respawned, travelled? }. No-op when won or lost. Distance 2..4 is Dash: crosses consecutive floor cells in one turn, stopping at a wall or portal, lighting and collecting along the way. STAY keeps the cell, counts a step. Hearts due back (heartsTaken, HEART_RESPAWN) respawn before the pickup, except one on the explorer's cell.
                          //    A move picks up every pile on the destination (coins += n, `coins: n` in the return, 0 otherwise).
                          //    A null treasure never wins.
   damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
@@ -262,7 +262,7 @@ It is not part of the `playTurn()` return value.
 
 ## `src/skills/*` (shared)
 
-Skills are an attack and a block for the explorer, and a claw strike for each ghost. All free to check (`scripts/check-skills.mjs`; the engage hold and its duels: `scripts/check-duels.mjs`, harness `scripts/lib/duel-harness.mjs`, API in its header: `playDuel(opts)` returns `{ strikes, claws, dispelled, ticks, hitsTaken, held, trace }`; `hold` is true | false | 'multi'; also exports `openGroups(count, n, kind)` and `corridorGroup(count, n, kind)` for 2-4 ghost layouts, and `health` sets the real lives). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
+The explorer carries sword strike, shield block, fire strike and Dash; each ghost carries a claw strike. All are free to check (`scripts/check-skills.mjs`; the engage hold and its duels: `scripts/check-duels.mjs`, harness `scripts/lib/duel-harness.mjs`, API in its header: `playDuel(opts)` returns `{ strikes, claws, dispelled, ticks, hitsTaken, held, trace }`; `hold` is true | false | 'multi'; also exports `openGroups(count, n, kind)` and `corridorGroup(count, n, kind)` for 2-4 ghost layouts, and `health` sets the real lives). Replaces the old `src/capabilities/` scaffold (`defineCapability`, `feasibleOptions`, `actionQuestion` are gone).
 
 ```js
 export class Skill {                              // skill.js. One stateful instance per character per skill.
@@ -283,6 +283,10 @@ export class BlockSkill extends Skill {           // block.js. kind 'block'
   constructor({ effectiveness = 0.5, ...rest })   // 0..1
   options(view, self)                             // needs ready and self.threatNear (true or { id, steps }); one { key: id, fact, target: null }
 }
+export class DashSkill extends Skill {            // dash.js. kind 'dash', distance 4, wall-clock cooldown 20 seconds
+  constructor({ distance = 4, now = Date.now, ...rest })
+  options(view, self)                             // one option when ready and self.availableMoves has a direction other than stay
+}
 export const MAX_SKILLS = 4
 export class SkillSet {                           // skill-set.js. Throws over 4 skills or on a duplicate id.
   constructor(skills = [])
@@ -291,8 +295,8 @@ export class SkillSet {                           // skill-set.js. Throws over 4
   get(key)                                        // -> { skill, target } from the latest options() call, else null
   summaries(), turnPassed()
 }
-export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), fire_strike (area 2, cd 120), claw_strike (attack 1, cd 2)
-export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block','fire_strike'], ghost: ['claw_strike'], none: [] }
+export const LOADOUTS                             // loadouts.js: sword_strike (attack 1, cd 1), shield_block (block 0.6, cd 2), fire_strike (area 2, cd 120), dash (4 cells, 20 seconds), claw_strike (attack 1, cd 2)
+export const DEFAULT_SETS = { explorer: ['sword_strike','shield_block','fire_strike','dash'], ghost: ['claw_strike'], none: [] }
 export class AreaSkill extends AttackSkill          // area.js: kind 'area', shape BLOCK_9X9 (squareBlock(9), centred), minSeen 2; options() -> one option { key: id, fact, target: { dir, cells } }
 export function buildSkillSet(kindOrList = 'none', tuning = {})   // numbers: loadout < skillConfig() (settings) < tuning
 export const SKILL_MIN = 0.5                      // question.js
@@ -304,7 +308,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit, onHit, ra
 ```
 `resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if `game.block` is set and `game.steps <= block.until_step` and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`); each dispel then rolls `game.coinRandom()` once and, below `skillConfig().coinDropChance`, adds a pile at the ghost's cell and emits `{ id, type: 'coin_drop', at }`. Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
 
-**The `skill` question.** Asked in the same request as `next_move`, at most one per request (never per tactic, never in the explorer's sentiment request). Explorer gate: some skill is ready and an adversary is visible within 10 cells or a sighting up to 10 steps old lies within 10; the attack then lists only aims that hold a visible adversary, the block needs a visible chaser within 2 path steps. Ghost gate: a hunting ghost with the explorer in sight within 10 cells. With one legal move, a skill-only request is sent instead (dormant for the explorer: `stay` is always legal). The explorer's mind adds a `skill_priority` line. Fog: explorer skill facts use only visible adversaries, its own sightings and its own strike tally, never a ghost's hp, stun or cooldown.
+**The `skill` question.** Asked in the same request as `next_move`, at most one per request (never per tactic, never in the explorer's sentiment request). Attack options require an adversary visible within 10 cells or a recent sighting within 10; the attack then lists only aims that hold a visible adversary. Block needs a visible chaser within 2 path steps. Dash is offered whenever ready and a movement direction is legal, including during quiet exploration. Its option and question tell Jev to use it to escape immediate danger, catch a target now or explore faster; the chosen non-stay move supplies its direction. Ghost gate: a hunting ghost with the explorer in sight within 10 cells. With one legal move, a skill-only request is sent instead (dormant for the explorer: `stay` is always legal). The explorer's mind adds a `skill_priority` line. Fog: explorer skill facts use only known moves, visible adversaries, its own sightings and its own strike tally, never a ghost's unseen state. Dash's `cooldown_left` is seconds; other skills use steps.
 
 ## `src/characters/explorer/*`
 
@@ -321,7 +325,7 @@ visibleAdversaries()                    // -> [{ id, pos, mode, distance, hp, ma
 get levelsOn                            // whether monsters.levels.enabled is on (config switch, no game state); off, no level reaches matchup() or Jev
 seenTreasure()                          // -> the portal cell once lit, else null (also null when there is none)
 seenCoins()                             // -> copies of the coin piles on known (lit) cells only
-move(dir)                               // the explorer's own step (Game.applyMove)
+move(dir, distance = 1)                 // the explorer's own step (Game.applyMove); Dash uses distance 4
 useSkill(skillSet, key)                 // before the step: an attack turns to its aim (game.facing) and runs resolveAttack (events strike, struck, dispelled);
                                         // a block sets game.block = { effectiveness, until_step: steps + 1 }. Marks the skill used. -> events[] | null (unknown key, not ready, game over)
 ```

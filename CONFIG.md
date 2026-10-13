@@ -29,8 +29,8 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.kinds.troll.speed` | 0.65 | 0.2..1 | next | no | A troll moves at this share of the ghost speed. |
 | `monsters.kinds.troll.stunTicks` | 0 | 0..6 | next | no | Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step). |
 | `monsters.spawn.minSteps` | 20 | 1..60 | next | no | Path steps a monster spawns away from the explorer start |
-| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
-| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
+| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
+| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
 | `monsters.kinds.ghost.speed` | 1 | 0.2..1 | next | no | Share of the global monster speed (1 = full) |
 | `monsters.kinds.ghost.clawCooldown` | null | 0..6 | next | no | Ghost claw cooldown, steps (null = the global clawCooldown) |
 | `monsters.kinds.troll.clawCooldown` | null | 0..6 | next | no | Troll claw cooldown, steps (null = the global clawCooldown) |
@@ -125,13 +125,13 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.kinds.tree_giant.speed` | 0.5 | 0.1..2 | next | no | Tree giant movement share of explorer speed |
 | `monsters.kinds.tree_giant.stunTicks` | 0 | 0..6 | next | no | Tree giant stun ticks after a sword hit |
 | `monsters.kinds.tree_giant.clawCooldown` | 3 | 0..6 | next | no | Tree giant steps between attacks |
-| `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
+| `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
 | `monsters.kinds.wolf.hp` | 3 | 1..20 | next | no | Wolf base hp before level scaling |
 | `monsters.kinds.wolf.clawDamage` | 1 | 1..6 | next | no | Wolf base attack damage before level scaling |
 | `monsters.kinds.wolf.speed` | 2 | 0.1..3 | next | no | Wolf movement share of explorer speed |
 | `monsters.kinds.wolf.stunTicks` | 1 | 0..6 | next | no | Wolf stun ticks after a sword hit |
 | `monsters.kinds.wolf.clawCooldown` | 1 | 0..6 | next | no | Wolf steps between attacks |
-| `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |
+| `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |
 | `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (wolves match ghost weight, tree giants use half troll weight) |
 | `monsters.kinds.troll.weight` | 0.25 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds |
 | `monsters.characters.mix` | "mixed" | "mixed" / "standard" / weights | next | no | Character mix of spawned monsters |
@@ -223,7 +223,7 @@ The knight: lives and protection after a hit.
 | `explorer.regen.steps` | 30 | 0..200 | live | no | Steps between natural heals of a hurt explorer (0 = no regen) |
 | `explorer.regen.amount` | 0.5 | 0..3 | live | no | Lives healed per natural heal (fractions allowed, up to max lives) |
 | `explorer.progress.redirect` | true | on/off | next | no | true = a sustained retreat is redirected to the deepest known frontier; false = tracked only |
-| `explorer.skills` | ["sword_strike","shield_block","fire_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
+| `explorer.skills` | ["sword_strike","shield_block","fire_strike","dash"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
 | `explorer.brain.reviewEvery` | 8 | 1..50 | live | no | Steps between approach reviews |
 | `explorer.brain.approachFailing` | 0.5 | 0..1 | live | no | approach_working below this switches the approach |
 | `explorer.brain.redecideCooldown` | 3 | 1..20 | live | no | Least ticks between decisions for a failing tactic |
@@ -414,6 +414,7 @@ Sword, shield and the stun they cause.
 | `skills.stunTicks` | 2 | 0..6 | next | no | Ticks a struck monster loses (no move, no Jev call) |
 | `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 9x9 area |
 | `skills.fire_strike.cooldown` | 120 | 0..1000 | next | no | Steps before the fire strike is ready again |
+| `skills.dash.cooldown` | 20 | 0..300 | next | no | Seconds before Dash is ready again |
 | `skills.minProbability` | 0.5 | 0.1..1 | next | no | Jev must be at least this sure to use a skill |
 | `skills.questionText.default.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for monsters |
 | `skills.questionText.default.none` | (built-in wording) | text, up to 300 chars | live | no | Skill question "none" option for monsters |

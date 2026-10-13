@@ -10,6 +10,7 @@ import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { Skill } from '../src/skills/skill.js';
 import { AttackSkill } from '../src/skills/attack.js';
 import { BlockSkill } from '../src/skills/block.js';
+import { DashSkill } from '../src/skills/dash.js';
 import { AreaSkill, BLOCK_9X9, squareBlock } from '../src/skills/area.js';
 import { newTestGame } from '../src/turn.js';
 import { MAX_SKILLS, SkillSet } from '../src/skills/skill-set.js';
@@ -73,7 +74,7 @@ check(sk.cooldownLeft === 0, 'cooldown never goes below 0');
 const sum = sk.summary();
 check(eq(Object.keys(sum), ['id', 'kind', 'name', 'text', 'ready', 'cooldown_left']), 'summary keys');
 check(eq(JSON.parse(JSON.stringify(sum)), sum) && sum.kind === 'attack', 'summary is plain JSON');
-check(eq(buildSkillSet('explorer').summaries().map((s) => s.id), ['sword_strike', 'shield_block', 'fire_strike']), 'explorer loadout');
+check(eq(buildSkillSet('explorer').summaries().map((s) => s.id), ['sword_strike', 'shield_block', 'fire_strike', 'dash']), 'explorer loadout');
 check(eq(buildSkillSet('ghost').summaries().map((s) => s.id), ['claw_strike']) && LOADOUTS.claw_strike.cooldown === 2, 'ghost loadout has no block');
 check(buildSkillSet('none').size === 0, 'none loadout is empty');
 check(buildSkillSet('explorer', { shield_block: { effectiveness: 0.9 } }).skills[1].effectiveness === 0.9, 'tuning overrides numbers');
@@ -558,7 +559,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   const g = arena(['#################', '#...............#', '#...............#', '#...A...........#', '#....@A.........#', '#.....A....A....#', '#...............#', '#...............#', '#################']);
   const world = new KnownWorld(g);
   const set = buildSkillSet('explorer');
-  check(set.skills.map((k) => k.id).join() === 'sword_strike,shield_block,fire_strike', 'the explorer carries the fire strike');
+  check(set.skills.map((k) => k.id).join() === 'sword_strike,shield_block,fire_strike,dash', 'the explorer carries the fire strike and dash');
   const o = set.options(world, seenOf(world));
   check(Object.keys(o).filter((k) => k.startsWith('fire')).join() === 'fire_strike', 'one fire option, no aim in the key');
   const fact = o.fire_strike?.fact ?? '';
@@ -620,6 +621,52 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     check(turn.explorer?.skill_decision?.used === 'fire_strike' || run.explorer.memory.encounters.dispelled >= 3, 'the brain used it: three dispels');
     check(run.explorer.memory.skills.some((k) => k.id === 'fire_strike' && k.kind === 'area' && !k.ready), 'memory mirrors the fire strike cooling down');
     check(JSON.stringify(run.explorer.lastRequest()).includes('"fire_strike"'), 'self.skills names it');
+  } finally { rmSync(dirR, { recursive: true, force: true }); }
+}
+
+// 14. Dash: a wall-clock cooldown, four crossed cells in one turn, and a fog-safe Jev choice.
+{
+  let now = 1_000;
+  const dash = new DashSkill({ ...LOADOUTS.dash, now: () => now });
+  const self = { availableMoves: ['right', 'stay'] };
+  const fact = dash.options({}, self)[0]?.fact ?? '';
+  check(fact.length <= 160 && /danger/.test(fact) && /target/.test(fact) && /explore/.test(fact), `dash fact covers all three uses: ${fact}`);
+  check(eq(dash.options({ hidden: true }, self), dash.options({ hidden: false }, self)), 'dash options ignore hidden state');
+  check(dash.options({}, { availableMoves: ['stay'] }).length === 0, 'dash needs a direction');
+  dash.markUsed(1);
+  dash.turnPassed();
+  check(!dash.ready && dash.cooldownLeft === 20 && dash.options({}, self).length === 0, 'dash cooldown starts at 20 real seconds');
+  now += 19_001;
+  check(!dash.ready && dash.cooldownLeft === 1, 'dash remains unavailable before 20 seconds');
+  now += 999;
+  check(dash.ready && dash.cooldownLeft === 0 && dash.options({}, self).length === 1, 'dash returns exactly at 20 seconds');
+
+  const g = arena(['#############', '#...........#', '#.@.........#', '#...........#', '#############']);
+  g.coinPiles = [[3, 2], [5, 2]];
+  const result = g.applyMove('right', 4);
+  check(eq(g.pos, [6, 2]) && g.steps === 1 && result.travelled === 4 && result.coins === 2 && g.coins === 2, 'dash visits four cells and picks up crossed coins in one turn');
+  check(g.trail.length === 5 && g.visits['3,2'] === 1 && g.isKnown([5, 2]), 'dash records and lights every crossed cell');
+  const wall = arena(['#############', '#...........#', '#.@..#......#', '#...........#', '#############']);
+  check(wall.applyMove('right', 4).travelled === 2 && eq(wall.pos, [4, 2]), 'dash stops before a wall');
+  const portal = arena(['#############', '#...........#', '#.@..T......#', '#...........#', '#############']);
+  check(portal.applyMove('right', 4).won && eq(portal.pos, [5, 2]) && portal.steps === 1, 'dash stops at the portal and wins');
+
+  const dirR = mkdtempSync(join(tmpdir(), 'dash-check-'));
+  try {
+    const url = pathToFileURL(dirR + '/');
+    let question = null;
+    const ask = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) => {
+      if (k === 'skill') question = q;
+      if (q.type === 'noul') return [k, { noul: 0.5 }];
+      const choice = k === 'skill' ? 'dash' : Object.hasOwn(q.criteria ?? {}, 'right') ? 'right' : Object.keys(q.criteria ?? {})[0];
+      return [k, { choice, probabilities: { [choice]: 1 }, confidence: 1 }];
+    }));
+    const run = newTestGame({ map: ['#############', '#...........#', '#.@.........#', '#...........#', '#############'], explorerSkills: ['dash'], seed: 7 },
+      { ask, decide: ask, memoryDir: url, dir: url });
+    const turn = await run.playTurn();
+    check(question && 'dash' in question.criteria && /Flee immediate danger/.test(question.criteria.dash) && /chase a target now/.test(question.criteria.dash) && /explore/.test(question.criteria.dash), 'Jev sees when and how to use Dash');
+    check(turn.skill_decision?.used === 'dash' && run.game.steps === 1 && eq(run.game.pos, [6, 2]), 'brain uses Dash with its chosen move');
+    check(run.explorer.memory.skills[0].kind === 'dash' && !run.explorer.memory.skills[0].ready, 'Dash cooldown is mirrored in memory');
   } finally { rmSync(dirR, { recursive: true, force: true }); }
 }
 

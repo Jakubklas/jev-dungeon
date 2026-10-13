@@ -3,7 +3,7 @@
 // reads ghostHp / stunTicks (skillConfig().ghostHp, skillConfig().stunTicks) when a ghost is created / hit.
 const DEFAULTS = Object.freeze({
   swordDamage: 1, swordCooldown: 1, shieldChance: 0.6, shieldCooldown: 2,
-  clawDamage: 1, clawCooldown: 2, fireDamage: 2, fireCooldown: 120, ghostHp: 2, stunTicks: 2, coinDropChance: 0.6,
+  clawDamage: 1, clawCooldown: 2, fireDamage: 2, fireCooldown: 120, dashCooldown: 20, ghostHp: 2, stunTicks: 2, coinDropChance: 0.6,
   trollHp: 4, trollClawDamage: 2, trollSpeed: 0.65, // the troll's own numbers: tougher, harder-hitting, slower than a ghost
   trollStunTicks: 0, // ticks a sword hit stuns a troll; 0 = it only loses hp (no knockback, no lost step)
   treeGiantHp: 4, treeGiantClawDamage: 2, treeGiantSpeed: 0.5, treeGiantStunTicks: 0, treeGiantClawCooldown: 3,
@@ -12,7 +12,7 @@ const DEFAULTS = Object.freeze({
   ghostSpeed: 1, // share of the global monster speed
   ghostClawCooldown: null, trollClawCooldown: null, // per-kind claw cooldown; null = the global clawCooldown
   // Who has which skills (central config; lists of loadout ids, at most 4 each). loadouts.js DEFAULT_SETS and kinds.js read them.
-  explorerSkills: Object.freeze(['sword_strike', 'shield_block', 'fire_strike']), ghostSkills: Object.freeze(['claw_strike']), trollSkills: Object.freeze(['claw_strike']),
+  explorerSkills: Object.freeze(['sword_strike', 'shield_block', 'fire_strike', 'dash']), ghostSkills: Object.freeze(['claw_strike']), trollSkills: Object.freeze(['claw_strike']),
 });
 let current = DEFAULTS;
 
@@ -39,5 +39,6 @@ export function loadoutTuning() {
     shield_block: { effectiveness: c.shieldChance, cooldown: c.shieldCooldown },
     claw_strike: { damage: c.clawDamage, cooldown: c.clawCooldown },
     fire_strike: { damage: c.fireDamage, cooldown: c.fireCooldown },
+    dash: { cooldown: c.dashCooldown },
   };
 }

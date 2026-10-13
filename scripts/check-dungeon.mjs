@@ -126,7 +126,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
 //     sibling skills files and DIRS from dungeon.js.
 {
   const SKILL_ALLOWED_IMPORTS = {
-    './skill.js': null, './attack.js': null, './area.js': null, './block.js': null, './skill-set.js': null, './loadouts.js': null,
+    './skill.js': null, './attack.js': null, './area.js': null, './block.js': null, './dash.js': null, './skill-set.js': null, './loadouts.js': null,
     './question.js': null, './config.js': null, '../dungeon.js': ['DIRS'],
   };
   const sk = (n, src) => fogViolations(n, src, SKILL_ALLOWED_IMPORTS);

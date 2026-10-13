@@ -126,7 +126,7 @@ const LIT = {
   ...Object.fromEntries(Object.keys(CAT.KINDS).filter((id) => id !== 'torch').map((id) => [`propWeight_${id}`, CAT.KINDS[id].weight])),
   // P2
   explorerSkills: [...LD.DEFAULT_SETS.explorer], ghostSkills: [...LD.DEFAULT_SETS.ghost], trollSkills: [...KD.KINDS.troll.skills],
-  fireDamage: LD.LOADOUTS.fire_strike.damage, fireCooldown: LD.LOADOUTS.fire_strike.cooldown,
+  fireDamage: LD.LOADOUTS.fire_strike.damage, fireCooldown: LD.LOADOUTS.fire_strike.cooldown, dashCooldown: LD.LOADOUTS.dash.cooldown,
   ghostSpeed: KD.KINDS.ghost.speed(), ghostClawCooldown: null, trollClawCooldown: null, skillMin: QS.SKILL_MIN,
   ...C.traitDefaults(),
   ...Object.fromEntries(Object.entries(SK.skillDefaults()).filter(([k]) => /^(treeGiant|wolf)/.test(k))),
@@ -284,7 +284,7 @@ writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 await S.applyNextGame();
-check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block', 'fire_strike']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
+check(eq(LD.buildSkillSet('explorer').skills.map((k) => k.id), ['sword_strike', 'shield_block', 'fire_strike', 'dash']) && QS.SKILL_MIN === 0.5 && KD.KINDS.ghost.speed() === 1 && C.profileOf(C.traitsOf('timid')).chaseRange === 5, 'removing the keys restores the P2 defaults');
 
 // 6d. P3: the explorer's thresholds, confidence model and moods follow the file; inconsistent ones are refused
 writeFileSync(cfg, `explorer:
