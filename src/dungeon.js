@@ -524,7 +524,7 @@ export function generateDungeon(seed = randomSeed()) {
         for (let x = r.x; x < r.x + r.w; x++) {
           const d = dist[y * width + x];
           if (d > 0 && d >= TREASURE_SHARE * maxD) pool.push([x, y]);
-          if (!spawnable && d >= SPAWN_STEPS && !(Math.hypot(x - start[0], y - start[1]) <= SIGHT_RANGE &&
+          if (!spawnable && d >= SPAWN_STEPS && !(Math.hypot(x - start[0], y - start[1]) <= startSight() &&
             hasLineOfSight({ width, height, tiles: grid }, start, [x, y]))) spawnable = true;
         }
       }
@@ -582,6 +582,13 @@ function lightAround(game, [cx, cy]) {
 // Real tiles: for adversary movement, never for explorer perception.
 export function isFloor(dungeon, [x, y]) {
   return inBounds(dungeon, [x, y]) && dungeon.tiles[y][x] === '.';
+}
+
+// How far the explorer sees from the start at step 0: an adversary is seen only on a lit cell, and
+// at step 0 only the start's light disc is lit. Spawn rules use it, so a sight range above the light
+// radius does not change any dungeon.
+export function startSight() {
+  return Math.min(SIGHT_RANGE, LIGHT_RADIUS);
 }
 
 // Supercover line between cell centres: every cell the segment touches, and both side cells

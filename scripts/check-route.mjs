@@ -274,7 +274,8 @@ for (const layout of ['linear', 'maze']) {
     const t = retreat();
     t.game.adversaries = [{ id: 'g1', pos: [...route.spine[mid + 1]], mode: 'chase' }];
     const back = [];
-    for (let k = mid - 1; k >= 0; k--) { t.game.adversaries[0].pos = [...route.spine[k + 1]]; back.push(t.at(route.spine[k])); } // it keeps pace, one behind
+    // it keeps pace, one behind; its cell is lit, since sight needs a revealed cell and t.at() teleports without lighting
+    for (let k = mid - 1; k >= 0; k--) { const [gx, gy] = route.spine[k + 1]; t.game.adversaries[0].pos = [gx, gy]; t.game.light[gy][gx] ||= 1; back.push(t.at(route.spine[k])); }
     if (back.some((s) => s.cue)) fail('suppression: a chasing visible ghost did not hold the cue');
     if (!back.some((s) => s.state === 'backtracking' && s.suppressed === 'combat')) fail('suppression: expected suppressed combat while backtracking');
   }

@@ -41,6 +41,9 @@ function handMap(rows, rooms = [{ x: 1, y: 1, w: rows[0].length - 2, h: rows.len
   }).join(''));
   const dungeon = { seed: 1, width: rows[0].length, height: rows.length, tiles, start, treasure, rooms };
   const game = new Game(dungeon);
+  // Fully lit: sight needs the adversary on a revealed cell (seesExplorer), and these maps test ghost
+  // behaviour, not lighting, while their scripts move game.pos directly. Section 5d0 tests the fog rule.
+  for (const row of game.light) row.fill(1);
   game.adversaries = [];
   return game;
 }
@@ -640,6 +643,26 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   check(A.slice(1).every((b) => JSON.parse(b).state.self.approach.id === approach), `fog: approach not ${approach}`);
   console.log(`adversary fog (${approach}): ${A.length} search requests identical for two hidden explorer positions, no explorer coordinates`);
   }
+}
+
+// 5d0. Sight in revealed areas only: SIGHT_RANGE may exceed LIGHT_RADIUS, but an adversary on an
+//      unlit cell neither sees the explorer nor is seen by it.
+{
+  const old = { sight: SIGHT_RANGE };
+  configureWorld({ sightRange: 20 });
+  try {
+    const game = new Game({ seed: 1, width: 24, height: 3, tiles: ['#'.repeat(24), '#' + '.'.repeat(22) + '#', '#'.repeat(24)], start: [1, 1], treasure: null, rooms: [{ x: 1, y: 1, w: 22, h: 1 }] });
+    const a = adversary('a1', [16, 1]); // 15 cells off, beyond the start's light disc
+    game.adversaries = [a];
+    check(!game.isKnown(a.pos) && !seesExplorer(game, a), 'sight: an adversary on an unlit cell is not seen, even within SIGHT_RANGE');
+    game.light[1][16] = 0.5;
+    check(seesExplorer(game, a), 'sight: the same adversary on a lit cell 15 away is seen with SIGHT_RANGE 20');
+    a.pos = [22, 1]; game.light[1][22] = 0.5; // 21 away: beyond SIGHT_RANGE even though lit
+    check(!seesExplorer(game, a), 'sight: a lit cell beyond SIGHT_RANGE is not seen');
+  } finally {
+    configureWorld({ sightRange: old.sight });
+  }
+  console.log('sight: only in revealed areas, up to SIGHT_RANGE');
 }
 
 // 5d2. Pack hunting: a spotter alerts patrolling packmates within ALERT_STEPS (path), who join the

@@ -7,7 +7,7 @@
 // Damage model (PLAN-skills.md S4): a touch is only a BUMP (knockback, event 'bump', no life lost, no grace).
 // Only attacks take lives: a hunting ghost may use its claw strike (the `skill` question, brain.js); a patrolling
 // ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
-import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
+import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng, startSight } from '../../dungeon.js';
 import {
   KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, tabuReport, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
 } from './brain.js';
@@ -329,7 +329,7 @@ export function spawnAdversaries(dungeon) {
   const dist = floorDistances(dungeon, dungeon.start);
   const ok = (c) =>
     (dist.get(key(c)) ?? -1) >= MIN_SPAWN_STEPS &&
-    !(euclid(c, dungeon.start) <= SIGHT_RANGE && hasLineOfSight(dungeon, dungeon.start, c));
+    !(euclid(c, dungeon.start) <= startSight() && hasLineOfSight(dungeon, dungeon.start, c));
   const picked = dungeon.layout?.kind === 'linear' ? linearSpawns(dungeon, rand, count, ok) : [];
   if (dungeon.layout?.kind !== 'linear') {
     // One candidate list per room, so adversaries spread over different rooms first.
@@ -376,9 +376,13 @@ function plainKnobsOf(a) {
   };
 }
 
-// Sight is symmetric: always tested explorer -> adversary so both sides agree.
+// Sight is symmetric: always tested explorer -> adversary so both sides agree. Only in revealed
+// areas: an adversary standing on an unlit (fogged) cell neither sees the explorer nor is seen by it,
+// so SIGHT_RANGE may exceed LIGHT_RADIUS without the explorer seeing into the dark. Within
+// LIGHT_RADIUS of the explorer every cell is lit, so the default range of 7 is unaffected.
 export function seesExplorer(game, adversary) {
-  return euclid(game.pos, adversary.pos) <= SIGHT_RANGE && hasLineOfSight(game.dungeon, game.pos, adversary.pos);
+  return euclid(game.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
+    hasLineOfSight(game.dungeon, game.pos, adversary.pos);
 }
 
 // Trigger for patrol/search -> chase. The user wrote "has a direct line of sight ... and is at

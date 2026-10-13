@@ -143,7 +143,7 @@ Dungeon layout, light, coins and hearts. Developer only.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
-| `world.sightRange` | 7 | 3..12 | live | no | How far anyone sees along a clear line (explorer and monsters) |
+| `world.sightRange` | 7 | 3..30 | live | no | How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters) |
 | `world.coins.floorPerCoin` | 60 | 10..1000 | next | no | Floor cells per coin: lower = more coins |
 | `world.coins.max` | 30 | 0..100 | next | no | Coins lying around at the start (0 = none) |
 | `world.hearts.roomsPerHeart` | 4 | 1..20 | next | no | One heart (restores a life) per this many rooms |

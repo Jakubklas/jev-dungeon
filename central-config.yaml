@@ -5,7 +5,7 @@
 
 # Dungeon layout, light, coins and hearts. Developer only.
 world:
-  sightRange: 7 # How far anyone sees along a clear line (explorer and monsters)
+  sightRange: 20 # How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters)
   coins:
     floorPerCoin: 60 # Floor cells per coin: lower = more coins
     max: 30 # Coins lying around at the start (0 = none)
@@ -354,7 +354,7 @@ skills:
     effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
     cooldown: 2 # Steps before the shield can be raised again
   fire_strike:
-    damage: 2 # Hit points the fire strike takes from every enemy in its 9x9 area
+    damage: 3 # Hit points the fire strike takes from every enemy in its 9x9 area
     cooldown: 120 # Steps before the fire strike is ready again
   dash:
     cooldown: 20 # Seconds before Dash is ready again
