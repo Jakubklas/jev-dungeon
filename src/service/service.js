@@ -25,6 +25,7 @@ const STATIC = new Map([
 ]);
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 const asError = (status, error, extra = {}) => ({ status, error, extra });
+const FAILED_CALLS = new Set(['failed', 'network_error', 'bad_body', 'key_rejected']);
 
 class WorkerClient {
   #child;
@@ -78,6 +79,7 @@ export class HostedService {
   #host;
   #closing = false;
   #expiryTimer;
+  #runtimeMetrics = { worker_exits: 0, actor_queue_delay_ms: 0, event_write_delay_ms: 0 };
 
   constructor({ root, port = 3100, host = '127.0.0.1', hostToken = process.env.HOST_TOKEN,
     logger = createLogger(), settingsPath } = {}) {
@@ -161,6 +163,7 @@ export class HostedService {
     if (!snapshot) throw new Error(`missing rules revision ${revision}`);
     const worker = new WorkerClient({ revision, rules: snapshot.values, root: this.#store.root,
       onEvent: (e) => this.#workerEvent(e), onExit: (rev) => {
+        if (!this.#closing) this.#runtimeMetrics.worker_exits++;
         if (this.#workers.get(rev) === worker) this.#workers.delete(rev);
         void this.#recoverRevision(rev);
       } });
@@ -192,6 +195,10 @@ export class HostedService {
     const g = this.#games.get(e.id);
     if (!g) return;
     if (e.type === 'record') {
+      if (Number.isFinite(e.record.completed_at)) this.#runtimeMetrics.actor_queue_delay_ms = Math.max(
+        this.#runtimeMetrics.actor_queue_delay_ms, e.record.applied_at - e.record.completed_at);
+      if (Number.isFinite(e.metrics?.event_write_ms)) this.#runtimeMetrics.event_write_delay_ms = Math.max(
+        this.#runtimeMetrics.event_write_delay_ms, e.metrics.event_write_ms);
       if (e.record.type === 'explorer_turn' && e.record.health === 0) {
         const p = g.lobby.participant(e.record.actor);
         if (p && (p.state === 'active' || p.state === 'awaiting_key')) {
@@ -303,7 +310,8 @@ export class HostedService {
 
   #routes() {
     const r = this.#router;
-    r.add('GET', '/health', () => ({ ok: true, games: this.#games.size,
+    r.add('GET', '/health', () => ({ ok: true, games: this.#games.size, workers: this.#workers.size,
+      worker_exits: this.#runtimeMetrics.worker_exits,
       uptime_s: Math.floor((Date.now() - this.#startAt) / 1000) }));
     r.add('POST', '/v1/host/session', async (req, res) => {
       const body = await readJson(req);
@@ -327,10 +335,14 @@ export class HostedService {
       const all = [...this.#games].flatMap(([id]) => new CallsRecorder(this.#store, id).read());
       const durations = all.map((e) => e.ms).filter(Number.isFinite).sort((a, b) => a - b);
       const q = (p) => durations[Math.min(durations.length - 1, Math.floor(p * durations.length))] ?? 0;
-      return { posts: all.length, failures: all.filter((e) => e.outcome === 'failed').length,
+      const sseLag = [...this.#subscribers.values()].flatMap((cs) => [...cs]).reduce((m, c) => Math.max(m, c.lagMs ?? 0), 0);
+      const sseClients = [...this.#subscribers.values()].reduce((n, cs) => n + cs.size, 0);
+      return { posts: all.length, failures: all.filter((e) => FAILED_CALLS.has(e.outcome)).length,
         timeouts: all.filter((e) => e.outcome === 'timeout').length,
-        latency_p50_ms: q(0.5), latency_p95_ms: q(0.95), actor_queue_delay_ms: 0,
-        event_write_delay_ms: 0, sse_lag_ms: 0 };
+        latency_p50_ms: q(0.5), latency_p95_ms: q(0.95),
+        actor_queue_delay_ms: this.#runtimeMetrics.actor_queue_delay_ms,
+        event_write_delay_ms: this.#runtimeMetrics.event_write_delay_ms, sse_lag_ms: sseLag,
+        worker_exits: this.#runtimeMetrics.worker_exits, sse_clients: sseClients };
     });
     r.add('GET', '/v1/host/games/:id/calls', (req, res, { id }) => {
       this.#requireHost(req); this.#getGame(id);
@@ -462,7 +474,7 @@ export class HostedService {
   #callStats(id) {
     const calls = new CallsRecorder(this.#store, id).read();
     const ms = calls.map((c) => c.ms).filter(Number.isFinite).sort((a, b) => a - b);
-    return { posts: calls.length, failures: calls.filter((c) => c.outcome === 'failed').length,
+    return { posts: calls.length, failures: calls.filter((c) => FAILED_CALLS.has(c.outcome)).length,
       timeouts: calls.filter((c) => c.outcome === 'timeout').length, p50_ms: ms[Math.floor(ms.length / 2)] ?? 0 };
   }
 

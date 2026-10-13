@@ -58,6 +58,10 @@ try {
   assert.equal(games.status, 200);
   assert.ok(games.body.games.some((g) => g.id === id));
   assert.equal((await call('GET', '/v1/host/settings', null, { cookie: hostCookie })).status, 200);
+  const metrics = await call('GET', '/v1/host/metrics', null, { cookie: hostCookie });
+  assert.equal(metrics.status, 200);
+  for (const key of ['posts', 'latency_p50_ms', 'latency_p95_ms', 'actor_queue_delay_ms', 'event_write_delay_ms', 'sse_lag_ms', 'sse_clients'])
+    assert.equal(typeof metrics.body[key], 'number', `metrics field ${key}`);
   assert.equal((await call('POST', `/v1/games/${id}/directives`, { text: 'toward the portal' }, { cookie: memberCookie })).status, 200);
   assert.equal((await call('POST', `/v1/games/${id}/directives`, { text: 'again' }, { cookie: memberCookie })).status, 429);
   const paused = await call('POST', `/v1/games/${id}/pause`, {}, { cookie: memberCookie });

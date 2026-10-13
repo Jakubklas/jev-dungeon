@@ -92,6 +92,9 @@ export function openSse(req, res, { lastEventId, heartbeatMs = 15000, maxQueuedB
   res.write(': open\n\n');
   let closed = false;
   let reason = null;
+  let blockedAt = null;
+  let lagMs = 0;
+  res.on?.('drain', () => { if (blockedAt !== null) lagMs = Math.max(lagMs, Date.now() - blockedAt); blockedAt = null; });
   const close = (why = 'closed') => {
     if (closed) return;
     closed = true;
@@ -103,7 +106,7 @@ export function openSse(req, res, { lastEventId, heartbeatMs = 15000, maxQueuedB
   const write = (text) => {
     if (closed) return false;
     if (res.writableLength + Buffer.byteLength(text) > maxQueuedBytes) { close('overflow'); return false; }
-    res.write(text);
+    if (!res.write(text) && blockedAt === null) blockedAt = Date.now();
     return true;
   };
   const timer = setInterval(() => write(': heartbeat\n\n'), heartbeatMs);
@@ -114,6 +117,7 @@ export function openSse(req, res, { lastEventId, heartbeatMs = 15000, maxQueuedB
     lastEventId: last,
     get closed() { return closed; },
     get reason() { return reason; },
+    get lagMs() { return Math.max(lagMs, blockedAt === null ? 0 : Date.now() - blockedAt); },
     send({ id, event, data }) {
       let frame = '';
       if (id !== undefined) frame += `id: ${oneLine(id)}\n`;

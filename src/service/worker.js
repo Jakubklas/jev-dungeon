@@ -67,7 +67,7 @@ export class WorkerHost {
 
   #hooks(id) {
     return {
-      onEvent: (record) => this.#emit({ type: 'record', id, record }),
+      onEvent: (record, metrics) => this.#emit({ type: 'record', id, record, metrics }),
       onKeyRejected: (participantId) => this.#emit({ type: 'key_rejected', id, participantId }),
       onServerKeyRejected: () => this.#emit({ type: 'server_key_rejected', id }),
       onFinished: (outcome) => this.#emit({ type: 'finished', id, outcome }),

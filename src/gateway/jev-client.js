@@ -25,8 +25,15 @@ export async function postWithRetry(body, {
   const retryable = new Set(retryStatus);
   const ctl = new AbortController();
   let over = false; // set when the deadline or the caller ends the call; later results are dropped
+  let activeDone = null;
   let fail;
-  const ended = new Promise((_, reject) => { fail = (e) => { if (over) return; over = true; reject(e); ctl.abort(); }; });
+  const ended = new Promise((_, reject) => { fail = (e) => {
+    if (over) return;
+    over = true;
+    activeDone?.({ status: 0, bytesIn: 0, outcome: e instanceof CallTimeout ? 'timeout' : 'aborted' });
+    reject(e);
+    ctl.abort();
+  }; });
   ended.catch(() => {}); // it is consumed through the race below
   const timer = setTimeout(() => fail(new CallTimeout(timeoutMs)), timeoutMs);
   const onExternal = () => fail(new CallAborted());
@@ -43,7 +50,10 @@ export async function postWithRetry(body, {
   async function work() {
     for (let attempt = 0; ; attempt++) {
       if (over) return undefined;
-      const done = onAttempt?.({ attempt, bytesOut });
+      const rawDone = onAttempt?.({ attempt, bytesOut });
+      let completed = false;
+      const done = (result) => { if (completed) return; completed = true; rawDone?.(result); };
+      activeDone = done;
       let res;
       try {
         res = await fetchImpl(endpoint, { method: 'POST', headers, body, signal: ctl.signal });

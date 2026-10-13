@@ -158,6 +158,10 @@ ExplorerBrain.attachClock(now)                            // Dash follows the ga
 ```
 See AGENTS.md "Runtime (hosted)".
 
+## Hosted service (WP-G)
+
+`npm run serve` starts `service.js` (default `127.0.0.1:3100`, data in `runs/server/`). `HostedService` owns HTTP, lobby state, auth and fog projections; `src/service/worker.js` runs games for one immutable settings revision. Player routes and response shapes are listed in `PLAN-multiplayer-impl.md` under `/v1 API contract`. The service restores active games paused and requires each participant to re-enter their key. Keys are memory-only; logs and snapshots contain no key or request body. See `docs/OPERATIONS.md` for backup and restore.
+
 ## `src/characters/adversary/adversary.js` (adversary agent)
 
 ```js
@@ -364,7 +368,7 @@ get pos, steps, visits, health, maxHealth, graceLeft, won, facing, coins   // th
 get width, height                       // grid size, only for sizing arrays; says nothing about the layout
 isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()   // a teammate's cell is not a legal move
 teammates()                             // -> [{ id, pos }] the other ACTIVE explorers, global (through walls), copies; never threats
-helpReports()                           // -> [] for now (WP-H fills it)
+helpReports()                           // -> frozen teammate sightings within known-path reach; not direct threats
 visibleAdversaries()                    // -> [{ id, pos, mode, distance, hp, maxHp, stun, level, clawDamage }] the explorer sees now (hp: the health bar it sees; level and clawDamage are in-sight reads likewise, PLAN-levels)
 get levelsOn                            // whether monsters.levels.enabled is on (config switch, no game state); off, no level reaches matchup() or Jev
 seenTreasure()                          // -> the portal cell once lit, else null (also null when there is none)
@@ -387,7 +391,7 @@ game.legalMoves(id), availableMoves(id), applyMove(dir, distance, id), damage(am
 game.twin(overrides)                         // also shallow-copies every ExplorerState
 // adversary.js: seesExplorer(game, a, explorer?), visibleAdversaries(game, explorer?), graceLeft(game, explorer?)
 // resolve.js: an explorer attacker is any handle with `explorer: true` (EXPLORER = { id: 'explorer', explorer: true }); canHit(victim) / onHit(victim);
-//   hit / blocked / caught events carry `explorer: id` when the game has more than one explorer.
+//   hit / blocked / caught events carry `explorer: id` when the game has more than one explorer. Hunting monsters keep per-explorer frozen sightings, target visible explorers, and ask Jev to choose when multiple are visible.
 // turn.js: new Run(dungeon, adversaries, { explorers, askFor(id) }) -> run.explorer (primary brain), run.explorers = [{ id, brain }]
 // testbed: option `explorers: [[x, y], ...]` (extra explorers explorer2.., explorerStartsOf(dungeon, cfg))
 ```

@@ -6,9 +6,9 @@
 | --- | --- | --- |
 | WP-A–E, WP-I foundations | Complete before this pass | Existing gateway, intent, shared world, clock, runtime, lobby, ranking and mock UI checks. |
 | WP-F | Complete (`7f95df7`, `4a3b9b1`) | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. The full suite passed 46/46; request hashes intentionally regenerated. |
-| WP-G | In progress | Real `/v1` service, rules-revision workers, player projection, key handling, SSE and restart wiring built (`9cfe77a`). `check-service.mjs` covers private/shared creation, join/start access, fog, host auth, Origin, directives, pause/resume, restart and key-free files. Latest lifecycle hardening adds worker exit recovery, room expiry, death/forfeit propagation, and pause-aware key windows; not yet verified. Host/failure-path matrix and operations counters remain. |
+| WP-G | In progress (`9cfe77a`, `8bab9c0`) | Real `/v1` service, rules-revision workers, player projection, key handling, SSE and restart wiring. Added worker exit recovery, room expiry, death/forfeit propagation, pause-aware key windows and runtime metrics. Service and failure-path matrix still needs verification. |
 | WP-H | In progress (`5499ce1`) | Monsters track visible and frozen sightings per explorer, choose a visible target, and ignore a nearer explorer behind a wall. The hosted actor emits one help call per direct encounter and stores frozen reports for teammates within 48 known-path steps; recipient requests show `threats.reported`. New multiplayer and fog-twin checks pass; full suite 49/49. Expiry details and broader combat checks remain. |
-| WP-J / final review | Pending | Health and counters, kill tests, operations docs, contract and full branch review. |
+| WP-J / final review | In progress | Added `docs/OPERATIONS.md`, updated hosted-service and multiplayer contracts, and added real queue/write/SSE counters. Process-kill recovery check and final branch review remain. Latest metrics and lifecycle changes need a focused verification pass. |
 
 Live measurement remains unrun because it makes paid Jev calls and needs explicit authorisation.
 

@@ -242,6 +242,11 @@ export class CallsRecorder {
   read() {
     const path = join(this.#store.root, 'games', this.#id, 'calls.jsonl');
     if (!existsSync(path)) return [];
-    return readFileSync(path, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const out = [];
+    for (const line of readFileSync(path, 'utf8').split('\n')) {
+      if (!line) continue;
+      try { out.push(JSON.parse(line)); } catch { /* a crash may tear the final append */ }
+    }
+    return out;
   }
 }

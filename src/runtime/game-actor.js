@@ -189,6 +189,7 @@ export class GameActor {
   // increases; `applied_at` is the world time the record was written.
   record(type, fields = {}) {
     const rec = { seq: ++this.#seq, type, actor: null, generation: null, observed_at: null, completed_at: null, ...fields, applied_at: this.#game.clock };
+    const writeStarted = performance.now();
     if (this.store) {
       if (!this.#gameId) throw new Error('gameId is required for persisted actors');
       this.store.appendEvent(this.#gameId, rec);
@@ -198,8 +199,9 @@ export class GameActor {
         this.store.writeCold(this.#gameId, rec.seq, snapshot);
       }
     }
+    const writeMs = Math.max(0, performance.now() - writeStarted);
     try {
-      this.#hooks.onEvent?.(rec);
+      this.#hooks.onEvent?.(rec, { event_write_ms: writeMs });
     } catch (err) {
       this.fault(err);
     }

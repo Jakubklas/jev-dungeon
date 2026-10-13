@@ -132,7 +132,7 @@ await test('a response that arrives after the timeout is discarded', async () =>
   await sleep(200);
   assert.ok(answered, 'the double never answered');
   assert.equal(rec.entries.length, 1);
-  assert.equal(rec.entries[0].outcome, 'aborted'); // the late answer was recorded as dropped, not delivered
+  assert.equal(rec.entries[0].outcome, 'timeout'); // the deadline ended this HTTP attempt; its late answer was dropped
 });
 
 await test('a per-call deadline: two calls in a row each get a fresh one', async () => {
