@@ -4,7 +4,7 @@
 // check-dungeon.mjs enforces it). Reads are live, never cached: the game changes during a tick.
 import { graceLeft, visibleAdversaries } from '../adversary/adversary.js';
 import { levelsOn } from '../adversary/kinds.js';
-import { hasLineOfSight, rng } from '../../dungeon.js';
+import { hasLineOfSight, rng, SIGHT_RANGE } from '../../dungeon.js';
 import { EXPLORER, resolveAttack } from '../../skills/resolve.js';
 
 export class KnownWorld {
@@ -56,9 +56,17 @@ export class KnownWorld {
   }
   // Frozen teammate reports. They carry only what the sender directly saw at call time.
   helpReports() {
+    const visibleIds = new Set(this.visibleAdversaries().map((a) => a.id));
     return (this.#game.helpReports[this.#id] ?? [])
-      .filter((r) => this.steps - r.step <= 30)
+      .filter((r) => this.steps - r.step <= 30 && (visibleIds.has(r.id) || !this.#sawEmpty(r.cell)))
       .map((r) => ({ ...r, cell: [...r.cell] }));
+  }
+
+  #sawEmpty(cell) {
+    if (Math.hypot(this.pos[0] - cell[0], this.pos[1] - cell[1]) > SIGHT_RANGE) return false;
+    const tiles = Array.from({ length: this.height }, (_, y) => Array.from({ length: this.width }, (_, x) =>
+      this.#game.isKnown([x, y]) ? this.#game.knownTile([x, y]) : '#'));
+    return hasLineOfSight({ width: this.width, height: this.height, tiles }, this.pos, cell);
   }
   // Each adversary in sight with its health bar ({ hp, maxHp }): a bar the explorer can see, so fog-safe
   // while in sight (user-approved amendment of rule 1). Out of sight nothing is read, hp included.
