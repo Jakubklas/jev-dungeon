@@ -17,7 +17,7 @@
 import { SIGHT_RANGE } from '../../dungeon.js';
 import { APPROACHES, SEARCH_APPROACHES, approachOption, compass8, describeMoves, situation, stepCell, sweep } from './perception.js';
 import { addEvent, addLandmark, addSighting, ageMemory, brainOff, brainOn, count, createMemory, recordAction, recordStep, setApproach, setMorale } from './memory.js';
-import { askJev, shuffle, jevModel } from '../../jev.js';
+import { shuffle, jevModel } from '../../jev.js';
 import { PRESETS, profileOf, strikeLineFor, traitsOf } from './character.js';
 import { DEFAULT_MOOD, apply as applyMoraleEvent, band as moraleBand, capability, combine, moodFor, moodKnobs, moraleOf, routNext, startHunt, tierOf, MOODS } from './morale.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
@@ -108,7 +108,6 @@ export function newHunt(id, profile = profileOf(traitsOf('standard')), character
 const resetTabu = (h) => { h.tabu = createTabu(); h.ring = []; h.told = new Set(); };
 
 // Default Jev call, in the shape of an injected `ask`.
-const jevAsk = ({ state, questions, body }) => askJev(state, questions, body);
 
 function trendText(dists) {
   if (dists.length < 2) return `${dists[0] ?? '?'} path steps away`;
@@ -560,16 +559,17 @@ export function buildRequest(view, a, tick, cfg) {
 
 // One step's decision. Never throws: a failed call returns { error } and the caller falls back
 // to the code move. -> { dir|null, decision, keep_hunting, approach, forced, apiMs, error }
-// `ask` replaces the Jev call (the checks inject stubs); null = the real Jev.
+// `ask` replaces the Jev call (the checks inject stubs); required: build it with the gateway.
 export async function decide(view, a, tick, cfg, ask = null) {
   const h = a.hunt;
   const req = buildRequest(view, a, tick, cfg);
   if (!req.body) return { dir: req.forced, decision: null, keep_hunting: null, approach: null, forced: true, apiMs: 0, error: null, skill: 'none', skill_decision: null };
   a.lastRequestBody = req.body;
+  if (typeof ask !== 'function') throw new Error('decide is required: build it with the gateway'); // outside the try: a missing caller is a bug, not a Jev failure
   const started = performance.now();
   let answers;
   try {
-    answers = await (ask ?? jevAsk)({ id: a.id, state: req.state, questions: req.questions, body: req.body });
+    answers = await ask({ id: a.id, state: req.state, questions: req.questions, body: req.body });
   } catch (err) {
     return { dir: null, decision: null, keep_hunting: null, approach: null, forced: false, apiMs: Math.round(performance.now() - started), error: err.message ?? String(err), skill: 'none', skill_decision: null };
   }

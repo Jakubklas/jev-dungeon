@@ -451,7 +451,7 @@ writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 const back = JV.jevSnapshot();
-check(back.jevHedgeCopies === 2 && back.jevModel === 'jev-latest' && eq(back.jevRetryStatus, [429, 502, 503, 504, 529]) && Object.keys(S.uiView().thoughts.troll).length === 0 && S.uiView().constants.walkMs === 620, 'removing the keys restores the Jev client and the browser defaults');
+check(back.jevHedgeCopies === 1 && back.jevModel === 'jev-latest' && eq(back.jevRetryStatus, [429, 502, 503, 504, 529]) && Object.keys(S.uiView().thoughts.troll).length === 0 && S.uiView().constants.walkMs === 620, 'removing the keys restores the Jev client and the browser defaults');
 
 // Decision provider switching and removal use the same live config hooks as Jev.
 writeFileSync(cfg, 'decision: { provider: laya, laya: { endpoint: "http://localhost:8100/v1/systemone", model: local-test, maxLen: 4096, headMaxLen: 2048, timeoutMs: 180000 } }\n');

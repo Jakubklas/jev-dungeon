@@ -16,7 +16,8 @@ Zero dependencies (Node ≥ 20.12, ES modules). `JEV_API_KEY` is in `../.env` an
 dungeon-game/
   server.js, package.json, public/{index.html,app.js,style.css,sprites.js,settings.html,props/*}   -> UI agent (+ art agents)
   src/dungeon.js                     constants, map gen, line of sight, the Game class                -> world agent
-  src/jev.js                         Jev API client (askJev, shuffle)                                 -> brain agent
+  src/jev.js                         Jev dev providers (askJev, shuffle, jevModel)                    -> brain agent
+  src/gateway/*                      the only paid askers: Gateway, postWithRetry, errors, recorder   -> gateway
   src/turn.js                        Run: one game in progress (tick, view); newGame / newTestGame    -> adversary agent
   src/testbed.js                     small configurable test arenas (buildArena, normalizeConfig)    -> shared
   src/settings.js                    tunables: schema, validation, per-port persistence, configure hooks -> shared

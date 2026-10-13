@@ -4,6 +4,8 @@ process.env.JEV_CONFIG = 'none';
 const { configureJev, askJev, jevModel, validateDecisionCredentials } = await import('../src/jev.js');
 const { parseConfig } = await import('../src/config/load.js');
 const { newTestGame } = await import('../src/turn.js');
+const { Gateway } = await import('../src/gateway/gateway.js');
+const gateway = new Gateway(); // the dev askers are the provider path these checks exercise
 const originalKey = process.env.JEV_API_KEY;
 const requests = [];
 globalThis.fetch = async (url, options) => {
@@ -29,7 +31,7 @@ try {
   assert.equal(requests[0].body.head_max_len, 1024);
   assert.equal(requests[0].options.headers.Authorization, undefined);
   process.env.JEV_API_KEY = 'stub-secret';
-  const run = newTestGame({ size: '9x9', numAdversaries: 1, props: 'none', treasure: 'far', seed: 3 });
+  const run = newTestGame({ size: '9x9', numAdversaries: 1, props: 'none', treasure: 'far', seed: 3 }, { ask: gateway.devAsker(), decide: gateway.devDecider() });
   await run.playTurn();
   assert.ok(requests.length > 1);
   assert.ok(requests.every((r) => r.body.model === 'multilingual' && r.body.max_len === 8192 && r.body.head_max_len === 1024 && !r.options.headers.Authorization));

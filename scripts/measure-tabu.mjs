@@ -52,7 +52,8 @@ if (LIVE) {
 const { newGame, newTestGame } = await import('../src/turn.js');
 const { configureExplorerBrain, explorerBrainSnapshot } = await import('../src/characters/explorer/brain.js');
 const { configureAdversaryBrain, adversaryBrainSnapshot } = await import('../src/characters/adversary/brain.js');
-const { askJev } = await import('../src/jev.js');
+const { Gateway } = await import('../src/gateway/gateway.js');
+const gateway = new Gateway(); // --live only: the gateway's dev askers are the only paid path
 // The stubs and the seeded PRNG live in files that install the tripwire when imported: free mode only.
 let fightAsk, clawDecide, mulberry32;
 if (!LIVE) {
@@ -135,8 +136,8 @@ async function playGame(s, arm, stub) {
   if (!LIVE) Math.random = mulberry32(0x7ab0 ^ hash(s.name)); // same dice in both arms
   const m = { expReq: 0, expBytes: 0, monReq: 0, monBytes: 0 };
   const holder = {};
-  const respondExplorer = LIVE ? ({ state, questions, body }) => askJev(state, questions, body) : (req) => holder.ask(req);
-  const respondMonster = LIVE ? ({ state, questions, body }) => askJev(state, questions, body) : MONSTERS === 'claw' ? clawDecide : stubbornDecide();
+  const respondExplorer = LIVE ? gateway.devAsker() : (req) => holder.ask(req);
+  const respondMonster = LIVE ? gateway.devDecider() : MONSTERS === 'claw' ? clawDecide : stubbornDecide();
   const ask = (req) => { m.expReq++; m.expBytes += (req.body ?? JSON.stringify(req.state) + JSON.stringify(req.questions)).length; return respondExplorer(req); };
   const decide = (req) => { m.monReq++; m.monBytes += (req.body ?? JSON.stringify(req.state) + JSON.stringify(req.questions)).length; return respondMonster(req); };
   try {
@@ -244,7 +245,7 @@ const todo = plan.slice(0, cap);
 if (LIVE) {
   const ticks = todo.reduce((n, p) => n + p.s.ticks, 0);
   console.warn('!!! LIVE RUN: REAL JEV CALLS, THIS COSTS MONEY !!!');
-  console.warn(`!!! ${todo.length} game(s), up to ${ticks} ticks in total; each tick bills 1-2 explorer requests plus 1 per hunting adversary, each hedged x2: roughly up to ${ticks * 4} requests. !!!`);
+  console.warn(`!!! ${todo.length} game(s), up to ${ticks} ticks in total; each tick bills 1-2 explorer requests plus 1 per hunting adversary: roughly up to ${ticks * 4} requests. !!!`);
 }
 console.log(`measure-tabu: ${LIVE ? 'LIVE (paid)' : 'dry run, stub answers'}, arms ${ARMS.join('/')}, ${LIVE ? '' : `explorer stubs ${STUBS.join('/')}, monsters ${MONSTERS}, `}${todo.length} games`);
 const t0 = Date.now();

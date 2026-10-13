@@ -11,17 +11,22 @@ try { process.loadEnvFile(new URL('../.env', import.meta.url)); } catch (err) { 
 const { validateDecisionCredentials } = await import('./src/jev.js');
 const { newGame, newTestGame } = await import('./src/turn.js');
 const { TestbedError } = await import('./src/testbed.js');
+const { Gateway } = await import('./src/gateway/gateway.js');
 const settings = await import('./src/settings.js');
 
 const PORT = Number(process.env.PORT) || 3003;
 // DATA_DIR (set by hub.js) moves everything this server writes (settings.json, memory.json/md,
 // adversaries.json) into its own folder, so many servers can run side by side. Unset = next to server.js.
 const DATA = process.env.DATA_DIR ? pathToFileURL(resolve(process.env.DATA_DIR) + '/') : null;
+// The only paid askers: the gateway's development path (JEV_API_KEY, or the laya / openai dev providers).
+const gateway = new Gateway();
 const GAME_OPTS = DATA ? { dir: DATA, memoryDir: DATA } : {};
 // Options for the Run being built: the paths above (the explorer's confidence is always the caps model), plus the
 // explorerProgress knob (false = the brain tracks known-path progress but never redirects a retreat).
 const gameOpts = () => ({
   ...GAME_OPTS,
+  ask: gateway.devAsker(),
+  decide: gateway.devDecider(),
   progress: settings.appliedValue('explorerProgress') !== false,
 });
 // Per-server tunables (the /settings page); one file per port, so the normal and testbed servers differ.
@@ -32,7 +37,7 @@ validateDecisionCredentials();
 const TESTBED = !process.env.TESTBED ? null
   : process.env.TESTBED.trim().startsWith('{') ? JSON.parse(process.env.TESTBED)
   : Object.fromEntries(new URLSearchParams(process.env.TESTBED));
-if (TESTBED) newTestGame(TESTBED, GAME_OPTS); // fail at startup on a bad config, not on the first page load
+if (TESTBED) newTestGame(TESTBED, gameOpts()); // fail at startup on a bad config, not on the first page load
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],

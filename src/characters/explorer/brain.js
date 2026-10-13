@@ -33,7 +33,7 @@ import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
   allowedMoods, defaultMood, panicNext, retreatTier, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
-import { askJev, shuffle, jevModel } from '../../jev.js';
+import { shuffle, jevModel } from '../../jev.js';
 import { add as tabuAdd, age as tabuAge, clearStrikes, createTabu, endEncounter as tabuEndEncounter, entryOf, filterOptions, isTabu, snapshot as tabuSnapshot, strike as tabuStrike } from '../shared/tabu.js';
 
 let REVIEW_EVERY = 8; // steps between approach reviews
@@ -75,9 +75,6 @@ const TABU_C_GAIN = 5; // ... and so is confidence this much higher
 const NEVER_TABU = ['race_to_exit']; // the win is never ruled out
 const RETREATS = ['run_away', 'hide'];
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
-
-// The real Jev call; a Run or a check passes `ask` to replace it.
-const askReal = ({ state, questions, body }) => askJev(state, questions, body);
 
 // An aborted decide(): thrown before any further Jev call, or when the signal fires while one is in flight.
 export class CallAborted extends Error {
@@ -388,7 +385,8 @@ export class ExplorerBrain {
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
     this.#entry = [...world.pos];
-    this.#ask = ask ?? askReal;
+    if (typeof ask !== 'function') throw new Error('ask is required: build it with the gateway');
+    this.#ask = ask;
     this.#memoryDir = memoryDir ?? MEMORY_DIR;
     const memory = createMemory({
       approachId: 'nearest_frontier',
