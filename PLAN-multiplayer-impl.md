@@ -392,3 +392,10 @@ active explorer directly sees, each with `visible` (the viewer sees it) and `tea
    budget-path monster by up to a tick; with the runtime a monster's turn interval is `moveIntervalMs`, so the count is
    already a duration. Heart respawn (Deviation 6) now compares the picking explorer's time (`timeOf`), which is the shared
    clock when managed. The `until_step` field stays on a block stance as an informational legacy value.
+
+Optional field the pages use (WP-I): a participant entry in `GameSummary.participants[]` whose `state` is `awaiting_key`
+may carry `key_deadline_ms_left` (milliseconds until the keyRetryMs window forfeits it). The key prompt shows a
+countdown when it is present and just the explanation when it is absent. Participant states the pages know:
+`ready` (waiting room), `active`, `awaiting_key`, `dead`, `forfeited`; the end screen also reads `ranking[]`
+(`{ participant_id, name, slot, coins, strikes, dispels, portal, alive, forfeited, points }`), `result`
+(`'won' | 'lost'`) and `team_score` from `event: end` / `GameView.ranking`.

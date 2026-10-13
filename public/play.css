@@ -1,0 +1,76 @@
+/* The hosted player page: the single-player look (style.css) plus forms, roster, banners and the ranking table. */
+body.page { height: auto; min-height: 100dvh; overflow: auto; }
+body.game { height: 100dvh; overflow: hidden; }
+[hidden] { display: none !important; }
+.card-wrap { max-width: 520px; width: 100%; margin: 6vh auto 0; display: flex; flex-direction: column; gap: 14px; }
+.brand h1 { font-size: 26px; }
+.brand .sub { margin: 4px 0 0; }
+.card { background: var(--panel); border: 2px solid var(--line-hi); padding: 18px 20px; box-shadow: 5px 5px 0 var(--drop); display: flex; flex-direction: column; gap: 12px; }
+.card h2, .modal h2 { margin: 0; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+.card h2::before { content: ''; width: 6px; height: 6px; background: var(--accent); flex: none; }
+.card p { margin: 0; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+input[type=text], input[type=password] {
+  font: inherit; font-size: 14px; letter-spacing: normal; text-transform: none; padding: 8px 10px; border-radius: 0; width: 100%;
+  color: var(--ink); background: var(--panel-2); border: 2px solid var(--line-hi);
+}
+input[type=text]:focus-visible, input[type=password]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+.hint { font-size: 12px; color: var(--muted); }
+.error { font-size: 13px; color: var(--warn); }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+a.btn {
+  font: inherit; font-weight: 700; padding: 7px 16px; letter-spacing: .04em; color: var(--ink); text-decoration: none;
+  border: 2px solid var(--line-hi); background: var(--panel-2); box-shadow: 3px 3px 0 var(--drop); display: inline-block;
+}
+a.btn:hover { border-color: var(--accent); }
+a.btn.primary { background: var(--accent); border-color: #ffc56a; color: var(--accent-ink); }
+.toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 40; margin: 0; padding: 6px 12px; background: var(--panel); border: 2px solid var(--accent); box-shadow: 3px 3px 0 var(--drop); font-size: 13px; }
+
+.roster { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.roster li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--panel-2); border: 2px solid var(--line); min-height: 40px; }
+.roster li.empty { border-style: dashed; color: var(--muted); background: transparent; }
+.roster li.me { border-color: var(--line-hi); }
+.swatch { flex: none; width: 14px; height: 14px; background: var(--c, var(--muted)); border: 2px solid var(--cl, var(--line-hi)); box-shadow: 2px 2px 0 var(--drop); }
+.roster .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.pill { font-size: 10px; padding: 1px 6px; letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--line-hi); color: var(--muted); }
+.pill.leader { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.pill.ok { color: var(--safe); border-color: var(--safe); }
+.pill.warn { color: var(--warn); border-color: var(--warn); }
+.linkrow { display: flex; gap: 8px; }
+.linkrow input { flex: 1; min-width: 0; }
+
+.banner { margin: 0 0 8px; padding: 6px 12px; font-size: 13px; background: var(--panel); border: 2px solid var(--brain); color: var(--brain); box-shadow: 3px 3px 0 var(--drop); }
+.banner.paused { border-color: var(--accent); color: var(--accent); }
+.board-wrap.spectate { border-color: var(--brain); }
+.thought { font-style: italic; margin-top: 6px !important; min-height: 1.4em; }
+.team { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.team li { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.team .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team .hearts svg { flex-basis: 11px; width: 11px; height: 10px; }
+.team .hearts { min-height: 10px; gap: 2px; flex-wrap: nowrap; }
+.team li.out { color: var(--muted); }
+.team li.out .who { text-decoration: line-through; }
+.log { max-height: 260px; overflow-y: auto; list-style: none; padding: 0; }
+.log li { padding: 1px 0; font-size: 12px; }
+.log li.help_called { color: var(--brain); font-weight: 700; background: rgba(126, 232, 255, .08); padding-left: 4px; border-left: 3px solid var(--brain); }
+.log li.help_called::before { content: '! '; }
+.log li .t { color: var(--muted); margin-right: 6px; font-variant-numeric: tabular-nums; }
+
+.overlay { z-index: 30; }
+.modal.wide { max-width: 460px; display: flex; flex-direction: column; gap: 12px; }
+.modal.wide p { margin: 0; }
+.timer { color: var(--accent); font-weight: 700; font-size: 18px; font-variant-numeric: tabular-nums; }
+.modal.ranking { max-width: 720px; display: flex; flex-direction: column; gap: 12px; }
+.end-sub { margin: 0; color: var(--muted); }
+.end-sub b { color: var(--accent); }
+.rank-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.rank-table th { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 400; padding: 4px 8px; text-align: right; border-bottom: 2px solid var(--line-hi); }
+.rank-table td { padding: 7px 8px; text-align: right; border-bottom: 1px solid var(--line); }
+.rank-table th.l, .rank-table td.l { text-align: left; }
+.rank-table td.l .cell { display: flex; align-items: center; gap: 8px; }
+.rank-table tr.me td { background: rgba(245, 164, 47, .08); }
+.rank-table tr.forfeit .n { text-decoration: line-through; color: var(--muted); }
+.rank-table td.pts { color: var(--accent); font-weight: 700; font-size: 15px; }
+.rank-table td .yes { color: var(--safe); }
+.rank-table td .no { color: var(--line-hi); }
+@media (max-width: 640px) { .rank-table th:nth-child(4), .rank-table td:nth-child(4) { display: none; } }
