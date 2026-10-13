@@ -4,11 +4,11 @@
 
 | Package | Status | Evidence / next step |
 | --- | --- | --- |
-| WP-A–E, WP-I foundations | Complete before this pass | Existing gateway, intent, shared world, clock, runtime, lobby, ranking and mock UI checks. |
+| WP-A–E, WP-I | Complete | Existing gateway, intent, shared world, clock, runtime, lobby, ranking and reviewed player/host pages. The real service now serves those pages and the `/v1` routes covered by the HTTP checks. |
 | WP-F | Complete (`7f95df7`, `4a3b9b1`) | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. The full suite passed 46/46; request hashes intentionally regenerated. |
-| WP-G | Implemented (`9cfe77a`, `8bab9c0`, `e5e4153`) | Real `/v1` service, revision workers, auth, SSE, key handling, restart auto-resume after all keys, room expiry, roster propagation and runtime metrics. Final review fixed simultaneous key expiry and fog-projected strike effects. `check-host.mjs` verifies separate participant keys and server rejection; HTTP checks cover host route access. Final suite pending. |
-| WP-H | Implemented (`5499ce1`) | Monsters track visible and frozen sightings per explorer, choose a visible target, and ignore a nearer explorer behind a wall. The hosted actor emits one help call per direct encounter and stores frozen reports for teammates within known-path reach; recipients see `threats.reported`, which expires after 30 steps or when the reported cell is seen empty. Multiplayer and fog-twin checks pass; full suite 50/50. |
-| WP-J / final review | Final verification | Operations guide, contracts, metrics, and child crash checks are built. Review fixed public-ID authentication, durable pending call records, host-ended ranking, and player heart projection. Full suite passed 51/51 before these final fixes; affected service, host, store, and fog checks pass afterward. Final suite running. |
+| WP-G | Complete (`9cfe77a`, `8bab9c0`, `e5e4153`, `c192e28`, `d0f43e0`) | Real `/v1` service, revision workers, private cookie credentials, SSE, key handling, restart auto-resume, room expiry, roster propagation and metrics. Host/HTTP checks cover access, independent keys and server rejection. Full final suite 51/51. |
+| WP-H | Complete (`5499ce1`, `478871a`) | Monsters track visible/frozen sightings per explorer and choose targets without revealing hidden positions. Help calls use known-path reach and frozen reports, expiring after 30 steps or when seen empty. Player projections include team sight and filter hidden effects. Multiplayer and fog checks pass; final suite 51/51. |
+| WP-J / final review | Complete | Operations guide, contracts, metrics and child crash checks. Review fixed authentication, simultaneous key expiry, durable pending call records, host-ended ranking and heart projection. `node scripts/check-all.mjs` passed 51/51 on the final code; no paid calls were made. |
 
 Live measurement remains unrun because it makes paid Jev calls and needs explicit authorisation.
 

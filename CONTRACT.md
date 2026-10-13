@@ -143,7 +143,7 @@ import { MonotonicClock, FakeClock, settle } from './src/runtime/clock.js';
 
 const actor = new GameActor({ game, clock = new MonotonicClock(), rules?: { stepMs, cadenceMs },
   explorers: [{ id, brain }], decideMonster, autoplay = false, startSeq = 0, store?,
-  onEvent(record), onKeyRejected(actorId), onServerKeyRejected(), onFinished(outcome), onError(err) });
+  onEvent(record, { event_write_ms }), onKeyRejected(actorId), onServerKeyRejected(), onFinished(outcome), onError(err) });
 actor.start() / pause(reason?) / resume() / stop()        // promises; nothing runs before start() unless autoplay
 actor.enqueue(fn) -> Promise                              // synchronous critical section, one at a time
 actor.resumeExplorer(id) / forfeitExplorer(id)            // awaiting_key -> active; forfeit = leave for good

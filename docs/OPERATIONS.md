@@ -6,6 +6,8 @@ The default data folder is `runs/server/`. It contains the exclusive `server.loc
 
 Game metadata stores private participant cookie credentials so reconnect survives a restart. These credentials are distinct from public actor IDs and never appear in player views. Protect the entire data folder as credential-bearing data.
 
+Once every living participant has re-entered a key, a game paused for restart resumes automatically. A host can resume earlier; participants still missing keys then get the configured retry window before forfeiting.
+
 ## Backup and restore
 
 Stop the service cleanly before copying the data folder. Preserve file permissions, especially the `host-token` file (mode `0600`). Store backups somewhere access-controlled: names, game state, event history, and call metadata are present even though keys and request bodies are not.
