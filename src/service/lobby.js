@@ -169,6 +169,17 @@ export class Lobby {
     return { ok: true, teamLoss: this.status === 'finished' };
   }
 
+  forfeit(participantId, at = this.#now()) {
+    const p = this.participant(participantId);
+    if (!p) return fail(403, 'not_participant');
+    if (!LIVING.has(p.state)) return fail(409, `participant_${p.state}`);
+    p.state = 'forfeited';
+    p.forfeitedAt = at;
+    p.keyDeadline = null;
+    this.#checkTeamLoss();
+    return { ok: true, teamLoss: this.status === 'finished' };
+  }
+
   // No active or awaiting_key participant left: the team lost.
   #checkTeamLoss() {
     if ((this.status === 'running' || this.status === 'paused') && this.livingCount() === 0) {

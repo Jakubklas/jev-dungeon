@@ -30,6 +30,7 @@ class WorkerClient {
   #child;
   #next = 0;
   #pending = new Map();
+  #exit;
   constructor({ revision, rules, root, onEvent, onExit }) {
     this.revision = revision;
     this.#child = fork(WORKER, [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], env: { ...process.env } });
@@ -40,6 +41,7 @@ class WorkerClient {
       this.#pending.delete(m.requestId);
       if (m.error) p.reject(new Error(m.error.message)); else p.resolve(m.value);
     });
+    this.#exit = new Promise((resolve) => this.#child.once('exit', resolve));
     this.#child.on('exit', (code) => {
       for (const p of this.#pending.values()) p.reject(new Error(`worker exited (${code})`));
       this.#pending.clear();
@@ -56,7 +58,7 @@ class WorkerClient {
       });
     });
   }
-  stop() { this.#child.kill(); }
+  async stop() { this.#child.kill(); await this.#exit; }
 }
 
 export class HostedService {
@@ -74,6 +76,8 @@ export class HostedService {
   #startAt = Date.now();
   #port;
   #host;
+  #closing = false;
+  #expiryTimer;
 
   constructor({ root, port = 3100, host = '127.0.0.1', hostToken = process.env.HOST_TOKEN,
     logger = createLogger(), settingsPath } = {}) {
@@ -88,6 +92,8 @@ export class HostedService {
     this.#host = host;
     this.#routes();
     this.#server = createServer((req, res) => this.#handle(req, res));
+    this.#expiryTimer = setInterval(() => this.#expireWaiting(), 60000);
+    this.#expiryTimer.unref?.();
   }
 
   get settings() { return this.#settings; }
@@ -102,11 +108,45 @@ export class HostedService {
   }
 
   async close() {
+    this.#closing = true;
+    clearInterval(this.#expiryTimer);
     for (const timer of this.#keyTimers.values()) clearTimeout(timer);
     for (const clients of this.#subscribers.values()) for (const c of clients) c.close('shutdown');
-    for (const worker of this.#workers.values()) worker.stop();
     if (this.#server.listening) await new Promise((resolve) => this.#server.close(resolve));
+    await Promise.all([...this.#workers.values()].map((worker) => worker.stop()));
     this.#store.unlock();
+  }
+
+  #expireWaiting() {
+    for (const g of this.#games.values()) if (g.lobby.status === 'waiting' && g.lobby.expire().ok) {
+      this.#saveMeta(g);
+      this.#broadcastLobby(g);
+    }
+  }
+
+  #clearKeyTimers(g) {
+    for (const p of g.lobby.participants) {
+      const tag = `${g.id}:${p.participantId}`;
+      clearTimeout(this.#keyTimers.get(tag));
+      this.#keyTimers.delete(tag);
+    }
+  }
+  #armKeyTimers(g) { for (const p of g.lobby.participants) if (p.state === 'awaiting_key') this.#armKeyTimer(g, p.participantId); }
+
+  async #recoverRevision(revision) {
+    if (this.#closing) return;
+    try {
+      const affected = [...this.#games.values()].filter((g) => g.rulesRevision === revision);
+      for (const g of affected) {
+        const saved = this.#store.readGame(g.id);
+        if (!saved.state || g.lobby.status === 'finished' || g.lobby.status === 'abandoned') continue;
+        g.lobby.restoreAfterRestart();
+        this.#clearKeyTimers(g);
+        await this.#call(g, 'restore', { state: saved.state });
+        this.#saveMeta(g);
+        this.#broadcastLobby(g);
+      }
+    } catch (error) { this.#logger.error('worker recovery failed', { revision, message: error.message }); }
   }
 
   #summary(g, viewer = null) { return gameSummary({ id: g.id, mode: g.mode, lobby: g.lobby, rulesRevision: g.rulesRevision }, viewer); }
@@ -120,7 +160,10 @@ export class HostedService {
     const snapshot = this.#store.readRevision(revision);
     if (!snapshot) throw new Error(`missing rules revision ${revision}`);
     const worker = new WorkerClient({ revision, rules: snapshot.values, root: this.#store.root,
-      onEvent: (e) => this.#workerEvent(e), onExit: (rev) => this.#workers.delete(rev) });
+      onEvent: (e) => this.#workerEvent(e), onExit: (rev) => {
+        if (this.#workers.get(rev) === worker) this.#workers.delete(rev);
+        void this.#recoverRevision(rev);
+      } });
     this.#workers.set(revision, worker);
     await worker.ready;
     return worker;
@@ -142,12 +185,21 @@ export class HostedService {
         if (changed) this.#saveMeta(g);
       }
     }
+    this.#expireWaiting();
   }
 
   #workerEvent(e) {
     const g = this.#games.get(e.id);
     if (!g) return;
     if (e.type === 'record') {
+      if (e.record.type === 'explorer_turn' && e.record.health === 0) {
+        const p = g.lobby.participant(e.record.actor);
+        if (p && (p.state === 'active' || p.state === 'awaiting_key')) {
+          g.lobby.died(p.participantId);
+          this.#saveMeta(g);
+          this.#broadcastLobby(g);
+        }
+      }
       this.#broadcast(g, 'event', e.record.seq, this.#publicEvent(e.record));
       this.#broadcastViews(g);
     } else if (e.type === 'key_rejected') {
@@ -156,11 +208,13 @@ export class HostedService {
       this.#armKeyTimer(g, e.participantId);
       this.#broadcastLobby(g);
     } else if (e.type === 'server_key_rejected') {
-      g.lobby.pause('server_key_rejected');
+      g.lobby.pause('server_key');
+      this.#clearKeyTimers(g);
       this.#saveMeta(g);
       this.#broadcastLobby(g);
     } else if (e.type === 'finished') {
       g.lobby.finish({ outcome: e.outcome.result });
+      this.#clearKeyTimers(g);
       g.ranking = rankParticipants(g.lobby.participants.map((p) => {
         const x = e.outcome.explorers.find((r) => r.id === p.participantId) ?? {};
         return { participant_id: p.participantId, name: p.name, slot: p.slot, joined_at: p.joinedAt,
@@ -176,6 +230,7 @@ export class HostedService {
   #publicEvent(record) {
     if (record.type.startsWith('monster') || record.type === 'decision_failed') return { seq: record.seq, type: 'world' };
     return { seq: record.seq, type: record.type, actor: record.actor,
+      ...(record.type === 'help_called' ? { who: record.who, recipients: record.recipients } : {}),
       ...(record.type === 'explorer_turn' ? { dir: record.dir, skill: record.skill } : {}) };
   }
 
@@ -288,7 +343,7 @@ export class HostedService {
       if (op === 'reveal') return { view: await this.#call(g, 'view', { participantId: null,
         lobby: g.lobby.serialize(), mode: g.mode, reveal: true, ranking: g.ranking }) };
       if (op === 'pause') { await this.#call(g, 'pause'); this.#ok(g.lobby.pause('host')); }
-      if (op === 'resume') { this.#ok(g.lobby.hostResume()); await this.#call(g, 'resume'); }
+      if (op === 'resume') { this.#ok(g.lobby.hostResume()); await this.#call(g, 'resume'); this.#armKeyTimers(g); }
       if (op === 'end') { await this.#call(g, 'stop'); this.#ok(g.lobby.finish({ outcome: 'host_ended' })); }
       this.#saveMeta(g);
       this.#broadcastLobby(g);
@@ -342,7 +397,7 @@ export class HostedService {
     r.add('POST', '/v1/games/:id/leave', async (req, res, { id }) => {
       const g = this.#getGame(id), p = this.#requireMember(req, g);
       if (g.lobby.status === 'waiting') this.#ok(g.lobby.leave(p.participantId));
-      else { this.#ok(g.lobby.died(p.participantId)); await this.#call(g, 'forfeit', { participantId: p.participantId }); }
+      else { this.#ok(g.lobby.forfeit(p.participantId)); await this.#call(g, 'forfeit', { participantId: p.participantId }); }
       this.#saveMeta(g);
       this.#broadcastLobby(g);
       return { body: { game: this.#summary(g) }, headers: { 'set-cookie': [
@@ -369,7 +424,7 @@ export class HostedService {
       const g = this.#getGame(id), p = this.#requireMember(req, g);
       if (g.mode !== 'private' || p.participantId !== g.lobby.leader) throw asError(403, 'forbidden');
       if (op === 'pause') { await this.#call(g, 'pause'); this.#ok(g.lobby.pause('player')); }
-      else { this.#ok(g.lobby.resume()); await this.#call(g, 'resume'); }
+      else { this.#ok(g.lobby.resume()); await this.#call(g, 'resume'); this.#armKeyTimers(g); }
       this.#saveMeta(g);
       return { game: this.#summary(g, p.participantId) };
     });
