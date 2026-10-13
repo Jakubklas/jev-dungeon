@@ -334,3 +334,43 @@ WP-A ∥ WP-B -> WP-C -> WP-D -> WP-E -> WP-F -> WP-G -> WP-H -> WP-I ∥ WP-J. 
 7. **`check-portal-objective` is flaky independent of WP-C**: it runs 12-20 `takeTurn`s with `Math.random`-shuffled
    options and, rarely, the explorer wins before the loop ends (`No legal moves`). Seen once in a full `check-all` run
    and not reproduced in 31 reruns; the script is untouched.
+
+## /v1 API contract (shared by WP-G server and WP-I pages)
+
+All bodies JSON. Errors: `{ error: '<code>', message, ...extra }` with the HTTP status from the Lobby / auth layer.
+Mutating routes require a same-origin `Origin`. Participant identity = cookie `jd_par_<gameId>`.
+
+Pages: `GET /` (player entry: name + key, create or join), `GET /g/<gameId>` (lobby + game view of one room; the
+room link players share), `GET /host` (host page; token in the URL fragment), static `/play.js`, `/host.js`,
+`/render.js`, `/sprites.js`, `/props/*.js`, `/style.css`, `/play.css` (optional).
+
+| Route | Body / query | Response |
+| --- | --- | --- |
+| `POST /v1/games` | `{ name, key, mode: 'private' \| 'shared' }` | `201 { game: GameSummary, participant_id }` + cookie |
+| `POST /v1/games/:id/join` | `{ name, key }` | `200 { game: GameSummary, participant_id }` + cookie |
+| `POST /v1/games/:id/leave` | — | `200 { game: GameSummary }` |
+| `POST /v1/games/:id/key` | `{ key }` | `200 { participant: { state, key_present } }` |
+| `POST /v1/games/:id/start` | — | `200 { game: GameSummary }` |
+| `GET /v1/games/:id` | — | `200 GameView` (participant) / `200 { game: GameSummary }` for a non-member of a waiting room (so the join page can show the roster) / `403` otherwise |
+| `GET /v1/games/:id/events` | header `Last-Event-ID` | SSE: `event: view` (`data: GameView`), `event: event` (`data: { seq, type, ... }` world events as the viewer may see them), `event: lobby` (`data: GameSummary`), `event: end` (`data: { result, ranking, team_score }`); comment heartbeats |
+| `POST /v1/games/:id/directives` | `{ text }` | `200 { directive, queued }` (429 with `retry_in_ms`) |
+| `POST /v1/games/:id/pause` / `resume` | — | `200 { game: GameSummary }` (private: its player; shared: 403 for players) |
+| `POST /v1/host/session` | `{ token }` | `200 {}` + host cookie |
+| `GET /v1/host/settings` | — | `{ revision, values, schema }` |
+| `PUT /v1/host/settings` | `{ values }` | `200 { revision, values, changed }` / `400 { error: 'invalid', fields }` |
+| `GET /v1/host/games` | — | `{ games: [GameSummary & { calls: { posts, failures, timeouts, p50_ms }, counters }] }` |
+| `POST /v1/host/games/:id/{pause,resume,end,reveal}` | — | `200 { game }` (reveal: `{ view: GameView }` with the full map; logged as a host event) |
+| `GET /v1/host/games/:id/calls?limit=200` | — | `{ calls: [CallEntry] }` |
+| `GET /v1/host/metrics` | — | counters (posts, latency p50/p95, timeouts, actor queue delay, event write delay, SSE lag) |
+| `GET /health` | — | `{ ok: true, games, uptime_s }` |
+
+`GameSummary` = `{ id, mode, status, pause_reason, capacity, leader, rules_revision, created_at, participants: [{ participant_id?, name, slot, state, key_present, is_leader, is_self }] }`
+(`participant_id` only for `is_self`).
+
+`GameView` = everything the current single-player `Run.view()` gives (tiles are **fog-projected**: unknown cells
+sent as `null` rows/cells, never the real tile; no seed), plus:
+`self: participant_id`, `explorers: [{ id, participant_id, name, slot, pos, facing, status, self, health, max_health,
+invulnerable, coins }]` (positions of every active explorer, global), `adversaries` = the union of adversaries any
+active explorer directly sees, each with `visible` (the viewer sees it) and `team_visible` (only a teammate does),
+`memory` = the viewer's own explorer memory only, `directive`, `lobby: GameSummary`, `ranking` when finished,
+`spectator: true` for a dead / forfeited viewer (team projection, no own memory beyond its last state).
