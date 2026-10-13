@@ -246,7 +246,7 @@ own commit).
 
 Files: `service.js` (new entry, `npm run serve`), `src/service/{service,http,auth,project,ratelimit,log}.js`,
 `public/play.html`, `public/play.js`, `public/host.html`, `public/host.js` (UI may reuse `public/app.js`'s renderer:
-see WP-J), `package.json` script, `scripts/check-host.mjs`, `scripts/check-service.mjs`.
+see WP-I), `package.json` script, `scripts/check-host.mjs`, `scripts/check-service.mjs`.
 
 - Binds `127.0.0.1` (`HOST` env to open), port `PORT` or 3100. Startup: store lock, host token (random each start
   unless `HOST_TOKEN`), prints `http://localhost:<port>/host#token=...`, restores games (running ones as `paused`).
