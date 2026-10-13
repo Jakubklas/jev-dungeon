@@ -12,11 +12,11 @@ Build in this order:
 4. Deploy and operate the service.
 5. Add the waiting room and shared-dungeon combat on the same runtime.
 
-Private games use the same actor runtime as shared games. A game accepts players only in its waiting room; starting it closes admission permanently. The room leader may start once the minimum player count is met, and a configured start deadline may start a full room automatically. A disconnected player already in a running game may reconnect to that same participant. No new participant joins a running game.
+Private games use the same actor runtime as shared games. A game accepts players only in its waiting room; starting it closes admission permanently. A disconnected player already in a running game may reconnect to that same participant. No new participant joins a running game.
 
 ## Current code and constraints
 
-This plan is based on `main` at `d3375d5` (the merge of tabu search, Dash, and lit-cell sight). The code remains the authority if an implementation detail differs from this plan.
+This plan follows the current `main` code, including tabu search, Dash, and lit-cell sight. The code remains the authority if an implementation detail differs from this plan.
 
 | Current behavior | Relevant code | Required seam |
 | --- | --- | --- |
@@ -44,11 +44,11 @@ The current module-level `configure*` hooks cannot run two rule revisions in one
 
 ### Waiting room and membership
 
-States are `waiting`, `running`, `paused`, `finished`, and `abandoned`. Creating a game creates its waiting room and captures the central rules revision. Players with an invitation may join or leave while it is `waiting`; slot assignment is stable once the game starts. The leader may start when the configured minimum is present. The start transaction seals the participant list, creates the dungeon from a server-secret seed, and places explorers on distinct valid starting cells. The maximum player count and start policy are central settings captured with the room.
+States are `waiting`, `running`, `paused`, `finished`, and `abandoned`. Creating a game creates its waiting room and captures the central rules revision. Shared rooms accept 1-4 players. Invited players may join or leave while the room is `waiting`; slot assignment is stable once the game starts. The leader starts the room explicitly with any nonempty roster. There is no automatic start deadline. A private room has one slot and starts immediately. The start transaction seals the participant list, creates the dungeon from a server-secret seed, and places explorers on distinct valid starting cells. Room capacity is a central setting, initially four.
 
-The join endpoint must lock the game row and require `status = 'waiting'`. A request racing with start either commits before the seal and is included, or receives `409 game_started`. Reconnect uses the existing participant ID and never runs the join path. If the leader leaves before start, leadership transfers deterministically to the oldest remaining participant. Empty waiting rooms expire without creating a dungeon or making Jev calls.
+The join endpoint must lock the game row and require `status = 'waiting'`. A request racing with start either commits before the seal and is included, or receives `409 game_started`. Reconnect uses the existing participant ID and never runs the join path. If the leader leaves before start, leadership transfers deterministically to the oldest remaining participant. Waiting rooms expire after 30 minutes without membership activity, without creating a dungeon or making Jev calls. A browser disconnect does not stop its explorer's server-side decisions; it can reconnect to the same participant and resume its view.
 
-Private mode is a waiting room with capacity one and may start immediately. A parallel-seed race is several separate games seeded from a server-secret race seed. Shared mode is one world and one waiting room. Co-op can follow shared competitive play without changing admission.
+A parallel-seed race is several separate games seeded from a server-secret race seed. Shared mode is one world and one waiting room. Co-op can follow shared competitive play without changing admission.
 
 ### Continuous time and actor decisions
 
@@ -102,7 +102,7 @@ function applyIntent(world: World, command: ApplyIntent) {
 
 ### Shared exploration and visibility
 
-The dungeon owns one monotone `lit` set. When any explorer enters a cell, add every cell within the configured light radius. Light never disappears when that explorer leaves, dies, or disconnects. Every explorer's `KnownWorld` can read this same explored map, so an area another explorer already visited remains known. Current enemy sightings still require the observer's own range and line of sight; shared lit terrain alone does not reveal an enemy's current location. Remembered sightings remain frozen at their observation time and expire under the converted time rule.
+The dungeon owns one monotone `lit` set. When any explorer enters a cell, add every cell within the configured light radius. Light never disappears when that explorer leaves, dies, disconnects, or forfeits. Every explorer's `KnownWorld` can read this same explored map, so an area another explorer already visited remains known. Current enemy sightings still require the observer's own range and line of sight; shared lit terrain alone does not reveal an enemy's current location. Remembered sightings remain frozen at their observation time and expire under the converted time rule.
 
 ```js
 function visit(world, explorer, cell) {
@@ -118,15 +118,48 @@ function knownTile(world, explorer, cell) {
 }
 ```
 
-The request projector must use `KnownWorld` and never place hidden tiles, current unseen enemies, unseen loot, or the seed in Jev input. A player's SSE view may show teammates' positions if the chosen multiplayer rules permit it; Jev visibility for another explorer must be specified and tested separately. The first shared-world release may omit explorers from each other's Jev requests while still sharing map light.
+Every active explorer's current position is available to every other explorer and player, at any distance and through walls and objects. Their private resources and memory remain private. The same global teammate positions go to each explorer's Jev request. The map itself still follows shared permanent light; a teammate's position does not reveal hidden tiles around them.
+
+The screen also shows the live position of every adversary that **at least one** explorer directly sees. The union is recomputed after each world action. A recipient's HUD labels an adversary seen only by a teammate as `team_visible`; it disappears from the live overlay when nobody sees it. That display does not make the adversary directly visible to the recipient's brain: `KnownWorld.visibleAdversaries()` still returns only its own range-and-line-of-sight sightings, including the in-sight hp/level/claw fields. The request projector never substitutes the screen's union for that direct-sight list.
+
+When an explorer newly encounters an adversary by direct sight, the server emits one `help_called` event for that encounter. Other active explorers within `explorer.helpReachSteps` of the caller on the **shared known-floor path graph** receive a `help_report` with caller ID, adversary ID, sighted cell, and observation time. The default reach is 48 path steps, twice the current monster pack-alert default of 24; central validation requires it to remain wider than `monsters.pack.alertSteps`. A report is frozen at that sighting, is labelled as teammate information, and expires under the normal remembered-sighting duration. It never becomes a direct sighting or tracks the adversary after it moves. A later new encounter may call again; a continuously visible enemy does not trigger a call on every decision. The report and a help cue enter each recipient's next scheduled Jev request without an extra immediate paid call. No recipient receives hidden surrounding cells, a live enemy position, or remote hp/level/claw data from the call.
+
+```js
+function callForHelp(world, caller, enemy) {
+  if (caller.directSightings.has(enemy.id)) return; // one call per direct encounter
+  const report = { by: caller.id, enemyId: enemy.id,
+    at: [...enemy.pos], observedAt: world.now() };
+  for (const recipient of world.activeExplorers()) {
+    if (recipient.id === caller.id) continue;
+    const steps = knownPathSteps(world.knownTiles, caller.pos, recipient.pos);
+    if (steps <= world.rules.helpReachSteps) recipient.addHelpReport(report);
+  }
+  world.emit({ type: 'help_called', ...report });
+}
+```
+
+Track direct-sighting transitions before updating `caller.directSightings`; clear an ID when direct sight is lost so a later re-encounter can call again. `knownPathSteps` traverses only lit, known floor cells and cannot inspect hidden corridors.
+
+This teammate position and help report are explicit additions to the explorer's fog-safe API. Keep game access inside `KnownWorld` and the server-side event router; extend the static guard and fog twins. Hidden map changes outside shared lit terrain must not change help delivery, and moving an enemy after the reported sighting must not change the recipient's frozen report.
 
 ### Combat and victory
 
-Each explorer owns position, health, grace, facing, block, skills, purse, memory, confidence, directive, and outcome. The world owns ghosts, shared map light, floor loot, and the portal. An attack checks current targets at its application time. A simultaneous-looking pair of actions is ordered by the game actor's monotone event sequence, not by player slot; that order is persisted and broadcast. One-hit protection applies per target using real-time grace deadlines. Contact remains a bump. Ghosts choose among explorers visible at their own decision start; a stale claw can miss or strike a different occupant of its chosen cells at application time, subject to the skill's targeting rule.
+Each explorer owns position, health, grace, facing, block, skills, purse, memory, confidence, directive, and outcome. The world owns ghosts, shared map light, floor loot, and the portal. Explorers cannot attack or damage one another, and a move into another explorer's occupied cell fails current-state validation. An attack checks current targets at its application time. A simultaneous-looking pair of actions is ordered by the game actor's monotone event sequence, not by player slot; that order is persisted and broadcast. The first applied pickup takes a contested coin or heart; the later actor finds the cell empty. One-hit protection applies per target using real-time grace deadlines. Contact with a ghost remains a bump. Ghosts receive only explorers visible at their own decision start and choose a target as part of their decision; a stale claw can miss or strike a different occupant of its chosen cells at application time, subject to the skill's targeting rule.
 
-In a competitive shared dungeon, the first explorer to enter the portal wins. Other survivors receive a finished outcome with their held coins. In a private game, entering the portal wins as today. Portal-less testbed rooms retain their clear-all-enemies rule. Co-op victory rules are a later explicit product decision.
+In a competitive shared dungeon, the first explorer to enter the portal wins. Other survivors receive a finished outcome with their held coins. In a private game, entering the portal wins as today. Portal-less testbed rooms retain their clear-all-enemies rule. Co-op follows the competitive release: the team wins when any living explorer enters the portal, with team score equal to coins held by all explorers at that moment. A dead participant keeps their personal dead outcome but receives the team's result.
 
-## Jev transport and cost control
+## Decision routing and cost control
+
+The gateway routes each request by actor ID. A participant's immutable `agent_version_id` pins the explorer's provider and model when they join. Its calls use that participant's selected BYOK credential. An account without BYOK can use the capped platform explorer key only with the platform's hosted Jev model; other providers or models require an appropriate BYOK credential. A player cannot change provider, model, or key after the room starts. Other participants' keys are never used as a fallback.
+
+All adversaries in one game use the single server-controlled provider and model captured from central settings when the room is created. Their calls use a server credential, independent of every player's model and key. The service pays for adversary calls and charges them against the global and game budgets. Rotating a server secret changes the credential without changing a running game's pinned model. A room cannot start unless every explorer route and the adversary route are available and within their budgets.
+
+| Request source | Provider and model | Credential and budget |
+| --- | --- | --- |
+| Explorer `par_...` | That participant's pinned agent version | Their matching BYOK key and account quota, or the platform hosted Jev model/key and free-tier quota |
+| Adversary `a1..aN` | The game's captured central adversary model | Server key, service quota, and game quota |
+
+If an explorer's key fails authentication or that participant's quota is exhausted, only that participant forfeits. Abort their pending call, invalidate their actor generation, remove their explorer from occupancy and monster target lists, and retain their final purse/outcome for the scoreboard. The other explorers and adversaries continue. If no active explorer remains, finish the game without a winner. A forfeit is final: reconnect restores the result screen, not a playing slot, and no new player joins the running room. Transient request errors and five-second timeouts consume only that actor's current decision opportunity; it tries again on its next schedule. A failed server adversary credential, service-wide cap, or game-wide cap pauses the whole game because no participant can supply that route.
 
 Only the gateway may create paid askers. Remove the brains' default real callers and require injected `ask`/`decide`; dry scripts keep throwing network tripwires. The hosted Jev policy is **one copy**, **the existing retry behavior** (up to three retries for the current transient statuses and network failures), and a **five-second total logical-call timeout**, including retries and backoff. No hedge timer or tenant hedge override exists. An aborted or timed-out call cannot enqueue an action even if a response arrives afterward. A timed-out actor records a failure and waits for its next own decision opportunity; it does not stall the game.
 
@@ -151,7 +184,7 @@ async function postWithRetry(body, { signal, onAttempt, fetchImpl = fetch }) {
 }
 ```
 
-The sketch needs response-body error handling and the existing provider adapters when implemented. Its invariant is one in-flight copy and a deadline covering the entire call. Every attempted HTTP post counts toward quota, even on timeout. A platform kill switch, global daily post cap, per-account cap, per-game post cap, and per-actor rate limit are checked before dispatch. A denied decision becomes a recorded `budget_denied` event and can pause the affected game or actor by policy. The service starts with autoplay disabled until these guards and metering pass their checks. A player's browser never drives the spending loop.
+The sketch needs response-body error handling and the existing provider adapters when implemented. Its invariant is one in-flight copy and a deadline covering the entire call. Every attempted HTTP post counts toward quota, even on timeout. A platform kill switch, global daily post cap, per-account cap, per-game post cap, and per-actor rate limit are checked before dispatch. A participant-only denial emits `forfeited`; a server or game-wide denial emits `budget_denied` and pauses the game. Server scheduling stays disabled during rollout until these guards and metering pass their checks; afterward, starting a game starts its actors automatically. A player's browser never drives the spending loop.
 
 ## Storage and recovery
 
@@ -178,7 +211,8 @@ CREATE TABLE games (
 CREATE TABLE game_participants (
   id text PRIMARY KEY, game_id text NOT NULL REFERENCES games(id),
   player_id text NOT NULL, agent_version_id text NOT NULL,
-  slot int NOT NULL, status text NOT NULL,
+  key_id text, -- null only for an eligible platform explorer key
+  slot int NOT NULL, status text NOT NULL, -- joined|alive|won|dead|forfeited
   joined_at timestamptz NOT NULL, UNIQUE (game_id, player_id), UNIQUE (game_id, slot)
 );
 
@@ -196,7 +230,8 @@ CREATE TABLE game_events (
 CREATE TABLE jev_calls (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   game_id text NOT NULL, actor_id text NOT NULL, request_sha text NOT NULL,
-  kind text NOT NULL, status text NOT NULL, attempts int NOT NULL,
+  kind text NOT NULL, provider text NOT NULL, model text NOT NULL,
+  credential_source text NOT NULL, status text NOT NULL, attempts int NOT NULL,
   request_bytes int NOT NULL, elapsed_ms int, billed_account_id text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -206,11 +241,11 @@ The settings edit transaction increments `service_settings.revision`. The game c
 
 Snapshot all mutable state explicitly: map light, loot, event sequence; each explorer's position, resources, memory, private brain state, timers, in-flight generation, and RNG; each ghost's public six fields, hunt/search memory, limited-map view, skills, timers, and RNG. Include the current tabu and Dash state. Preserve Set and Map order where behavior depends on it. Do not JSON-clone `Game` or `Adversary`; use versioned `serialize`/`restore` methods. Store remaining timer durations at pause or checkpoint and reanchor them on restore. A restored game must reproduce the next request bytes and action sequence under stubbed decisions.
 
-Keep a seed, generation version, rules snapshot, and map hash. If generator code changes, restore from a pinned dungeon blob or continue on a compatible old build; never silently regenerate a different map. Make option shuffles actor-specific seeded RNG streams, since global `Math.random` makes interleaving nondeterministic. Preserve the current dungeon and spawn RNG draw order. Regenerate request-hash fixtures deliberately after request order changes and review the diff.
+Keep a seed, generation version, rules snapshot, map hash, and a pinned dungeon blob from game start. Restore from that blob after generator changes; never silently regenerate a different map. Make option shuffles actor-specific seeded RNG streams, since global `Math.random` makes interleaving nondeterministic. Preserve the current dungeon and spawn RNG draw order. Regenerate request-hash fixtures deliberately after request order changes and review the diff.
 
 ## Identity, API, and access
 
-Use hosted OIDC login, cookie sessions with CSRF protection, and versioned agent configs. BYOK is encrypted at rest; a capped platform key may serve accounts without one. Only the gateway decrypts a key for a call. Agent persona presets may adjust validated numeric defaults; any free text sent to Jev needs a stated request-byte budget. Player directives are already free text sent to Jev, so retain their sanitation and rate limits.
+Use hosted OIDC login, cookie sessions with CSRF protection, and versioned agent configs. BYOK is encrypted at rest; the capped platform explorer key serves eligible accounts without one. Only the gateway decrypts a key for a call. Agent persona presets may adjust validated numeric defaults; any free text sent to Jev needs a stated request-byte budget. Player directives are already free text sent to Jev, so retain their sanitation and rate limits.
 
 IDs use prefixed ULIDs (`gm_`, `par_`, `plr_`, `agt_`, `agv_`, `key_`); ghost IDs remain game-local `a1..aN`. The HTTP surface is:
 
@@ -220,13 +255,13 @@ IDs use prefixed ULIDs (`gm_`, `par_`, `plr_`, `agt_`, `agv_`, `key_`); ghost ID
 | `POST /v1/games` | Authenticated player creates a waiting room; no rule overrides. |
 | `POST /v1/games/:id/join` / `leave` | Invited player, waiting state only. |
 | `POST /v1/games/:id/start` | Room leader; seals membership and starts actors. |
-| `GET /v1/games/:id` | Participant or authorized spectator; projected state. |
+| `GET /v1/games/:id` | Participant sees their own fog-projected state; operator access is audited. |
 | `GET /v1/games/:id/events` | SSE with `Last-Event-ID`, heartbeat, bounds on queued bytes. |
 | `POST /v1/games/:id/directives` | Participant controls only their own explorer; queued for its next decision. |
-| `POST /v1/games/:id/pause` / `resume` | Leader or operator, subject to mode and budget policy. |
+| `POST /v1/games/:id/pause` / `resume` | Private-game owner or operator. Shared-game pause/resume is operator only. |
 | `POST /v1/keys`, `GET /v1/keys`, `DELETE /v1/keys/:id` | Owner only; responses contain metadata, never plaintext. |
 
-The old `/api/new`, `/api/step`, `/api/settings`, `/api/config`, and hub management endpoints remain localhost development routes and are absent from the public router. No player can call a settings API. SSE uses a per-viewer projector. It removes hidden map cells, hidden enemies, private memories, key metadata, request bodies, and the server seed. Reveal is an audited operator action. Every route enforces membership and ownership on the server, independent of browser controls.
+The old `/api/new`, `/api/step`, `/api/settings`, `/api/config`, and hub management endpoints remain localhost development routes and are absent from the public router. No player can call a settings API. The first public release has no spectator role. SSE uses a per-viewer projector. It removes hidden map cells, hidden enemies, private memories, key metadata, request bodies, and the server seed. Reveal is an audited operator action. Every route enforces membership and ownership on the server, independent of browser controls.
 
 ## Implementation sequence and acceptance
 
@@ -240,7 +275,7 @@ Exit: all checks are free, no brain can initiate a paid call without injected ga
 
 ### 1. Continuous runtime and persistence
 
-1. Extract `ExplorerState` from `Game`; make `KnownWorld` participant-specific and preserve its static fog guard. Give `Game` one shared permanent light set. Convert step-based gameplay timers to durations with documented defaults.
+1. Extract `ExplorerState` from `Game`; make `KnownWorld` participant-specific and preserve its static fog guard. Give `Game` one shared permanent light set. Add central `explorer.helpReachSteps` with a default of 48 and validation against monster alert reach. Convert step-based gameplay timers to durations with documented defaults.
 2. Implement per-actor schedules and the short mutation queue. Use a fake monotonic clock and controlled promises to prove that a slow explorer does not stop a fast explorer or a monster, and that a late sword misses a target that moved out of its aimed cells.
 3. Add versioned snapshots, actor RNG, Postgres state/event transactions, lease fencing, and restore. Keep the local file store for testbed use.
 4. Add cost caps and server-side autoplay, initially disabled. Build private one-player games on this runtime before shared games.
@@ -251,7 +286,7 @@ Exit: restored and uninterrupted stubbed games produce equal request bodies, eve
 
 1. Add accounts, player identity, immutable agent versions, encrypted BYOK, quotas, CSRF, rate limits, and audit events.
 2. Add the public `/v1` router and SSE projection. Restrict the one settings API to operators; remove player settings routes from the public router. Bind dev hub management to localhost.
-3. Run fog twins for every participant view and request, including a teammate's newly lit area and a hidden monster moved after a sighting. Run access tests for every route and spend-limit race tests across two workers.
+3. Run fog twins for every participant view and request, including a teammate's newly lit area, global teammate positions, and a hidden monster moved after a help report. Test request routing with three different explorer models and one central adversary model, exact billing ownership, single-participant forfeiture on key or quota failure, service-route pause, access for every route, and spend-limit races across two workers.
 
 Exit: an untrusted browser cannot spend another account's key, change rules, reveal hidden state, start another player's game, or manage server instances.
 
@@ -262,9 +297,9 @@ Deploy app workers and managed Postgres. Add health checks, migrations, structur
 ### 4. Shared dungeon
 
 1. Implement waiting-room joins, leaves, leader transfer, start seal, expiry, reconnect, and start/join transaction races.
-2. Spawn distinct explorers in one world. Share permanent map light and world loot; keep personal route history, resources, memories, and directives. Decide and document pickup contention using event application order.
+2. Spawn distinct explorers in one world. Share permanent map light and world loot; keep personal route history, resources, memories, and directives. Add global active-explorer positions, the screen's union of directly seen enemies, and frozen help reports to the correct projection layers. Resolve pickup contention by event application order.
 3. Extend monster targeting, attacks, knockback, grace, skill effects, and win resolution for multiple explorers. Preserve bump versus strike semantics. Validate all actions against current state when they apply.
-4. Project one SSE stream per viewer and run fog twins. Cover simultaneous portal entries, two attacks against one ghost, a ghost moving during a delayed sword call, player death while a call is in flight, and a disconnected participant's reconnection.
+4. Project one SSE stream per viewer and run fog twins. Cover simultaneous portal entries, contested loot, two attacks against one ghost, a ghost moving during a delayed sword call, all teammate positions through walls, the union of directly seen adversaries on every screen, near and far help-call recipients, player death or forfeiture while a call is in flight, and a disconnected participant's reconnection.
 
 Exit: no player joins after start; a slow decision never freezes the dungeon; explored terrain persists for every explorer; every applied action has one durable event and a deterministic order; no hidden state leaks into Jev or player views.
 
