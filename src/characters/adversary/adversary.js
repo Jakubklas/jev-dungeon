@@ -9,7 +9,7 @@
 // ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng } from '../../dungeon.js';
 import {
-  KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
+  KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, tabuReport, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
 } from './brain.js';
 import { approachTarget, stepCell } from './perception.js';
 import { AdversaryView } from './adversary-view.js';
@@ -756,7 +756,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
 
   for (const a of order) {
-    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null };
+    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null, tabu: null };
     turns.push(turn);
     if (stunned.has(a)) {
       turn.stunned = true;
@@ -805,6 +805,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
         turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
       }
       senseAfterStep(game, a, events, tick);
+      turn.tabu = tabuReport(a, tick); // before the extra steps below: they only extend the same direction
       // Continue the chosen direction without another decision or attack. Check every cell
       // so fast movement cannot cross walls or skip bumps and sightings.
       while (a.budget >= 1) {
