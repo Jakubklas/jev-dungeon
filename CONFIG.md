@@ -236,6 +236,12 @@ The knight: lives and protection after a hit.
 | `explorer.brain.directiveDone` | 0.5 | 0..1 | live | no | directive_done above this ends the player directive |
 | `explorer.brain.directiveAskEvery` | 5 | 1..50 | live | no | Steps between directive_done questions |
 | `explorer.brain.leaveNow` | 0.5 | 0..1 | live | no | leave_now above this switches to go_to_exit |
+| `explorer.tabu.enabled` | true | on/off | live | no | Tabu: options that kept failing are left off the explorer's menus |
+| `explorer.tabu.tactics` | true | on/off | live | no | Tabu at the tactic level (needs explorer.tabu.enabled) |
+| `explorer.tabu.tacticStrikes` | 2 | 1..10 | live | no | Re-decisions with no gain that rule a tactic out for the encounter |
+| `explorer.tabu.retreatTicks` | 12 | 2..60 | live | no | Ticks of run_away or hide with no gain that rule it out |
+| `explorer.tabu.engageHits` | 2 | 1..10 | live | no | Hits taken under engage with no strike landed that rule it out |
+| `explorer.tabu.pingpongTenure` | 8 | 1..60 | live | no | Steps a tactic stays ruled out after it ping-ponged |
 | `explorer.brain.cornerMode` | "off" | off / urgent / ascii / route / full | live | no | Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both) |
 | `explorer.perception.sightingNear` | 8 | 1..30 | live | no | A move within this many steps of a sighting counts as toward it |
 | `explorer.perception.zoneSteps` | 6 | 1..30 | live | no | Avoid-zone radius around an older sighting, steps |

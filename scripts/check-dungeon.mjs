@@ -54,6 +54,8 @@ const ALLOWED_IMPORTS = {
   '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
   // Pure helpers shared with the adversary side (PLAN-adversary-memory.md A3); they import nothing from the game.
   '../shared/memory-kit.js': null,
+  // tabu.js (PLAN-tabu.md): the tabu lists both characters use. Pure, imports nothing (check-tabu asserts it).
+  '../shared/tabu.js': null,
   // Skills (PLAN-skills.md): the brain builds its skill set and asks the `skill` question through these two
   // modules only. They hold no game state; src/skills/ is guarded below (section 0c). resolve.js is not allowed.
   // skillConfig returns the settings numbers (stun ticks, coin drop chance) for the rules sentence: no game state.
@@ -99,7 +101,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   // morale.js (PLAN-monster-morale.md): the monster's morale model. Pure, imports nothing (check-morale asserts it),
   // so brain.js, memory.js and adversary.js may import it, exactly as the explorer's confidence.js is treated.
   './morale.js': null,
-  '../shared/memory-kit.js': null, '../../jev.js': null, 'node:fs/promises': null,
+  '../shared/memory-kit.js': null, '../shared/tabu.js': null, '../../jev.js': null, 'node:fs/promises': null,
   // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
   '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
   './adversary.js': ['ADVERSARY_SPEED'],
@@ -1282,17 +1284,19 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('wary'), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const a = chaser(ghost);
     g.adversaries = [a];
-    const cells = [[...g.pos]], ghostState = { budget: 0 }, tactics = new Set();
+    const cells = [[...g.pos]], under = [null], ghostState = { budget: 0 }, tactics = new Set();
     for (let t = 0; t < 15; t++) {
       const turn = await withSeed(100 + t, () => brain.takeTurn());
       if (turn.decision?.tactic?.choice) tactics.add(turn.decision.tactic.choice);
       cells.push([...g.pos]);
+      under.push(brain.memory.approach.id); // the tactic this move was made under
       walkToward(g, a, ghostState);
     }
     // Ping-pong = moves that step straight back to the cell just left (A-B-A), the count recent.back_and_forth
-    // keeps. Turning round once at the end of a run costs one.
+    // keeps. Turning round once at the end of a run costs one. Only moves made under run_away count: when tabu
+    // (PLAN-tabu T3) rules a shuttling run_away out, the step to engage's holding cell is not a run_away bounce.
     let pp = 0;
-    for (let i = 2; i < cells.length; i++) if (cells[i].join() === cells[i - 2].join() && cells[i].join() !== cells[i - 1].join()) pp++;
+    for (let i = 2; i < cells.length; i++) if (under[i] === 'run_away' && cells[i].join() === cells[i - 2].join() && cells[i].join() !== cells[i - 1].join()) pp++;
     pingPongRuns.push(pp);
     if (pp >= 3) fail(`ping-pong under run_away: ${pp} undone moves in 15 ticks from ${me} with the ghost at ${ghost} (tactics ${[...tactics]}): ${cells.map((c) => c.join(',')).join(' ')}`);
     validateMemory(brain.memory);

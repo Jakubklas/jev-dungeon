@@ -34,6 +34,7 @@ import {
   allowedMoods, defaultMood, panicNext, retreatTier, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
 import { askJev, shuffle, jevModel } from '../../jev.js';
+import { add as tabuAdd, age as tabuAge, clearStrikes, createTabu, endEncounter as tabuEndEncounter, entryOf, filterOptions, isTabu, snapshot as tabuSnapshot, strike as tabuStrike } from '../shared/tabu.js';
 
 let REVIEW_EVERY = 8; // steps between approach reviews
 let APPROACH_FAILING = 0.5; // approach_working.noul below this switches approach
@@ -50,6 +51,17 @@ let HOLD_MAX = 5; // engage hold: consecutive ticks the explorer waits 2 steps o
 let HOLD_ADJACENT_MAX = 2; // ... and ticks it stays beside one without striking (a skill pick below SKILL_MIN)
 let CORNER_MODE = 'off'; // cornered by an enemy: off | urgent | ascii | route | full (see PLAN-corner.md)
 let PINGPONG_FAILS = 3; // back-and-forth moves under a tactic that make it fail
+// PLAN-tabu (phase 1, tactics): a tactic that kept failing is left off the tactic menu, so Jev must pick another one.
+let TABU_ON = true; // master toggle (explorer.tabu.enabled)
+let TABU_TACTICS = true; // the tactic level (explorer.tabu.tactics)
+let TABU_TACTIC_STRIKES = 2; // T2: re-decisions with no gain under the same tactic that rule it out for the encounter
+let TABU_RETREAT_TICKS = 12; // T3: ticks of run_away / hide with no gain that rule it out for the encounter
+let TABU_ENGAGE_HITS = 2; // T4: hits taken under engage with no strike landed that rule it out for the encounter
+let TABU_PINGPONG_TENURE = 8; // T1: steps a tactic stays ruled out after it ping-ponged
+const TABU_GAP_GAIN = 2; // the nearest enemy this many steps further off than at the baseline is a gain
+const TABU_C_GAIN = 5; // ... and so is confidence this much higher
+const NEVER_TABU = ['race_to_exit']; // the win is never ruled out
+const RETREATS = ['run_away', 'hide'];
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
 // The real Jev call; a Run or a check passes `ask` to replace it.
@@ -288,6 +300,16 @@ export class ExplorerBrain {
   // bounced between and the target that led there), so the re-decision is a different one. Cleared
   // when the encounter starts or ends.
   #exclude = null;
+  // PLAN-tabu: the explorer's tabu lists (shared/tabu.js), private like #exclude: never in memory.json, never sent to Jev.
+  // #track = the tactic on now and its gain baseline { id, since, base: { wins, health, gap, C }, hits }; a gain moves the
+  // baseline to now. #wins = strikes and dispels landed this game; #gapNow = this tick's encounter gap_now (or null);
+  // #tabuTick = this tick's menu filter { removed, lifted } for the turn report.
+  #tabu = createTabu();
+  #track = null;
+  #wins = 0;
+  #gapNow = null;
+  #tabuTick = null;
+  #told = new Set(); // `${id}@${since}`: rule-outs already logged (once, on the first menu that really dropped them)
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
   #seen = new Map();
@@ -819,6 +841,8 @@ export class ExplorerBrain {
     const liveDirective = this.directive;
     const sit = situation(world, { remembered: this.#remembered, landmarks: memory.landmarks }); // computed before the move: what Jev sees this tick
     this.#watchCorner(sit);
+    this.#gapNow = sit.threats.encounter?.gap_now ?? null;
+    this.#tabuTick = null;
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
 
@@ -872,13 +896,14 @@ export class ExplorerBrain {
     let decisionTargets = {}; // tactic id -> observed target at decision time
     let apiMs = 0;
     if (trigger) {
+      if (inSight) this.#charge(trigger, step);
       info.lastDecision = step;
       const sentiment = await this.#askSentiment(sit, trigger);
       apiMs += sentiment.ms;
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities, options: sentiment.options, automatic: sentiment.automatic }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() });
+        const feasible = this.#menu(tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() }), step);
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -1126,6 +1151,7 @@ export class ExplorerBrain {
       directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
       confidence: this.#confidenceReport(),
+      tabu: TABU_ON ? { ...tabuSnapshot(this.#tabu, world.steps), removed: this.#tabuTick?.removed ?? [], lifted: this.#tabuTick?.lifted ?? [] } : null,
     };
   }
 
@@ -1142,11 +1168,13 @@ export class ExplorerBrain {
     for (const e of events) {
       if (e.type === 'struck') {
         if (e.staggered !== false) this.#struck.set(e.id, step); // a monster the blow did not stagger is not stunned: do not wait on it
+        this.#wins += 1;
         this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {
         const coin = events.some((x) => x.type === 'coin_drop' && x.id === e.id);
         countEncounter(memory, 'dispelled', step);
+        this.#wins += 1;
         this.#confide('dispelled');
         addEvent(memory, step, `Dispelled ${e.id}${coin ? '; it dropped a coin' : ''}.`);
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
@@ -1185,6 +1213,11 @@ export class ExplorerBrain {
     addEvent(memory, at, `Hit by ${adversaryId}: ${world.health} of ${world.maxHealth} lives left.`);
     // A tactic never fails on a lost life by itself (engage never fails by gap): ask again next tick.
     if (isTactic(memory.approach.id)) this.#encounter.pending = 'hit';
+    // T4: engage keeps costing lives with no strike landed: off the menu for the rest of the encounter.
+    const t = this.#track;
+    if (t && t.id === 'engage' && memory.approach.id === 'engage' && ++t.hits >= TABU_ENGAGE_HITS && this.#wins === t.base.wins) {
+      this.#ruleOut('engage', world.steps + 1, { encounter: true }, `${t.hits} hits taken with no strike landed`);
+    }
     addLandmark(memory, { kind: 'hit_here', cell: world.pos, step: at, note: 'Took a hit here.' });
     await this.#save();
   }
@@ -1262,7 +1295,7 @@ export class ExplorerBrain {
       const g = SENTIMENTS[id].min_gap;
       const retreat = this.#retreatOK(id, caps);
       const k = `${g}|${retreat}`;
-      if (!allowed.has(k)) allowed.set(k, Object.keys(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), retreat })).map((t) => t.replace(/_/g, ' ')));
+      if (!allowed.has(k)) allowed.set(k, Object.keys(this.#menu(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), retreat }), world.steps + 1, false)).map((t) => t.replace(/_/g, ' ')));
       return allowed.get(k);
     };
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
@@ -1447,6 +1480,7 @@ export class ExplorerBrain {
   #applyTactic(id, trigger, prev, cell) {
     const memory = this.#memory;
     if (cell) this.#tacticGoal = { id, cell };
+    if (this.#track?.id !== id) this.#track = { id, since: prev + 1, base: this.#baseline(), hits: 0 }; // a re-pick keeps its baseline
     if (memory.approach.id === id) return;
     interruptApproach(memory, approachOf(id), trigger === 'encounter' ? 'met an enemy' : `encounter: ${trigger.replace(/_/g, ' ')}`, prev);
     this.#review = { step: prev + 1, targetSteps: null };
@@ -1471,10 +1505,13 @@ export class ExplorerBrain {
     const step = prev + 1;
     const profile = this.#profile();
     const a = memory.approach;
+    tabuAge(this.#tabu, step);
 
     if (visible.length && !info.active) {
       info.active = true;
       this.#exclude = null;
+      tabuEndEncounter(this.#tabu); // a fresh encounter starts with a clean slate
+      this.#track = null;
       this.#capFired = new Set();
       countEncounter(memory, 'count', at);
     }
@@ -1487,6 +1524,7 @@ export class ExplorerBrain {
     let policy = null;
     const inEncounter = isTactic(a.id);
     if (visible.length) {
+      this.#trackGain(a.id, step);
       const newcomer = visible.some((v) => !info.encIds.has(v.id));
       const turned = visible.some((v) => v.mode === 'chase' && info.modes.get(v.id) === 'patrol');
       // (Without a tactic on, e.g. no tactic was feasible last time, retry only after the cooldown.)
@@ -1494,7 +1532,11 @@ export class ExplorerBrain {
       else if (step - info.lastDecision >= REDECIDE_COOLDOWN) {
         const failing = this.#tacticFailing(profile, sit);
         const bounced = this.#pingPong(prev);
-        if (failing || bounced) trigger = 'tactic_failed';
+        // T1: bouncing that gained nothing (a fight bounces too: strike, knockback, close in; a strike is a gain).
+        if (bounced && !this.#corner && this.#track?.id === a.id && step - this.#track.since >= PINGPONG_FAILS) this.#ruleOut(a.id, step, { tenure: TABU_PINGPONG_TENURE }, 'it kept stepping back and forth');
+        const stalled = this.#retreatStalled(step); // T3
+        const ruled = this.#tabuMenuOn() && isTabu(this.#tabu, 'tactic', a.id, step); // ruled out (T1-T4): re-decide on a menu without it
+        if (failing || bounced || stalled || ruled) trigger = 'tactic_failed';
         if (bounced) this.#bounce();
       }
       for (const v of visible) {
@@ -1522,11 +1564,94 @@ export class ExplorerBrain {
       }
       info.active = false;
       this.#exclude = null;
+      tabuEndEncounter(this.#tabu);
+      this.#track = null;
       this.#capFired = new Set();
       info.encIds = new Set();
       info.modes = new Map();
     }
     return { trigger, policy };
+  }
+
+  // ---- PLAN-tabu, tactic level. Recording runs whenever the toggles are on; the menu filter (#menu) also stands aside
+  // in panic and under a live directive, where the menu is not Jev's to pick freely.
+  #tabuRecordOn() {
+    return TABU_ON && TABU_TACTICS;
+  }
+
+  #tabuMenuOn() {
+    return this.#tabuRecordOn() && this.#memory.sentiment?.id !== 'panic' && !this.directive;
+  }
+
+  // The gain baseline: own strikes and dispels, lives, the nearest enemy's gap and C now (all the explorer's own state).
+  #baseline() {
+    return { wins: this.#wins, health: this.#world.health, gap: this.#gapNow, C: this.#capState().C };
+  }
+
+  // Did anything get better since the baseline? A strike or dispel landed, a life came back, the nearest enemy is
+  // TABU_GAP_GAIN steps further off, or confidence rose TABU_C_GAIN.
+  #gained(base) {
+    const gap = this.#gapNow;
+    return this.#wins > base.wins || this.#world.health > base.health ||
+      (gap !== null && base.gap !== null && gap >= base.gap + TABU_GAP_GAIN) || this.#capState().C >= base.C + TABU_C_GAIN;
+  }
+
+  // Once per tick with an enemy in sight: a gain under the tactic on now moves its baseline to now and clears its strikes.
+  #trackGain(id, step) {
+    const t = this.#track;
+    if (!t || t.id !== id) { if (!isTactic(id)) this.#track = null; return; }
+    if (t.base.gap === null && this.#gapNow !== null) t.base = { ...t.base, gap: this.#gapNow };
+    if (this.#gained(t.base)) {
+      this.#track = { id, since: step, base: this.#baseline(), hits: 0 };
+      clearStrikes(this.#tabu, 'tactic', id);
+    }
+  }
+
+  // T2: a re-decision (the tactic failed, a hit, confidence) under the tactic on now, with no gain since the last
+  // decision, charges it; TABU_TACTIC_STRIKES charges rule it out for the encounter. A newcomer's `encounter` is new
+  // information, not a stall, so it charges nothing.
+  #charge(trigger, step) {
+    const t = this.#track;
+    const id = this.#memory.approach.id;
+    if (!this.#tabuRecordOn() || !t || t.id !== id || !['tactic_failed', 'hit', 'confidence'].includes(trigger)) return;
+    if (t.since > this.#encounter.lastDecision) return; // it gained since the last decision
+    if (tabuStrike(this.#tabu, 'tactic', id) >= TABU_TACTIC_STRIKES) this.#ruleOut(id, step, { encounter: true }, `picked ${TABU_TACTIC_STRIKES} times with nothing gained`);
+  }
+
+  // T3: run_away or hide on for TABU_RETREAT_TICKS with no gain (the enemy no further off, no strike, no heal).
+  #retreatStalled(step) {
+    const t = this.#track;
+    const id = this.#memory.approach.id;
+    if (!this.#tabuRecordOn() || !t || t.id !== id || !RETREATS.includes(id) || step - t.since < TABU_RETREAT_TICKS) return false;
+    return this.#ruleOut(id, step, { encounter: true }, `${step - t.since} steps of it with the enemy no further away`);
+  }
+
+  // Rules tactic `id` out. -> true when new. The memory event (Jev's only clue why the option is gone) is written by
+  // #menu, the first time a menu really drops it: a rule-out the never-empty rule lifts again is never announced.
+  #ruleOut(id, step, opts, why) {
+    if (!this.#tabuRecordOn() || NEVER_TABU.includes(id) || !isTactic(id)) return false;
+    if (RETREATS.includes(id) && this.#capState().ctx.lastLife) return false; // a last life keeps every way out (and Jev is not told otherwise)
+    return tabuAdd(this.#tabu, 'tactic', id, { step, ...opts, reason: why });
+  }
+
+  // The tactic menu minus the ruled-out tactics. Aspiration: race_to_exit is never removed, a last life keeps the
+  // retreats, and the menu never empties (the entry with the least tenure left comes back first).
+  // record: false for the sentiment question's "Tactics it leaves here" lists (same filter, not this tick's menu).
+  #menu(feasible, step, record = true) {
+    if (!this.#tabuMenuOn()) return feasible;
+    const ids = Object.keys(feasible);
+    const keep = [...NEVER_TABU, ...(this.#capState().ctx.lastLife ? RETREATS : [])];
+    const { allowed, removed, lifted } = filterOptions(ids, this.#tabu, 'tactic', step, { keep, min: 1 });
+    if (record) {
+      this.#tabuTick = { removed, lifted };
+      for (const id of removed) {
+        const e = entryOf(this.#tabu, 'tactic', id, step);
+        if (!e || this.#told.has(`${id}@${e.since}`)) continue;
+        this.#told.add(`${id}@${e.since}`);
+        addEvent(this.#memory, Math.max(step - 1, 1), `Ruled out ${id.replace(/_/g, ' ')}: ${e.reason}.`);
+      }
+    }
+    return removed.length ? Object.fromEntries(allowed.map((id) => [id, feasible[id]])) : feasible;
   }
 
   // Going back and forth under a tactic: PINGPONG_FAILS moves in the recent window returned to the
@@ -1731,13 +1856,19 @@ export function configureExplorerBrain(o) {
   if (o.brainDirectiveDone !== undefined) DIRECTIVE_DONE = o.brainDirectiveDone;
   if (o.brainDirectiveAskEvery !== undefined) DIRECTIVE_ASK_EVERY = o.brainDirectiveAskEvery;
   if (o.brainLeaveNow !== undefined) LEAVE_NOW = o.brainLeaveNow;
+  if (o.tabuEnabled !== undefined) TABU_ON = o.tabuEnabled;
+  if (o.tabuTactics !== undefined) TABU_TACTICS = o.tabuTactics;
+  if (o.tabuTacticStrikes !== undefined) TABU_TACTIC_STRIKES = o.tabuTacticStrikes;
+  if (o.tabuRetreatTicks !== undefined) TABU_RETREAT_TICKS = o.tabuRetreatTicks;
+  if (o.tabuEngageHits !== undefined) TABU_ENGAGE_HITS = o.tabuEngageHits;
+  if (o.tabuPingpongTenure !== undefined) TABU_PINGPONG_TENURE = o.tabuPingpongTenure;
   for (const id of Object.keys(SENTIMENTS)) {
     if (o[`mood_${id}_minGap`] !== undefined) SENTIMENTS[id].min_gap = o[`mood_${id}_minGap`];
     if (o[`mood_${id}_endTicks`] !== undefined) SENTIMENTS[id].end_ticks = o[`mood_${id}_endTicks`];
   }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
+export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, tabuEnabled: TABU_ON, tabuTactics: TABU_TACTICS, tabuTacticStrikes: TABU_TACTIC_STRIKES, tabuRetreatTicks: TABU_RETREAT_TICKS, tabuEngageHits: TABU_ENGAGE_HITS, tabuPingpongTenure: TABU_PINGPONG_TENURE, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
 
 // ---- Prompt wording from the central config (src/config/runtime.js). A key set to null (or absent) means the built-in text,
 // which is copied here at load, before any configure call. Static text only: nothing in it can pull in game data.
