@@ -735,9 +735,32 @@ const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 // and ends the tick at once.
 // -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used: key|null }, stunned?, error? }] }
 export async function stepAdversaries(game, { decide: ask = null } = {}) {
+  const { ctx, thinkers } = beginAdversaryTick(game);
+  if (ctx.over) return { events: ctx.events, turns: ctx.turns };
+  // Requests are built synchronously, in id order, inside decideAdversary (the option shuffle uses Math.random).
+  const results = new Map(await Promise.all(thinkers.map(async (a) => [a, await decideAdversary(game, a, ctx, { decide: ask })])));
+  for (const a of ctx.order) {
+    if (applyAdversaryResult(game, a, ctx, results.get(a)).lost) break;
+  }
+  return { events: ctx.events, turns: ctx.turns };
+}
+
+// An aborted decideAdversary(): the signal fired before or while its Jev call was in flight.
+export class CallAborted extends Error {
+  constructor(message = 'The call was aborted.') { super(message); this.name = 'CallAborted'; }
+}
+
+const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
+const cfgFor = (a) => ({ speed: speedOf(a), maxSearchTicks: knobsOf(a).maxSearchTicks, graceTicks: GRACE_TICKS, hitDamage: clawDamage(a), characters: CHARACTERS_ON, limited: limitedActive() });
+
+// The synchronous front of a world tick: grace, stun, bumps, the tick counter, views, sensing, morale, budgets.
+// -> { ctx, thinkers }: `ctx` is the tick's context (events and turns so far, the grace read, the one-hit latch,
+// the id order, who is stunned, the tick number; `ctx.over` is true when the game had ended and nothing ran) and
+// `thinkers` the ghosts that act this tick with the brain on (they ask Jev, all from this same snapshot).
+export function beginAdversaryTick(game) {
   const events = [];
   const turns = [];
-  if (game.won || game.lost) return { events, turns };
+  if (game.won || game.lost) return { ctx: { over: true, events, turns, order: [] }, thinkers: [] };
   const protectedNow = graceLeft(game) > 0;
   if (protectedNow) game.graceTicks--;
   const hit = { hit: false, canHit() { return !protectedNow && !this.hit; } };
@@ -751,85 +774,152 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
   moralePhase(game, order, stunned, events, tick);
-  const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
   for (const a of order) if (!stunned.has(a)) a.budget += speedOf(a); // a stunned ghost gains no budget
+  const thinkers = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
+  return { ctx: { over: false, events, turns, order, stunned, tick, hit, cfgOf: cfgFor }, thinkers };
+}
 
-  const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };
-  const thinking = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
-  const cfgOf = (a) => ({ ...cfg, speed: speedOf(a), hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
-  const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
+// One ghost's Jev decision (async). The request body is built synchronously, before the first await, so ghosts
+// started in id order build theirs in id order. `decide` replaces the Jev call (null = the real one). Never throws
+// on a failed call (-> { error }); an aborted `signal` rejects with CallAborted. Does not touch the Game.
+export function decideAdversary(game, a, ctx, { decide: ask = null, signal = null } = {}) {
+  if (signal?.aborted) return Promise.reject(new CallAborted());
+  const p = decide(viewOf(game, a), a, ctx.tick, ctx.cfgOf(a), ask);
+  if (!signal) return p;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new CallAborted());
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then((r) => { signal.removeEventListener('abort', onAbort); resolve(r); }, (e) => { signal.removeEventListener('abort', onAbort); reject(e); });
+  });
+}
 
-  for (const a of order) {
-    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null, tabu: null };
-    turns.push(turn);
-    if (stunned.has(a)) {
-      turn.stunned = true;
+// The core of one acting ghost: skill (claw strike) -> step -> bump check -> keep_hunting -> sensing. Shared by the
+// tick (stepAdversaries) and the single-monster turn. `res` is the decide() result (undefined = brain off: patrol).
+// Returns true when a strike took the last life (the caller stops there).
+function actOne(game, a, ctx, res, turn) {
+  const { events, tick, hit } = ctx;
+  const from = [...a.pos];
+  if (res?.skill && res.skill !== 'none') {
+    const strike = strikeWith(game, a, res.skill, hit);
+    events.push(...strike.events);
+    if (res.skill_decision) res.skill_decision.used = strike.used;
+    if (strike.lost) {
+      turn.skill_decision = res.skill_decision;
       turn.brain = a.hunt.on ? 'on' : 'off';
       a.syncSkills();
-      continue;
+      return true;
     }
-    if (a.budget >= 1) {
-      // Resolve attacks once per tick; fast monsters spend extra budget on movement below.
-      a.budget -= 1;
-      const res = results.get(a);
-      const from = [...a.pos];
-      if (res?.skill && res.skill !== 'none') {
-        const strike = strikeWith(game, a, res.skill, hit);
-        events.push(...strike.events);
-        if (res.skill_decision) res.skill_decision.used = strike.used;
-        if (strike.lost) {
-          turn.skill_decision = res.skill_decision;
-          turn.brain = a.hunt.on ? 'on' : 'off';
-          a.syncSkills();
-          return { events, turns };
-        }
-      }
-      if (res) {
-        let dir = res.dir;
-        if (res.error) {
-          console.warn(`[adversary ${a.id}] Jev call failed, code move instead: ${res.error}`);
-          dir = codeHuntDir(game, a);
-          turn.error = res.error;
-        }
-        applyDecision(a, tick, { ...res, dir }, { fallback: Boolean(res.error) });
-        if (dir) {
-          a.pos = stepCell(a.pos, dir);
-          a.facing = dir;
-          noteStep(a, from, dir, tick);
-        }
-        Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs, skill_decision: res.skill_decision });
-      } else {
-        patrolStep(game, a); // brain off: code policy, never a strike
-        turn.dir = dirBetween(from, a.pos);
-        if (turn.dir) a.facing = turn.dir;
-      }
-      bumpCheck(game, a, events, from);
-      a.skills.turnPassed();
-      if (res && res.keep_hunting !== null && res.keep_hunting < knobsOf(a).keepHuntingMin && a.hunt.on) {
-        turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
-      }
-      senseAfterStep(game, a, events, tick);
-      turn.tabu = tabuReport(a, tick); // before the extra steps below: they only extend the same direction
-      // Continue the chosen direction without another decision or attack. Check every cell
-      // so fast movement cannot cross walls or skip bumps and sightings.
-      while (a.budget >= 1) {
-        a.budget -= 1;
-        const extraFrom = [...a.pos];
-        if (res) {
-          if (!turn.dir || !viewOf(game, a).legalMoves().includes(turn.dir)) continue;
-          a.pos = stepCell(a.pos, turn.dir);
-          noteStep(a, extraFrom, turn.dir, tick);
-        } else {
-          patrolStep(game, a);
-          const dir = dirBetween(extraFrom, a.pos);
-          if (dir) a.facing = dir;
-        }
-        bumpCheck(game, a, events, extraFrom);
-        senseAfterStep(game, a, events, tick);
-      }
-    }
-    a.syncSkills();
-    turn.brain = a.hunt.on ? 'on' : 'off';
   }
-  return { events, turns };
+  if (res) {
+    let dir = res.dir;
+    if (res.error) {
+      console.warn(`[adversary ${a.id}] Jev call failed, code move instead: ${res.error}`);
+      dir = codeHuntDir(game, a);
+      turn.error = res.error;
+    }
+    applyDecision(a, tick, { ...res, dir }, { fallback: Boolean(res.error) });
+    if (dir) {
+      a.pos = stepCell(a.pos, dir);
+      a.facing = dir;
+      noteStep(a, from, dir, tick);
+    }
+    Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs, skill_decision: res.skill_decision });
+  } else {
+    patrolStep(game, a); // brain off: code policy, never a strike
+    turn.dir = dirBetween(from, a.pos);
+    if (turn.dir) a.facing = turn.dir;
+  }
+  bumpCheck(game, a, events, from);
+  a.skills.turnPassed();
+  if (res && res.keep_hunting !== null && res.keep_hunting < knobsOf(a).keepHuntingMin && a.hunt.on) {
+    turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
+  }
+  senseAfterStep(game, a, events, tick);
+  turn.tabu = tabuReport(a, tick); // before the extra steps of a tick: they only extend the same direction
+  return false;
+}
+
+// The synchronous back of a tick for one ghost, in id order: the turn record, then (when its budget allows) the
+// skill, the step, the bump check, and the extra steps a fast monster spends its budget on. `result` is
+// decideAdversary()'s answer (undefined for a ghost that did not think). -> { turn, lost }: `lost` means a strike
+// took the last life and the tick ends (the caller applies no further ghost).
+export function applyAdversaryResult(game, a, ctx, result) {
+  const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null, tabu: null };
+  ctx.turns.push(turn);
+  if (ctx.stunned.has(a)) {
+    turn.stunned = true;
+    turn.brain = a.hunt.on ? 'on' : 'off';
+    a.syncSkills();
+    return { turn, lost: false };
+  }
+  if (a.budget >= 1) {
+    // Resolve attacks once per tick; fast monsters spend extra budget on movement below.
+    a.budget -= 1;
+    const res = result;
+    if (actOne(game, a, ctx, res, turn)) return { turn, lost: true };
+    const { events, tick } = ctx;
+    // Continue the chosen direction without another decision or attack. Check every cell
+    // so fast movement cannot cross walls or skip bumps and sightings.
+    while (a.budget >= 1) {
+      a.budget -= 1;
+      const extraFrom = [...a.pos];
+      if (res) {
+        if (!turn.dir || !viewOf(game, a).legalMoves().includes(turn.dir)) continue;
+        a.pos = stepCell(a.pos, turn.dir);
+        noteStep(a, extraFrom, turn.dir, tick);
+      } else {
+        patrolStep(game, a);
+        const dir = dirBetween(extraFrom, a.pos);
+        if (dir) a.facing = dir;
+      }
+      bumpCheck(game, a, events, extraFrom);
+      senseAfterStep(game, a, events, tick);
+    }
+  }
+  a.syncSkills();
+  turn.brain = a.hunt.on ? 'on' : 'off';
+  return { turn, lost: false };
+}
+
+// ---- One monster at a time (the hosted runtime, where every monster has its own schedule) ----
+// monsterTurnStart is the synchronous front of one monster's turn: stun, bump, ageing, view, sensing and morale for
+// this monster alone. -> null when it does not act (game over, not in the game, stunned: that costs it the stun
+// tick), else `start`, the context decideAdversary() and monsterTurnApply() take. `now` is the tick number the
+// monster's memory is stamped with (default: the game's adversary tick counter, which only stepAdversaries moves).
+// Grace is NOT counted down here (the world clock owns it); the claw reads it at apply time.
+export function monsterTurnStart(game, a, { now = null } = {}) {
+  if (game.won || game.lost || !game.adversaries.includes(a)) return null;
+  const events = [];
+  if (a.tickStun()) return null;
+  bumpCheck(game, a, events);
+  const tick = Number.isFinite(now) ? now : game.adversaryTicks;
+  ageHunt(a, tick);
+  viewOf(game, a).update(tick);
+  senseStart(game, a, events, tick);
+  moralePhase(game, [a], new Set(), events, tick);
+  const hit = { hit: false, canHit() { return graceLeft(game) <= 0 && !this.hit; } }; // grace is read when the claw lands
+  return { over: false, events, turns: [], order: [a], stunned: new Set(), tick, hit, cfgOf: cfgFor, thinks: a.hunt.on, from: [...a.pos] };
+}
+
+// The synchronous back of one monster's turn, validated against the CURRENT state: a monster that was dispelled or
+// stunned since the start does nothing; a monster that was moved (knockback) since the start skips its claw (its
+// cells are stale), and a step that is no longer legal is dropped. A claw hits whoever stands in its cells now.
+// -> { turn, events, lost, stale? } with `events` the start's plus this turn's.
+export function monsterTurnApply(game, a, start, result) {
+  const stale = [];
+  const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: a.hunt.on ? 'on' : 'off', apiMs: 0, skill_decision: null, tabu: null };
+  const done = (lost = false) => ({ turn, events: start.events, lost, ...(stale.length ? { stale } : {}) });
+  if (game.won || game.lost) { stale.push('game over'); return done(); }
+  if (!game.adversaries.includes(a)) { stale.push('dispelled'); return done(); }
+  if (a.stun > 0) { stale.push('stunned'); return done(); }
+  let res = result ?? undefined;
+  if (res) {
+    res = { ...res };
+    if (res.skill && res.skill !== 'none' && (a.pos[0] !== start.from[0] || a.pos[1] !== start.from[1])) { stale.push('moved: claw cells are stale'); res.skill = 'none'; res.skill_decision && (res.skill_decision.used = null); }
+    if (res.dir && !res.error && !viewOf(game, a).legalMoves().includes(res.dir)) { stale.push('step no longer legal'); res.dir = null; }
+  }
+  const ctx = { ...start, turns: [turn] };
+  const lost = actOne(game, a, ctx, res, turn);
+  if (!lost) { a.syncSkills(); turn.brain = a.hunt.on ? 'on' : 'off'; }
+  return done(lost);
 }
