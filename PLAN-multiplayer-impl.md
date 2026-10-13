@@ -374,3 +374,10 @@ invulnerable, coins }]` (positions of every active explorer, global), `adversari
 active explorer directly sees, each with `visible` (the viewer sees it) and `team_visible` (only a teammate does),
 `memory` = the viewer's own explorer memory only, `directive`, `lobby: GameSummary`, `ranking` when finished,
 `spectator: true` for a dead / forfeited viewer (team projection, no own memory beyond its last state).
+
+Optional field the pages use (WP-I): a participant entry in `GameSummary.participants[]` whose `state` is `awaiting_key`
+may carry `key_deadline_ms_left` (milliseconds until the keyRetryMs window forfeits it). The key prompt shows a
+countdown when it is present and just the explanation when it is absent. Participant states the pages know:
+`ready` (waiting room), `active`, `awaiting_key`, `dead`, `forfeited`; the end screen also reads `ranking[]`
+(`{ participant_id, name, slot, coins, strikes, dispels, portal, alive, forfeited, points }`), `result`
+(`'won' | 'lost'`) and `team_score` from `event: end` / `GameView.ranking`.

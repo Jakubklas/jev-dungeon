@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Jev Dungeon: host</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  /* The host console: the settings page look (settings.html) extended with tables. Page scrolls normally. */
+  body { height: auto; min-height: 100dvh; overflow: auto; }
+  [hidden] { display: none !important; }
+  main.host { max-width: 1100px; margin: 0 auto; width: 100%; }
+  header.top { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; flex-wrap: wrap; }
+  header.top h1 { margin: 0; }
+  .health { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .health i { width: 10px; height: 10px; background: var(--muted); display: inline-block; }
+  .health.ok i { background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+  .health.bad i { background: var(--warn); }
+  .tabs { display: flex; gap: 0; margin: 12px 0 4px; border-bottom: 1px solid var(--line-hi); overflow-x: auto; }
+  .tab { flex: 0 0 auto; margin-bottom: -1px; padding: 8px 18px; color: var(--muted); background: transparent; border: 1px solid transparent; border-bottom-color: var(--line-hi); letter-spacing: .08em; text-transform: uppercase; font-size: 12px; box-shadow: none; }
+  .tab[aria-selected=true] { color: var(--accent); background: var(--panel); border-color: var(--line-hi); border-bottom-color: var(--panel); }
+  .pane-tab { padding-top: 6px; }
+  h2.group { margin: 18px 0 6px; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 4px 14px; align-items: center; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); margin-bottom: -1px; }
+  .row.changed { border-color: var(--accent); position: relative; z-index: 1; }
+  .row.bad { border-color: var(--warn); position: relative; z-index: 2; color: var(--ink); }
+  .name { font-weight: 600; }
+  .hint { grid-column: 1; color: var(--muted); font-size: 12px; }
+  .ferr { grid-column: 1 / -1; color: var(--warn); font-size: 12px; }
+  .when { font-size: 10px; padding: 1px 6px; margin-left: 6px; border: 1px solid var(--line-hi); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; vertical-align: middle; }
+  .when.live { color: var(--safe); border-color: var(--safe); }
+  .when.next { color: var(--accent); border-color: var(--accent); }
+  .ctl { display: flex; align-items: center; gap: 10px; grid-row: 1 / span 2; grid-column: 2; }
+  input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+  input[type=number], input[type=text], input[type=search], select { padding: 4px 6px; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line-hi); font: inherit; border-radius: 0; }
+  input[type=number] { width: 84px; }
+  input[type=text] { width: 100%; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin-top: 18px; padding: 10px 0; background: var(--bg); border-top: 1px solid var(--line); }
+  #msg { color: var(--muted); font-size: 13px; }
+  #msg.ok { color: var(--safe); } #msg.err { color: var(--warn); }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--panel); border: 1px solid var(--line); }
+  .grid th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 400; padding: 7px 10px; border-bottom: 2px solid var(--line-hi); white-space: nowrap; }
+  .grid td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .grid tr:hover td { background: rgba(245, 164, 47, .05); }
+  .grid td.num, .grid th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .grid td.acts { white-space: nowrap; text-align: right; }
+  .grid td.acts button { padding: 2px 9px; font-size: 11px; box-shadow: 2px 2px 0 var(--drop); margin-left: 4px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--cl); background: var(--c); margin-right: 4px; vertical-align: -1px; }
+  .people span.p { margin-right: 10px; white-space: nowrap; }
+  .st { font-size: 10px; padding: 1px 6px; text-transform: uppercase; letter-spacing: .08em; border: 1px solid var(--line-hi); color: var(--muted); }
+  .st.running { color: var(--safe); border-color: var(--safe); } .st.waiting { color: var(--accent); border-color: var(--accent); }
+  .st.paused { color: var(--brain); border-color: var(--brain); } .st.finished, .st.abandoned { color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
+  .card { background: var(--panel); border: 2px solid var(--line); padding: 10px 12px; box-shadow: 3px 3px 0 var(--drop); }
+  .card span { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .card b { font-size: 20px; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .card small { color: var(--muted); font-size: 11px; margin-left: 3px; }
+  .gate { max-width: 520px; margin: 10vh auto; background: var(--panel); border: 2px solid var(--warn); padding: 18px 20px; box-shadow: 5px 5px 0 var(--drop); }
+  .gate h2 { margin: 0 0 8px; color: var(--warn); font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
+  .reveal { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; padding: 16px; gap: 8px; }
+  .reveal .rbar { display: flex; align-items: center; gap: 12px; color: var(--accent); font-size: 13px; }
+  .reveal .rbar span { flex: 1; }
+  .reveal .board-wrap { flex: 1; }
+  .ok { color: var(--safe); } .bad { color: var(--warn); }
+  @media (max-width: 560px) { .row { grid-template-columns: 1fr; } .ctl { grid-row: auto; grid-column: 1; } }
+</style>
+</head>
+<body>
+<main class="host">
+  <header class="top">
+    <h1>Host console</h1>
+    <span id="health" class="health"><i></i><span id="health-text">checking</span></span>
+    <span id="rev" class="when"></span>
+  </header>
+  <p class="sub">Operate the hosted service: rules, running games, Jev call logs and counters. Players cannot reach this page.</p>
+
+  <section id="gate" class="gate" hidden>
+    <h2>Host session needed</h2>
+    <p id="gate-text">Open the link the service printed at startup (it ends in <code>/host#token=...</code>). The token is read from the address and removed again at once.</p>
+  </section>
+
+  <div id="console" hidden>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-tab="settings" aria-selected="true">Settings</button>
+      <button class="tab" role="tab" data-tab="games" aria-selected="false">Games</button>
+      <button class="tab" role="tab" data-tab="calls" aria-selected="false">Calls</button>
+      <button class="tab" role="tab" data-tab="metrics" aria-selected="false">Metrics</button>
+    </div>
+
+    <section class="pane-tab" id="tab-settings">
+      <div class="toolbar"><input id="filter" type="search" placeholder="Filter settings..." aria-label="Filter settings" style="min-width:240px"><span class="hint" style="grid-column:auto">Changes create a new rules revision. Games already running keep the revision they started with.</span></div>
+      <div id="form"></div>
+      <div class="bar"><button class="primary" id="save" disabled>Save</button><button id="discard" disabled>Discard</button><span id="msg"></span></div>
+    </section>
+
+    <section class="pane-tab" id="tab-games" hidden>
+      <table class="grid" id="games-table">
+        <thead><tr><th>Game</th><th>Status</th><th>Mode</th><th>Players</th><th class="num">Rules</th><th class="num" title="Jev POSTs / failures / timeouts, median latency">Calls</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p id="games-empty" class="hint" hidden>No games yet.</p>
+    </section>
+
+    <section class="pane-tab" id="tab-calls" hidden>
+      <div class="toolbar"><label>Game <select id="calls-game"></select></label><button id="calls-refresh" type="button">Refresh</button><span id="calls-note" class="hint" style="grid-column:auto"></span></div>
+      <table class="grid" id="calls-table"><thead></thead><tbody></tbody></table>
+    </section>
+
+    <section class="pane-tab" id="tab-metrics" hidden>
+      <div id="metrics" class="cards"></div>
+      <p class="hint" id="metrics-note"></p>
+    </section>
+  </div>
+</main>
+
+<div class="reveal" id="reveal" hidden>
+  <div class="rbar"><span id="reveal-title">Revealed board (read-only, logged as a host event)</span><button id="reveal-close" type="button">Close</button></div>
+  <div class="board-wrap" id="reveal-wrap"><canvas id="reveal-board"></canvas><canvas id="reveal-mini" class="minimap"></canvas></div>
+</div>
+<script type="module" src="/host.js"></script>
+</body>
+</html>
