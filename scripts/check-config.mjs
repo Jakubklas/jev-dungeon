@@ -42,7 +42,8 @@ const { REQUEST_BYTES } = R;
 const JV = await import('../src/jev.js');
 const TX = await import('../src/config/texts.js');
 const TH = await import('../public/thoughts.js');
-const appSrc = readFileSync(fileURLToPath(new URL('../public/app.js', import.meta.url)), 'utf8');
+// the constants are split over the page (app.js) and the extracted renderer (render.js)
+const appSrc = ['app.js', 'render.js'].map((f) => readFileSync(fileURLToPath(new URL(`../public/${f}`, import.meta.url)), 'utf8')).join('\n');
 // The browser's timing constants, read from app.js itself: the registry default must be the literal the page falls back to.
 const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', fireMs: 'FIRE_MS', fireCallMs: 'FIRE_CALL_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
 const uiLiteral = (name) => { const m = new RegExp(`\\b${name} = (\\.?[0-9][0-9._]*)`).exec(appSrc); return m ? Number(m[1].replace(/_/g, '')) : undefined; };
