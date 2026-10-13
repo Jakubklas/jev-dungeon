@@ -41,6 +41,8 @@ if (TESTBED) newTestGame(TESTBED, gameOpts()); // fail at startup on a bad confi
 const STATIC = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
+  '/render.js': ['render.js', 'text/javascript; charset=utf-8'],
+  '/render-demo': ['render-demo.html', 'text/html; charset=utf-8'],
   '/settings': ['settings.html', 'text/html; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
   '/sprites.js': ['sprites.js', 'text/javascript; charset=utf-8'],
