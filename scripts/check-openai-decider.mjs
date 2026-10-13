@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 process.env.JEV_CONFIG = 'none';
 const { askJev, configureJev, jevModel, validateDecisionCredentials } = await import('../src/jev.js');
 const { newTestGame } = await import('../src/turn.js');
+const { Gateway } = await import('../src/gateway/gateway.js');
+const gateway = new Gateway(); // the dev askers are the provider path these checks exercise
 const originalKey = process.env.OPENAI_API_KEY;
 const originalFetch = globalThis.fetch;
 const requests = [];
@@ -45,7 +47,7 @@ try {
   await askJev(state, { tactic: questions.tactic });
   assert.equal(requests.length, 1, 'a sole choice needs no paid request');
   requests.length = 0;
-  const run = newTestGame({ size: '9x9', numAdversaries: 1, props: 'none', treasure: 'far', seed: 3 });
+  const run = newTestGame({ size: '9x9', numAdversaries: 1, props: 'none', treasure: 'far', seed: 3 }, { ask: gateway.devAsker(), decide: gateway.devDecider() });
   for (let i = 0; i < 4; i++) await run.playTurn();
   assert.ok(requests.some((r) => r.body.questions.some((q) => q.name === 'sentiment')));
   assert.ok(requests.some((r) => JSON.parse(r.body.input).self?.id === 'a1'), 'adversary uses OpenAI too');

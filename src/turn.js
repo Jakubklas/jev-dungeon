@@ -26,12 +26,12 @@ export function sanitiseDirective(text) {
 
 // One game in progress. `opts`: `ask` / `decide` replace the explorer's / adversaries' Jev call
 // (the checks pass stubs), `memoryDir` is where the explorer's memory files go, `dir` where
-// adversaries.json goes. Without them a Run talks to the real Jev and writes next to the server.
+// adversaries.json goes. Both are required (a missing one throws when first used): build them with the gateway.
 // `confidence` (default none) is an optional arm object { start, wPerExtra, weights, model } for the checks and measurements; the explorer's confidence caps its moods always (PLAN-moods).
 export class Run {
   #dir;
   #memoryDir;
-  #decide; // null = the real Jev
+  #decide; // required for a hunting ghost
   #stepping = false; // a playTurn is in flight: a directive sent now waits for the next step
   #pending = null; // { text, steps } to set, or { clear: true }, applied at the start of the next playTurn
   #lastInjectAt = -Infinity; // wall-clock ms of the last accepted directive (the cooldown)

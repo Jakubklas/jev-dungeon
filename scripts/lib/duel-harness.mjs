@@ -39,7 +39,7 @@
 //   seed        seeds the arena AND the duel's own PRNG (default 1).
 //   maxTicks    default 60.
 //   ask         (additive, measure-corners --live) replaces the scripted Jev: an async ({ kind, state, questions, body }) => answers, e.g. the real
-//               askJev. The caller must restore a real fetch (the tripwire above is installed at import); the ghosts stay scripted.
+//               the gateway dev askers. The caller must restore a real fetch (the tripwire above is installed at import); the ghosts stay scripted.
 //   onAsk(req)  called with every request the scripted Jev gets ({ kind, state, questions, body }), for text assertions.
 //   onTurn(turn, game)  called with every turn the brain returns (the turn shape), after the adversaries moved.
 // Returns { strikes, claws, dispelled, ticks, hitsTaken, held, trace, ... }:

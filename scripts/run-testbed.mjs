@@ -29,7 +29,7 @@ if (flags.map) flags.map = readFileSync(flags.map, 'utf8');
 if (LIVE) {
   process.loadEnvFile(new URL('../../.env', import.meta.url));
   if (!process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is missing from .env');
-  console.warn(`LIVE: real Jev calls, up to ${TICKS} ticks. Each tick bills 1-2 explorer requests plus 1 per hunting adversary, each hedged x2.`);
+  console.warn(`LIVE: real Jev calls, up to ${TICKS} ticks. Each tick bills 1-2 explorer requests plus 1 per hunting adversary.`);
 }
 const { newTestGame } = await import('../src/turn.js');
 const { seesExplorer } = await import('../src/characters/adversary/adversary.js');
@@ -38,7 +38,12 @@ const { TestbedError } = await import('../src/testbed.js');
 const dir = mkdtempSync(join(tmpdir(), 'testbed-run-'));
 const url = pathToFileURL(dir + '/');
 let opts = { memoryDir: url, dir: url };
-if (!LIVE) {
+if (LIVE) {
+  // The only paid askers are the gateway's (dev providers, key from .env).
+  const { Gateway } = await import('../src/gateway/gateway.js');
+  const gateway = new Gateway();
+  opts = { ask: gateway.devAsker(), decide: gateway.devDecider(), memoryDir: url, dir: url };
+} else {
   // Stub answers: first option of every Choice (the brain shuffles options, so this is a random pick).
   const first = (q) => Object.keys(q.criteria ?? {})[0];
   const stub = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) =>
