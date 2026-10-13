@@ -27,7 +27,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
   if (victim) {
     const at = [...victim.pos];
     const who = game.explorers.length > 1 ? { explorer: victim.id } : {}; // which explorer was struck (only worth saying with several)
-    if (victim.block && victim.steps <= victim.block.until_step && (rand ?? (() => game.skillRandom()))() < victim.block.effectiveness) {
+    if (victim.block && game.blockActive(victim) && (rand ?? (() => game.skillRandom()))() < victim.block.effectiveness) {
       result = 'blocked';
       events.push({ id: attacker.id, type: 'blocked', at, ...who });
     } else if (!canHit(victim)) {

@@ -385,6 +385,7 @@ export class ExplorerBrain {
     this.#holdOn = hold; // 'multi' (default) also holds against 2-3 enemies; true = one enemy only, false = no hold (the duel checks that prove what the hold buys, P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
+    if (typeof world.timeNow === 'function') this.#skills.attachTime(() => world.timeNow(), world.stepMs); // cooldowns are deadlines on the explorer's world time (WP-D)
     this.#entry = [...world.pos];
     if (typeof ask !== 'function') throw new Error('ask is required: build it with the gateway');
     this.#ask = ask;

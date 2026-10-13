@@ -374,3 +374,12 @@ invulnerable, coins }]` (positions of every active explorer, global), `adversari
 active explorer directly sees, each with `visible` (the viewer sees it) and `team_visible` (only a teammate does),
 `memory` = the viewer's own explorer memory only, `directive`, `lobby: GameSummary`, `ranking` when finished,
 `spectator: true` for a dead / forfeited viewer (team projection, no own memory beyond its last state).
+8. **WP-D clock: unmanaged games derive their time from the old counters; monster skill cooldowns stay in monster turns.**
+   A `Game` is `managed` only under the hosted runtime (WP-E sets it and writes `game.clock`). Everything else (Run, the
+   check drivers) calls `applyMove` / `stepAdversaries` directly without ever moving the clock, so deadlines there read
+   `now()` (the legacy tick's time) and `timeOf(e)` (`e.steps * stepMs`), which under `Run` equal `game.clock` and
+   elsewhere reproduce the old pace exactly (`Run` still adds one `stepMs` per turn, as specified). Monster skill
+   cooldowns (the claw) keep counting the monster's own turns: a deadline of `cooldown * stepMs` would shift a
+   budget-path monster by up to a tick; with the runtime a monster's turn interval is `moveIntervalMs`, so the count is
+   already a duration. Heart respawn (Deviation 6) now compares the picking explorer's time (`timeOf`), which is the shared
+   clock when managed. The `until_step` field stays on a block stance as an informational legacy value.

@@ -62,7 +62,7 @@ export class AdversaryView {
   }
 
   get tick() {
-    return this.#game.adversaryTicks;
+    return this.#game.monsterTick();
   }
 
   // The explorer's cell while this ghost has it in sight, else null.

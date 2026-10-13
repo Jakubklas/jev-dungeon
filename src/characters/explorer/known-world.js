@@ -25,6 +25,9 @@ export class KnownWorld {
   get visits() { return this.#me.visits; } // same object: far_side averages iterate its keys in insertion order
   get health() { return this.#me.health; }
   get maxHealth() { return this.#me.maxHealth; }
+  // The explorer's own time in ms (the clock its cooldowns and deadlines run on).
+  timeNow() { return this.#game.timeOf(this.#me); }
+  get stepMs() { return this.#game.rules.stepMs; }
   get graceLeft() { return graceLeft(this.#game, this.#id); }
   get won() { return this.#game.won; }
   get facing() { return this.#me.facing; }
@@ -86,6 +89,7 @@ export class KnownWorld {
     const me = this.#me;
     if (!picked || !picked.skill.ready || this.#game.won || this.#game.lost || me.status !== 'active') return null;
     const { skill, target } = picked;
+    this.#game.inTick = false; // the explorer phase of a new turn
     let events = [];
     if (skill.kind === 'attack') {
       me.facing = target.dir;
@@ -99,7 +103,7 @@ export class KnownWorld {
       const centre = [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; // the whole block's middle, for the UI
       events = resolveAttack(this.#game, this.#attacker, cells, skill.damage, { skill: skill.id, centre });
     } else if (skill.kind === 'block') {
-      me.block = { effectiveness: skill.effectiveness, until_step: me.steps + 1 };
+      me.block = { effectiveness: skill.effectiveness, until: this.#game.timeOf(me) + this.#game.rules.stepMs, until_step: me.steps + 1 };
     } else if (skill.kind === 'dash') {
       // The brain applies the chosen movement direction after this skill is marked used.
     } else {

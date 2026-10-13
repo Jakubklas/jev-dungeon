@@ -21,6 +21,8 @@ export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus lo
 export let HELP_REACH_STEPS = 48; // known-path steps within which a teammate gets a help report (several explorers; read by the multiplayer runtime)
 export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
 export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
+export let STEP_MS = 400; // world-time length of one 'step' in ms: converts every step-count duration (rules.stepMs)
+export let CADENCE_MS = 90; // an actor starts its next decision no sooner than this after the previous one (rules.cadenceMs; runtime)
 export let HEART_RESPAWN = 200; // a picked-up heart comes back on its cell this many steps later (0 = never)
 let ROOM_AREA = 290; // map cells per room when choosing the room count
 
@@ -36,6 +38,8 @@ export function configureWorld(o) {
   if (o.helpReachSteps !== undefined) HELP_REACH_STEPS = o.helpReachSteps;
   if (o.regenAmount !== undefined) REGEN_AMOUNT = o.regenAmount;
   if (o.heartRespawn !== undefined) HEART_RESPAWN = o.heartRespawn;
+  if (o.stepMs !== undefined) STEP_MS = o.stepMs;
+  if (o.cadenceMs !== undefined) CADENCE_MS = o.cadenceMs;
   if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
   if (o.roomMin !== undefined) ROOM_MIN = o.roomMin;
   if (o.roomMax !== undefined) ROOM_MAX = o.roomMax;
@@ -633,9 +637,10 @@ export class ExplorerState {
     this.health = lives;
     this.maxHealth = lives;
     this.regenAt = null; // the step of the last regen heal
-    this.graceTicks = 0; // ticks of hit protection left
+    this.regenSlot = 0; // the regen period (REGEN_STEPS * stepMs of its time) it last checked: a new one is a heal chance
+    this.graceUntil = -1; // world ms (game clock) up to and including which a hit cannot hurt it (Game.setGrace)
     this.facing = 'right';
-    this.block = null; // shield stance: null | { effectiveness, until_step }
+    this.block = null; // shield stance: null | { effectiveness, until (ms on its time, Game.timeOf), until_step (informational) }
     this.coins = 0;
     this.heartAt = null; // the step a heart was last picked up
     this.status = 'active'; // 'active' | 'dead' | 'forfeited' | 'won'
@@ -664,16 +669,80 @@ export class Game {
     this.caughtBy = null;
     this.adversaries = [];
     this.adversaryTicks = 0; // world ticks the adversaries have run (adversary.js)
+    // World clock (PLAN-multiplayer WP-D). `clock` is world time in ms and starts at 0; `Run.playTurn` adds one stepMs per
+    // turn, the hosted runtime (`managed`) sets it from its monotonic clock. Shared timers are deadlines on that
+    // timeline; `freeze()` stops it, so every remaining duration survives a pause. See now() / timeOf().
+    this.clock = 0;
+    this.rules = { stepMs: STEP_MS, cadenceMs: CADENCE_MS };
+    this.managed = false; // true: the runtime owns `clock` and deadlines read it directly
+    this.frozen = false;
+    this.inTick = false; // inside stepAdversaries (legacy tick)
+    this.tickAt = 0; // the legacy tick's time in ms, valid while inTick
     this.patrolRand = null; // per-game patrol RNG, created on the first patrol goal (adversary.js)
     this.strikes = []; // strikes this tick: { by, cells, result } (src/skills/resolve.js)
     this.dispelled = []; // monsters dispelled this tick: { id, at } (resolve.js); the death cry reads it (monster morale)
     this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
     this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
     this.heartPiles = (dungeon.hearts ?? []).map((c) => [...c]); // floating hearts: stepping on one restores a life (applyMove); replaced, never spliced. Testbed `hearts` option only
-    this.heartsTaken = []; // picked-up hearts waiting to respawn: { cell: [x, y], due: step } (HEART_RESPAWN); replaced, never spliced
+    this.heartsTaken = []; // picked-up hearts waiting to respawn: { cell: [x, y], due: ms on the picker's time } (HEART_RESPAWN * stepMs); replaced, never spliced
     this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
     for (const e of this.explorers) lightAround(this, e.pos); // shared, max-only light
+  }
+
+  // ---- World clock (WP-D) -------------------------------------------------------------------------------
+  // Managed (hosted runtime): `clock` is the one timeline and every deadline reads it. Unmanaged (Run and the
+  // check drivers): time is derived from the same counters the old step timers used, so the pace is exactly
+  // the old one (under Run it equals `clock`): the tick's own time for monster-side timers (grace, stun),
+  // the explorer's own step count for its own timers (skills, block, hearts, regen).
+  worldTick() { return Math.floor(this.clock / this.rules.stepMs + 1e-9); }
+  // The tick counter monsters age their memory by: the clock's tick when managed, else the legacy counter.
+  monsterTick() { return this.managed ? this.worldTick() : this.adversaryTicks; }
+  // Shared-world "now" in ms for monster-side deadlines: while a legacy tick runs, its own time; between ticks,
+  // the time of the tick that comes next (an explorer's strike this turn stuns for the tick that follows).
+  now() {
+    if (this.managed) return this.clock;
+    return this.inTick ? this.tickAt : (this.adversaryTicks + 1) * this.rules.stepMs;
+  }
+  // The time an explorer's own timers (cooldowns, block, hearts, regen) run on.
+  timeOf(explorer = null) {
+    return this.managed ? this.clock : this.explorer(explorer).steps * this.rules.stepMs;
+  }
+  // Moves world time forward by `ms` (ignored while frozen). Run adds one stepMs per turn; the runtime adds real time.
+  advance(ms) {
+    if (!this.frozen) this.clock += ms;
+    return this.clock;
+  }
+  // Sets the world clock (managed mode); a frozen game ignores it. Deadlines keep their absolute value.
+  setClock(ms) {
+    if (!this.frozen && ms > this.clock) this.clock = ms;
+    return this.clock;
+  }
+  // Pause: world time stops, so every deadline keeps its remaining ms. thaw() resumes.
+  freeze() { this.frozen = true; return this.timersLeft(); }
+  thaw() { this.frozen = false; }
+  // Hit protection: reference time for set/read outside a tick is the last tick's time (managed: the clock).
+  graceRef() {
+    if (this.managed) return this.clock;
+    return this.inTick ? this.tickAt : this.adversaryTicks * this.rules.stepMs;
+  }
+  setGrace(explorer, ticks) {
+    this.explorer(explorer).graceUntil = this.graceRef() + ticks * this.rules.stepMs;
+  }
+  // Is the explorer protected at `at` ms (default now)? Inclusive of the last instant, like the old tick count.
+  graceActive(explorer, at = this.now()) { return this.explorer(explorer).graceUntil >= at; }
+  // Whole steps of protection left after the last tick (what the UI and the old `graceTicks` showed).
+  graceLeftSteps(explorer = null) {
+    const left = this.explorer(explorer).graceUntil - this.graceRef();
+    return left <= 0 ? 0 : Math.ceil(left / this.rules.stepMs - 1e-9);
+  }
+  // Remaining ms of the game-owned deadlines, for pause displays and checks.
+  timersLeft() {
+    const out = { clock: this.clock, explorers: {}, hearts: this.heartsTaken.map((h) => h.due) };
+    for (const e of this.explorers) {
+      out.explorers[e.id] = { grace: Math.max(0, e.graceUntil - this.graceRef()), block: e.block ? Math.max(0, e.block.until - this.timeOf(e)) : 0 };
+    }
+    return out;
   }
 
   // The primary explorer (explorers[0]): what every legacy single-explorer field below reads and writes.
@@ -733,7 +802,16 @@ export class Game {
   clearTickState() {
     this.strikes = [];
     this.dispelled = [];
-    for (const e of this.explorers) if (e.block && e.steps > e.block.until_step) e.block = null;
+    this.inTick = false; // a new turn's explorer phase
+    for (const e of this.explorers) if (e.block && !this.blockActive(e)) e.block = null;
+  }
+
+  // Is the explorer's shield stance still up? A stance carries `until` (ms on its time); one built by hand with only the
+  // legacy `until_step` still works.
+  blockActive(explorer = null) {
+    const e = this.explorer(explorer);
+    if (!e.block) return false;
+    return e.block.until !== undefined ? this.timeOf(e) <= e.block.until : e.steps <= e.block.until_step;
   }
 
   // The active explorer standing on `cell`, other than `exceptId` (a teammate blocks a move into it).
@@ -776,6 +854,7 @@ export class Game {
   // STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
   // A cell holding another active explorer is not enterable (Dash stops before it). First applied pickup wins.
   applyMove(dir, distance = 1, explorerId = null) {
+    this.inTick = false; // an explorer action opens a turn's explorer phase
     if (!Number.isInteger(distance) || distance < 1 || distance > 4) throw new RangeError('move distance must be 1..4');
     const e = this.explorer(explorerId);
     if (dir === STAY && !this.won && !this.lost && e.status === 'active') {
@@ -810,7 +889,7 @@ export class Game {
       if (e.health < e.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
         const taken = this.heartPiles.filter((c) => same(c, next));
         this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
-        if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: e.steps + HEART_RESPAWN }))];
+        if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: this.timeOf(e) + HEART_RESPAWN * this.rules.stepMs }))];
         e.heartAt = e.steps;
         const gain = round2(Math.min(e.maxHealth, e.health + 1) - e.health);
         e.health = round2(e.health + gain);
@@ -836,7 +915,7 @@ export class Game {
   respawnHearts(by = null) {
     if (!this.heartsTaken.length) return 0;
     const e = this.explorer(by);
-    const back = this.heartsTaken.filter((h) => h.due <= e.steps && !this.explorerAt(h.cell));
+    const back = this.heartsTaken.filter((h) => h.due <= this.timeOf(e) && !this.explorerAt(h.cell));
     if (!back.length) return 0;
     this.heartsTaken = this.heartsTaken.filter((h) => !back.includes(h)); // replace, never splice: twin() shares arrays
     this.heartPiles = [...this.heartPiles, ...back.map((h) => [...h.cell])];
@@ -847,7 +926,10 @@ export class Game {
   // Called by applyMove after the step is counted (a stay counts too). Returns the lives healed (0 if none).
   regenerate(explorerId = null) {
     const e = this.explorer(explorerId);
-    if (!REGEN_STEPS || !REGEN_AMOUNT || e.steps % REGEN_STEPS !== 0) return 0;
+    if (!REGEN_STEPS || !REGEN_AMOUNT) return 0;
+    const slot = Math.floor(this.timeOf(e) / (REGEN_STEPS * this.rules.stepMs) + 1e-9); // one heal chance per period of its own time
+    if (slot === e.regenSlot) return 0;
+    e.regenSlot = slot;
     if (this.won || this.lost || e.status !== 'active' || e.health >= e.maxHealth) return 0;
     const gained = round2(Math.min(e.maxHealth, e.health + REGEN_AMOUNT) - e.health);
     e.health = round2(e.health + gained);
@@ -890,8 +972,8 @@ export class Game {
   set maxHealth(v) { this.explorers[0].maxHealth = v; }
   get regenAt() { return this.explorers[0].regenAt; }
   set regenAt(v) { this.explorers[0].regenAt = v; }
-  get graceTicks() { return this.explorers[0].graceTicks; }
-  set graceTicks(v) { this.explorers[0].graceTicks = v; }
+  get graceTicks() { return this.graceLeftSteps(); }
+  set graceTicks(v) { this.setGrace(null, v); }
   get facing() { return this.explorers[0].facing; }
   set facing(v) { this.explorers[0].facing = v; }
   get block() { return this.explorers[0].block; }

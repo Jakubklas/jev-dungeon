@@ -24,6 +24,9 @@ export class DashSkill extends Skill {
     this.#readyAt = this.#now() + this.cooldown * 1000;
   }
 
+  // Dash runs on real seconds; a game that owns a clock hands it here (ms, e.g. () => game.clock) and Dash follows it.
+  attachClock(now) { if (typeof now !== 'function') throw new TypeError('now must be a function'); this.#now = now; }
+  attachTime() {} // the step-based time source does not apply: Dash counts seconds
   turnPassed() {} // seconds elapse even while the game is paused
 
   summary() {

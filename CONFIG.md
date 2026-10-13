@@ -422,6 +422,15 @@ Explorer and monster combat skills, plus the explorer's Dash.
 | `skills.questionText.neutral.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for the explorer |
 | `skills.questionText.neutral.none` | (built-in wording) | text, up to 300 chars | live | no | Skill question "none" option for the explorer |
 
+## rules
+
+World time: one step is rules.stepMs (400 ms); every step-count duration is that many steps of it. At the default: grace 4 steps = 1.6 s, heart respawn 200 steps = 80 s, regen every 30 steps = 12 s, sword cooldown 1 step = 0.4 s, shield 2 = 0.8 s, fire strike 120 = 48 s, stun 2 = 0.8 s, a block lasts to the next step = 0.4 s; a monster moves every stepMs / speed (speed 0.6 = 667 ms). rules.cadenceMs (90 ms) is the shortest pause between one decision of an actor and the next. Developer only.
+
+| path | default | range | applies | player UI | what it does |
+| --- | --- | --- | --- | --- | --- |
+| `rules.stepMs` | 400 | 50..5000 | next | no | World time of one step in ms: every step-count duration is that many steps of it |
+| `rules.cadenceMs` | 90 | 0..2000 | next | no | Shortest pause between an actor decision being applied and its next one starting, ms |
+
 ## testbed
 
 Defaults of the small test arenas (gyms).

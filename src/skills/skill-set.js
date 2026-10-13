@@ -38,5 +38,7 @@ export class SkillSet {
 
   summaries() { return this.#skills.map((s) => s.summary()); }
 
+  // Put every cooldown on a deadline timeline (see Skill.attachTime). Dash keeps its own real-time clock.
+  attachTime(time, stepMs) { for (const s of this.#skills) s.attachTime(time, stepMs); }
   turnPassed() { for (const s of this.#skills) s.turnPassed(); }
 }

@@ -10,6 +10,7 @@
 // A category is a YAML path prefix. The longest matching prefix decides the default for its knobs.
 export const CATEGORIES = {
   world: { userSetting: false, doc: 'Dungeon layout, light, coins and hearts. Developer only.' },
+  rules: { userSetting: false, doc: 'World time: one step is rules.stepMs (400 ms); every step-count duration is that many steps of it. At the default: grace 4 steps = 1.6 s, heart respawn 200 steps = 80 s, regen every 30 steps = 12 s, sword cooldown 1 step = 0.4 s, shield 2 = 0.8 s, fire strike 120 = 48 s, stun 2 = 0.8 s, a block lasts to the next step = 0.4 s; a monster moves every stepMs / speed (speed 0.6 = 667 ms). rules.cadenceMs (90 ms) is the shortest pause between one decision of an actor and the next. Developer only.' },
   explorer: { userSetting: false, doc: 'The knight: lives and protection after a hit.' },
   skills: { userSetting: false, doc: 'Explorer and monster combat skills, plus the explorer\'s Dash.' },
   monsters: { userSetting: false, doc: 'Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.' },
@@ -75,6 +76,8 @@ const num = (key, path, def, min, max, step, doc) => ({ key, path, group: 'World
 const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'ore', 'statue', 'candle_table', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner', 'candle_nook'];
 const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, ore: 2, statue: 1, candle_table: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2, candle_nook: 2 };
 const P1_ROWS = [
+  { ...num('stepMs', 'rules.stepMs', 400, 50, 5000, 10, 'World time of one step in ms: every step-count duration is that many steps of it'), group: 'Rules' },
+  { ...num('cadenceMs', 'rules.cadenceMs', 90, 0, 2000, 10, 'Shortest pause between an actor decision being applied and its next one starting, ms'), group: 'Rules' },
   num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
   num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),
   num('minRooms', 'world.rooms.minCount', 4, 1, 20, 1, 'Fewest rooms a map gets (maze layout only)'),

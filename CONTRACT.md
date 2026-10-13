@@ -87,11 +87,11 @@ export class Game {
   // Public fields, set in this order by the constructor:
   //   dungeon, pos, steps, visits /* {key: count} */, light /* [y][x], 0 = unknown */, knownCount, knownFloor,
   //   litOutside /* Set of lit keys beyond the map edge: known rock */, floorCount,
-  //   won, lost, caughtBy, health, maxHealth /* = EXPLORER_LIVES */, graceTicks /* hit protection left */,
+  //   won, lost, caughtBy, health, maxHealth /* = EXPLORER_LIVES */, graceUntil /* ms on game.clock; game.graceTicks reads the steps left */,
   //   trail, adversaries /* Adversary[] */,
   //   adversaryTicks /* world ticks the adversaries have run */, patrolRand /* patrol RNG, created lazily */,
   //   facing /* 'up'|'down'|'left'|'right', starts 'right': last step's direction or last strike's aim */,
-  //   block /* null | { effectiveness, until_step }: the shield stance */,
+  //   block /* null | { effectiveness, until /* ms */, until_step }: the shield stance */,
   //   strikes /* [{ by, from /* attacker's cell when it struck */, cells, result }] this tick, result 'hit'|'blocked'|'protected'|'miss'|'dispelled' */,
   //   skillRand /* block-roll RNG, null until the first roll */,
   //   winBy /* null | 'chest' | 'cleared': how the game was won ('cleared' = the last adversary was dispelled, resolve.js; only in an arena with no portal: where a portal exists only the portal wins) */,
@@ -104,7 +104,7 @@ export class Game {
   damage(amount = 1, sourceId = null)  // -> { health, lost }. No-op when won or lost. Sets lost/caughtBy only at health 0.
   skillRandom()          // next number of the per-game block-roll stream (seed ^ 0x2545f491, created on first call; never touches generation rng order)
   coinRandom()           // next number of the per-game coin-drop stream (seed ^ 0x3c6ef372, created on first call)
-  clearTickState()       // strikes = []; drops `block` once steps > until_step. Run.playTurn calls it first.
+  clearTickState()       // strikes = []; drops `block` once its `until` (ms on the explorer's time) has passed. Run.playTurn calls it first.
   legalMoves()           // dirs whose destination is floor ([] once won or lost)
   availableMoves()       // legalMoves plus STAY ([] once won or lost)
   isKnown([x,y]), knownTile([x,y]) /* '#' | '.' | null */, knownFloorCount(), exploredPct()
@@ -117,6 +117,23 @@ export class Game {
 Never JSON-clone or spread a `Game`: `litOutside` is a `Set` and the methods live on the prototype. `Game` lives in dungeon.js because `scripts/check-props.mjs` copies that single file to a temp dir, so dungeon.js keeps the line `import { placeProps } from './props/place.js';` byte-identical and no other relative import. Lit cells outside the map count as known `'#'` (rock), so neither `unexplored_by_direction` nor the "would reveal" counts give away where the map ends.
 
 Performance: maps are up to 90×90. Per-tick work should stay cheap (no full-grid scans per candidate move where a BFS bounded by known cells will do).
+
+## World clock (WP-D)
+
+```js
+game.clock                  // ms of world time, starts 0; Run.playTurn adds rules.stepMs once per turn
+game.rules                  // { stepMs: 400, cadenceMs: 90 } from rules.stepMs / rules.cadenceMs at construction
+game.managed, game.frozen   // managed: the runtime owns the clock; frozen: advance() / setClock() do nothing
+game.worldTick()            // floor(clock / stepMs); game.monsterTick() = worldTick() when managed else adversaryTicks
+game.now()                  // monster-side time (legacy tick time when unmanaged, clock when managed)
+game.timeOf(explorer?)      // explorer-side time (steps * stepMs when unmanaged, clock when managed)
+game.advance(ms) / setClock(ms) / freeze() -> timersLeft() / thaw()
+game.setGrace(explorer, steps) / graceActive(explorer, at?) / graceLeftSteps(explorer?) / blockActive(explorer?)
+Skill.attachTime(time, stepMs), SkillSet.attachTime, DashSkill.attachClock(now)
+Adversary.takeHit(damage, from, game) sets a stun deadline; tickStun(game), stunnedAt(game)
+moveIntervalMs(game, a)     // stepMs / speed, for the runtime (adversary.js)
+```
+Summaries and Jev requests keep step counts (`cooldown_left = ceil(ms left / stepMs)`). See AGENTS.md "World clock".
 
 ## `src/characters/adversary/adversary.js` (adversary agent)
 
@@ -307,7 +324,7 @@ export function configureSkills(values), skillConfig(), skillDefaults(), loadout
 export const EXPLORER = { id: 'explorer' }        // resolve.js
 export function resolveAttack(game, attacker, cells, damage, { canHit, onHit, rand } = {})   // -> events
 ```
-`resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if `game.block` is set and `game.steps <= block.until_step` and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`); each dispel then rolls `game.coinRandom()` once and, below `skillConfig().coinDropChance`, adds a pile at the ghost's cell and emits `{ id, type: 'coin_drop', at }`. Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
+`resolveAttack` (world rules: reads and mutates a `Game`; called only from `KnownWorld.useSkill` and `stepAdversaries`): wall and off-map cells are dropped. A ghost's strike on the explorer's cell: if the stance is up (`game.blockActive(victim)`) and a `game.skillRandom()` roll is below `effectiveness`, result `blocked` (event `blocked`); else if `canHit()` is false (grace, or already hit this tick), result `protected`; else `game.damage(damage, id)`, `onHit()`, event `hit` (and `caught` on the last life), result `hit`. The explorer's strike on a ghost always lands (no roll): `Adversary.takeHit` (hp, knockback, stun), event `struck` with `hp`, or at 0 hp the ghost is spliced out of `game.adversaries` and `dispelled` is emitted (result `dispelled`); each dispel then rolls `game.coinRandom()` once and, below `skillConfig().coinDropChance`, adds a pile at the ghost's cell and emits `{ id, type: 'coin_drop', at }`. Every call pushes `{ by, cells, result }` to `game.strikes` and returns a `strike` event `{ id, type: 'strike', cells, result }` last.
 
 **The `skill` question.** Asked in the same request as `next_move`, at most one per request (never per tactic, never in the explorer's sentiment request). Attack options require an adversary visible within 10 cells or a recent sighting within 10; the attack then lists only aims that hold a visible adversary. Block needs a visible chaser within 2 path steps. Dash is offered whenever ready and a movement direction is legal, including during quiet exploration. Its option and question tell Jev to use it to escape immediate danger, catch a target now or explore faster; the chosen non-stay move supplies its direction. Ghost gate: a hunting ghost with the explorer in sight within 10 cells. With one legal move, a skill-only request is sent instead (dormant for the explorer: `stay` is always legal). The explorer's mind adds a `skill_priority` line. Fog: explorer skill facts use only known moves, visible adversaries, its own sightings and its own strike tally, never a ghost's unseen state. Dash's `cooldown_left` is seconds; other skills use steps.
 
@@ -337,12 +354,12 @@ Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characte
 
 ### Several explorers (WP-C; also in AGENTS.md "World & perception")
 ```js
-export class ExplorerState { id, pos, steps, visits, trail, health, maxHealth, regenAt, graceTicks, facing, block, coins, heartAt,
+export class ExplorerState { id, pos, steps, visits, trail, health, maxHealth, regenAt, regenSlot, graceUntil, facing, block, coins, heartAt,
                              status /* 'active'|'dead'|'forfeited'|'won' */, outcome /* { strikes, dispels, diedAt, portal } */ }
 export let HELP_REACH_STEPS = 48;            // knob explorer.helpReachSteps, > monsters.pack.alertSteps (configureWorld({ helpReachSteps }))
 new Game(dungeon, { explorers: [{ id, start }] })   // default [{ id: 'explorer', start: dungeon.start }]
 game.explorers, game.primary, game.explorer(id = primary), game.activeExplorers(), game.explorerAt(cell, exceptId), game.targetExplorer(cell)
-game.pos / steps / visits / trail / health / maxHealth / regenAt / graceTicks / facing / block / coins / heartAt   // accessors onto the primary
+game.pos / steps / visits / trail / health / maxHealth / regenAt / graceTicks (accessor over graceUntil) / facing / block / coins / heartAt   // accessors onto the primary
 game.legalMoves(id), availableMoves(id), applyMove(dir, distance, id), damage(amount, sourceId, id), respawnHearts(id), regenerate(id)
 game.twin(overrides)                         // also shallow-copies every ExplorerState
 // adversary.js: seesExplorer(game, a, explorer?), visibleAdversaries(game, explorer?), graceLeft(game, explorer?)

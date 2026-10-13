@@ -52,7 +52,7 @@ const corridor = (len = 50) => ['#'.repeat(len + 2), row(len), '#'.repeat(len + 
   ok(g.explorer('explorer') === g.explorers[0] && g.explorer() === g.explorers[0] && g.activeExplorers().length === 1, 'default: explorer(id) and activeExplorers');
   g.pos = [5, 1];
   ok(eq(g.explorers[0].pos, [5, 1]) && g.pos === g.explorers[0].pos, 'default: pos is an accessor onto the primary');
-  for (const f of ['steps', 'visits', 'trail', 'health', 'maxHealth', 'regenAt', 'graceTicks', 'facing', 'block', 'coins', 'heartAt']) ok(g[f] === g.explorers[0][f], `default: ${f} accessor`);
+  for (const f of ['steps', 'visits', 'trail', 'health', 'maxHealth', 'regenAt', 'facing', 'block', 'coins', 'heartAt']) ok(g[f] === g.explorers[0][f], `default: ${f} accessor`);
   const t = g.twin({ pos: [9, 1], health: 1 });
   ok(eq(t.pos, [9, 1]) && t.health === 1 && eq(g.pos, [5, 1]) && g.health === g.maxHealth, 'twin: overriding pos / health leaves the original alone');
   ok(t.explorers[0] !== g.explorers[0] && t.visits === g.visits, 'twin: own ExplorerState, shared objects');
@@ -207,10 +207,10 @@ const corridor = (len = 50) => ['#'.repeat(len + 2), row(len), '#'.repeat(len + 
   const r = await stepAdversaries(g, { decide: async () => ({}) });
   ok(r.events.some((e) => e.type === 'bump' && e.id === 'a2') && g.explorer('explorer').health === g.explorer('explorer').maxHealth, 'a ghost on an explorer\'s cell is bumped, nobody loses a life');
   ok(!g.explorerAt(a2.pos), 'the ghost was knocked off');
-  g.explorer('explorer2').graceTicks = 2;
+  g.setGrace('explorer2', 2);
   ok(graceLeft(g, 'explorer2') === 2 && graceLeft(g) === 0 && graceLeft(g, 'explorer') === 0, 'grace is per explorer');
   await stepAdversaries(g, { decide: async () => ({}) });
-  ok(g.explorer('explorer2').graceTicks === 1 && g.explorer('explorer').graceTicks === 0, 'grace counts down per explorer');
+  ok(g.graceLeftSteps('explorer2') === 1 && g.graceLeftSteps('explorer') === 0, 'grace counts down per explorer');
 }
 
 // 7. Fog twin: hidden tiles / a hidden ghost outside the shared lit area change no request of any explorer.

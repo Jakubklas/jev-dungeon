@@ -107,7 +107,8 @@ export class Adversary {
   #hp; // hit points (D1) and their maximum; a hit knocks back and stuns, at 0 the ghost is dispelled
   #maxHp;
   #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
-  #stun = 0; // ticks of stun left: no step, no Jev call
+  #stun = 0; // ticks of stun left: no step, no Jev call (mirror of the deadline below, and the only record without a game)
+  #stunUntil = null; // world ms (Game.now timeline) the stun lasts until (exclusive); null = none or gameless
 
   constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character, kind = 'ghost', level, hp, skills }) {
     const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
@@ -178,10 +179,22 @@ export class Adversary {
   }
 
   // One tick of stun passes; true when the ghost was stunned this tick (it skips its step and its Jev call).
-  tickStun() {
+  // With a `game` the stun is a deadline on the world clock (WP-D): stunned while game.now() is before it.
+  tickStun(game = null) {
+    if (game && this.#stunUntil !== null) {
+      if (game.now() < this.#stunUntil) { if (this.#stun > 0) this.#stun--; return true; }
+      this.#stunUntil = null;
+      this.#stun = 0;
+      return false;
+    }
     if (this.#stun <= 0) return false;
     this.#stun--;
     return true;
+  }
+
+  // Stunned right now (a read; unlike tickStun it spends nothing).
+  stunnedAt(game) {
+    return this.#stunUntil !== null && game ? game.now() < this.#stunUntil : this.#stun > 0;
   }
 
   // A hit on this ghost from `fromPos` (the attacker's cell): lose hp, and unless that was the last hp get knocked
@@ -199,6 +212,7 @@ export class Adversary {
     const to = [this.pos[0] + step[0], this.pos[1] + step[1]];
     if (game && (step[0] || step[1]) && isFloor(game.dungeon, to) && !same(to, fromPos)) this.pos = to;
     this.#stun = stun;
+    this.#stunUntil = game ? game.now() + stun * game.rules.stepMs : null;
     this.budget = 0;
     this.#route = null; // patrol routes assume contiguous cells
     return { hp: this.#hp, dispelled: false, staggered: true };
@@ -713,7 +727,7 @@ function strikeWith(game, a, key, latch) {
     canHit: (e) => latch.canHit(e),
     onHit: (e) => {
       latch.markHit(e);
-      e.graceTicks = GRACE_TICKS;
+      game.setGrace(e, GRACE_TICKS);
       noteHit(a, game.adversaryTicks);
     },
   });
@@ -728,7 +742,7 @@ function strikeWith(game, a, key, latch) {
 // Grace ticks left after the latest hit (0 = the explorer can be hit). Fog-safe: it is the
 // explorer's own state.
 export function graceLeft(game, explorer = null) {
-  return game.explorer(explorer).graceTicks;
+  return game.graceLeftSteps(explorer);
 }
 
 // Lives one claw strike of this ghost takes (the rules text tells Jev).
@@ -757,10 +771,14 @@ const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 export async function stepAdversaries(game, { decide: ask = null } = {}) {
   const { ctx, thinkers } = beginAdversaryTick(game);
   if (ctx.over) return { events: ctx.events, turns: ctx.turns };
-  // Requests are built synchronously, in id order, inside decideAdversary (the option shuffle uses Math.random).
-  const results = new Map(await Promise.all(thinkers.map(async (a) => [a, await decideAdversary(game, a, ctx, { decide: ask })])));
-  for (const a of ctx.order) {
-    if (applyAdversaryResult(game, a, ctx, results.get(a)).lost) break;
+  try {
+    // Requests are built synchronously, in id order, inside decideAdversary (the option shuffle uses Math.random).
+    const results = new Map(await Promise.all(thinkers.map(async (a) => [a, await decideAdversary(game, a, ctx, { decide: ask })])));
+    for (const a of ctx.order) {
+      if (applyAdversaryResult(game, a, ctx, results.get(a)).lost) break;
+    }
+  } finally {
+    game.inTick = false; // the next time is the explorer phase of the next turn
   }
   return { events: ctx.events, turns: ctx.turns };
 }
@@ -771,6 +789,9 @@ export class CallAborted extends Error {
 }
 
 const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
+// How long a monster takes per step, in ms of world time: stepMs / speed. The hosted runtime schedules a monster's
+// next movement that far after its previous one (never sooner than cadenceMs). `Run` keeps the budget path (speed per tick).
+export const moveIntervalMs = (game, a) => game.rules.stepMs / speedOf(a);
 const cfgFor = (a) => ({ speed: speedOf(a), maxSearchTicks: knobsOf(a).maxSearchTicks, graceTicks: GRACE_TICKS, hitDamage: clawDamage(a), characters: CHARACTERS_ON, limited: limitedActive() });
 
 // The synchronous front of a world tick: grace, stun, bumps, the tick counter, views, sensing, morale, budgets.
@@ -782,11 +803,13 @@ export function beginAdversaryTick(game) {
   const turns = [];
   if (game.won || game.lost) return { ctx: { over: true, events, turns, order: [] }, thinkers: [] };
   // Grace is read once per explorer at the start of the tick, then counted down; a latch allows one hit per explorer per tick.
-  const protectedNow = new Set(game.explorers.filter((e) => e.graceTicks > 0).map((e) => e.id));
-  for (const e of game.explorers) if (e.graceTicks > 0) e.graceTicks--;
+  // The clock owns grace now (WP-D): a deadline, nothing to count down.
+  game.inTick = true;
+  game.tickAt = game.managed ? game.clock : (game.adversaryTicks + 1) * game.rules.stepMs;
+  const protectedNow = new Set(game.explorers.filter((e) => game.graceActive(e, game.tickAt)).map((e) => e.id));
   const hit = hitLatch(game, (e) => !protectedNow.has(e.id));
   const order = [...game.adversaries].sort(byId);
-  const stunned = new Set(order.filter((a) => a.tickStun()));
+  const stunned = new Set(order.filter((a) => a.tickStun(game)));
   for (const a of order) bumpCheck(game, a, events);
   const tick = game.adversaryTicks + 1;
   game.adversaryTicks = tick;
@@ -911,14 +934,14 @@ export function applyAdversaryResult(game, a, ctx, result) {
 export function monsterTurnStart(game, a, { now = null } = {}) {
   if (game.won || game.lost || !game.adversaries.includes(a)) return null;
   const events = [];
-  if (a.tickStun()) return null;
+  if (a.tickStun(game)) return null;
   bumpCheck(game, a, events);
-  const tick = Number.isFinite(now) ? now : game.adversaryTicks;
+  const tick = Number.isFinite(now) ? now : game.monsterTick();
   ageHunt(a, tick);
   viewOf(game, a).update(tick);
   senseStart(game, a, events, tick);
   moralePhase(game, [a], new Set(), events, tick);
-  const hit = hitLatch(game, (e) => e.graceTicks <= 0); // grace is read when the claw lands
+  const hit = hitLatch(game, (e) => !game.graceActive(e)); // grace is read when the claw lands
   return { over: false, events, turns: [], order: [a], stunned: new Set(), tick, hit, cfgOf: cfgFor, thinks: a.hunt.on, from: [...a.pos] };
 }
 
@@ -932,7 +955,7 @@ export function monsterTurnApply(game, a, start, result) {
   const done = (lost = false) => ({ turn, events: start.events, lost, ...(stale.length ? { stale } : {}) });
   if (game.won || game.lost) { stale.push('game over'); return done(); }
   if (!game.adversaries.includes(a)) { stale.push('dispelled'); return done(); }
-  if (a.stun > 0) { stale.push('stunned'); return done(); }
+  if (a.stunnedAt(game)) { stale.push('stunned'); return done(); }
   let res = result ?? undefined;
   if (res) {
     res = { ...res };

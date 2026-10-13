@@ -135,6 +135,7 @@ export class Run {
     const { game } = this;
     const multi = this.explorers.length > 1;
     const statusBefore = new Map(game.explorers.map((e) => [e.id, e.status]));
+    game.advance(game.rules.stepMs); // one step of world time per turn (WP-D): the only place Run moves the clock
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
     const before = new Map(game.explorers.map((e) => [e.id, { coins: e.coins, steps: e.steps }]));
     // Several explorers: played one after another in id order (a dev/test driver; the hosted runtime schedules them apart).
