@@ -660,7 +660,7 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
     const targetFacts = [];
 
     if (t && sameCell(dest, t)) {
-      out[dir] = { whole: 'Steps onto the portal: leaves the dungeon with your current coins and ends the game.' };
+      out[dir] = { whole: 'Steps onto the portal: leaves the dungeon with your current coins and ends the game.', safe: true };
       continue;
     }
     facts.push(...threatSentences(world, threats, dest, warnGap));
@@ -729,12 +729,13 @@ export function describeMoveParts(world, approachId, { minGap = DEFAULT_MIN_GAP,
         facts.push(explorable ? 'Leads towards unexplored space.' : 'Leads into a known dead end, nothing left to explore.');
       }
     }
-    out[dir] = { shared: facts.join(' '), target: targetFacts.join(' ') };
+    // safe: not onto an enemy and not below the gap (the facts above say so in words); PLAN-tabu A2 reads it, Jev never does.
+    out[dir] = { shared: facts.join(' '), target: targetFacts.join(' '), safe: threats.every((th) => !sameCell(dest, th.pos) && threatDistance(th, dest) >= warnGap) };
   }
   if (world.legalMoves().length) {
     const hg = approachId === 'engage' && target?.steps === 0 ? holdGhost(threats, stunned, here, multiHold) : null;
     const holding = !!hg && threatDistance(hg, here) === 2;
-    out[STAY] = { whole: stayFacts(world, approachId, threats, warnGap, holding), ...(holding ? { holding } : {}) };
+    out[STAY] = { whole: stayFacts(world, approachId, threats, warnGap, holding), safe: threats.every((th) => threatDistance(th, here) >= warnGap), ...(holding ? { holding } : {}) };
   }
   return out;
 }

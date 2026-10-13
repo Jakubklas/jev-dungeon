@@ -63,8 +63,10 @@ const ok = (cond, msg) => { if (!cond) { failures++; console.error('FAIL:', msg)
 const root = mkdtempSync(join(tmpdir(), 'jev-tabu-check-'));
 let folderN = 0;
 const DEFAULTS = explorerBrainSnapshot();
-const knobs = (o) => configureExplorerBrain({ ...DEFAULTS, ...o });
+// Sections 2-3 test the tactic and mood levels alone: the move level (section 4) is off unless a section asks for it.
+const knobs = (o) => configureExplorerBrain({ ...DEFAULTS, tabuMoves: false, ...o });
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+let moveMin = Infinity; // the fewest options any next_move / move_if_* question had, over every run of the file (4h)
 
 // ctl.tactic: the tactic the stub always picks when offered (else the first). ctl.skill: 'none' | 'strike'.
 // Moves follow the tactic's target ("Closer to the target"), else the first non-stay move. Monsters always step toward
@@ -86,7 +88,9 @@ function build(config, ctl = {}) {
       else if (key === 'tactic') choice = ids.includes(c.tactic) ? c.tactic : ids[0];
       else if (key === 'skill') choice = c.skill === 'strike' ? ids.find((id) => id !== 'none') ?? 'none' : 'none';
       else if (key === 'next_move' || key.startsWith('move_if_')) {
-        if (c.walkIn) choice = towardEnemy(run, ids) ?? ids[0];
+        moveMin = Math.min(moveMin, ids.length);
+        if (c.move) choice = c.move(ids, q, run, key) ?? ids[0];
+        else if (c.walkIn) choice = towardEnemy(run, ids) ?? ids[0];
         else choice = ids.find((id) => /Closer to the target/.test(String(q.criteria[id]))) ?? ids.find((id) => id !== 'stay') ?? ids[0];
       } else if (key === 'next_approach') choice = ids[0];
       return [key, { choice, probabilities: { [choice]: 1 }, confidence: 1 }];
@@ -97,7 +101,7 @@ function build(config, ctl = {}) {
     const out = {};
     if (questions.next_move && a) {
       const ids = Object.keys(questions.next_move.criteria);
-      const best = ids.slice().sort((p, q) => dist(step(a.pos, p), run.game.pos) - dist(step(a.pos, q), run.game.pos))[0];
+      const best = c.ghostStay && ids.includes('stay') ? 'stay' : ids.slice().sort((p, q) => dist(step(a.pos, p), run.game.pos) - dist(step(a.pos, q), run.game.pos))[0];
       out.next_move = { choice: best, probabilities: { [best]: 1 }, confidence: 1 };
     }
     if (questions.skill) {
@@ -400,8 +404,253 @@ const stubborn = async (kn, ctl = {}, ticks = 100, cfg = MIDLOW, arena = ROOM) =
   ok(runs[0] === runs[1], '3f: two runs give identical turns and requests');
 }
 
+// ---- 4. Phase 3: moves (M1-M3, A1-A5) ---------------------------------------------------------------------------------
+// Moves are ruled out by destination cell (M1 bounce, M2 loop) or `stay` (M3). Only the move level is on here.
+const HALL = ['##########', '#........#', '#...@....#', '#........#', '##########'];
+const arena = (rows, extra = {}) => ({ map: rows, numAdversaries: 0, ghostSkills: 'none', treasure: null, seed: 3, ...extra });
+const OPP = { up: 'down', down: 'up', left: 'right', right: 'left' };
+// Always undoes its last move (else the first step that is not `stay`).
+const reverser = () => { let last = null; return (ids) => { const c = (last && ids.includes(OPP[last])) ? OPP[last] : ids.find((i) => i !== 'stay') ?? ids[0]; last = c; return c; }; };
+const reqOf = (t) => t.reqs.filter((r) => Object.keys(r.questions).some((k) => k === 'next_move' || k.startsWith('move_if_')));
+const moveKeys = (r) => Object.keys(r.questions).filter((k) => k === 'next_move' || k.startsWith('move_if_'));
+// Invariant for every tick: a move the turn reports as removed is in no move question and not in surroundings.moves.
+const absent = (t) => (t.tabu?.removed_moves ?? []).every((d) => t.reqs.every((r) => moveKeys(r).every((k) => !(d in r.questions[k].criteria)) && !(d in (JSON.parse(r.body).state?.surroundings?.moves ?? {}))));
+const posKey = (p) => `${p[0]},${p[1]}`;
+const stepOf = (p, d) => (DIRS[d] ? [p[0] + DIRS[d][0], p[1] + DIRS[d][1]] : p);
+const posTrail = (b, turns, start) => { const out = [start]; for (const t of turns) out.push(stepOf(out.at(-1), t.dir)); return out; };
+
+// 4a. M1: a stub that always undoes its move loses the way back (the cell it bounced to) from the next question, with one event.
+{
+  knobs({ tabuMoves: true });
+  const b = build(arena(HALL), { move: reverser() });
+  const start = [...b.run.game.pos];
+  const turns = await play(b, 14);
+  const at = turns.findIndex((t) => (t.tabu?.removed_moves ?? []).length);
+  ok(at >= 0 && at <= 4, `4a: a direction is removed within the bounce threshold + 1 (tick ${at})`);
+  if (at >= 0) {
+    const t = turns[at];
+    const trail = posTrail(b, turns, start);
+    const gone = t.tabu.removed_moves[0];
+    ok(posKey(stepOf(trail[at], gone)) === posKey(trail[at - 1]) || at < 2, '4a: the removed direction leads back to the cell it just left');
+    ok(reqOf(t).length > 0 && absent(t), '4a: it is in no next_move criteria');
+    ok(events(b.run).some((e) => /^Ruled out the cell to the (north|south|east|west) for 6 steps: kept stepping back and forth\.$/.test(e)), `4a: one memory event (${events(b.run).join(' | ')})`);
+    const cell = posKey(trail[at - 1]);
+    ok(trail.slice(at + 1, at + 6).every((p) => posKey(p) !== cell), '4a: that cell is not re-entered while it is ruled out');
+  }
+  ok(turns.every(absent), '4a: no removed move ever appears in a question or in surroundings.moves');
+  ok(turns.every((t) => t.tabu.forced === false), '4a: the filter never forces a move at minMoves 2');
+}
+
+// 4b. With an enemy in sight the decision tick asks move_if_<tactic> and sends surroundings.moves: all use the same list.
+{
+  knobs({ tabuMoves: true, tabuTactics: false });
+  const b = build(arena(['##############', '#............#', '#..@.........#', '#............#', '##############'], { numAdversaries: 1, adversaries: [[12, 2]], ghostSkills: 'none' }), { move: reverser() });
+  const turns = await play(b, 40);
+  const spec = turns.filter((t) => (t.tabu?.removed_moves ?? []).length && t.reqs.some((r) => Object.keys(r.questions).some((k) => k.startsWith('move_if_'))));
+  ok(turns.some((t) => (t.tabu?.removed_moves ?? []).length), '4b: (setup) moves are removed');
+  ok(turns.every(absent), '4b: no removed move in next_move, move_if_* or surroundings.moves');
+  ok(turns.some((t) => t.reqs.some((r) => JSON.parse(r.body).state?.surroundings?.moves)) , '4b: (setup) a decision tick sent surroundings.moves');
+  void spec;
+}
+
+// 4c. M2: a 4-cell shuttle round a square (no immediate reversal, so M1 misses it) loses the looped cell.
+{
+  knobs({ tabuMoves: true });
+  const cycle = ['right', 'down', 'left', 'up'];
+  let n = 0;
+  const b = build(arena(HALL), { move: (ids) => { const want = cycle[n++ % 4]; return ids.includes(want) ? want : ids.find((i) => i !== 'stay') ?? ids[0]; } });
+  const turns = await play(b, 30);
+  const at = turns.findIndex((t) => (t.tabu?.removed_moves ?? []).length);
+  ok(at >= 8 && at <= 16, `4c: the looped cell is removed after about 3 laps' worth of entries (tick ${at})`);
+  ok(turns.every(absent), '4c: removed moves are absent from every question');
+  ok(events(b.run).some((e) => /^Ruled out the cell to the \w+ for 8 steps: kept coming back to it\.$/.test(e)), `4c: one event says why (${events(b.run).join(' | ')})`);
+}
+
+// 4d. M3: a stub that always stands still loses `stay` after 3 ticks, for 4 steps.
+{
+  knobs({ tabuMoves: true });
+  const b = build(arena(HALL), { move: (ids) => (ids.includes('stay') ? 'stay' : ids[0]) });
+  const turns = await play(b, 14);
+  const offered = turns.map((t) => reqOf(t).every((r) => moveKeys(r).every((k) => 'stay' in r.questions[k].criteria)));
+  ok(offered.slice(0, 3).every(Boolean), '4d: stay is on the first 3 menus');
+  ok(offered.slice(3, 7).every((x) => !x), `4d: stay is off the next 4 menus (${offered.join()})`);
+  ok(offered[7] === true, '4d: and back after its tenure');
+  ok(turns.slice(3, 7).every((t) => t.tabu.removed_moves.includes('stay')), '4d: turn.tabu.removed_moves says so');
+  ok(events(b.run).filter((e) => /^Ruled out standing still for 4 steps: stood still 3 times in a row\.$/.test(e)).length >= 1, `4d: the event (${events(b.run).join(' | ')})`);
+  ok(turns.every(absent), '4d: absent everywhere');
+}
+
+// 4e. Hold ticks never count toward M3: the engage hold stays put on purpose.
+{
+  knobs({ tabuMoves: true, tabuTactics: false, tabuMoods: false });
+  const b = build(arena(['##############', '#............#', '#..@.........#', '#............#', '##############'], { numAdversaries: 1, adversaries: [[8, 2]], ghostSkills: 'default', ghostHp: 5 }), { tactic: 'engage' });
+  const turns = await play(b, 30);
+  ok(turns.filter((t) => t.held).length >= 3, `4e: (setup) the explorer held for several ticks (${turns.filter((t) => t.held).length})`);
+  ok(turns.every((t) => !(t.tabu?.move ?? []).some((e) => e.attr === 'stay')) && !events(b.run).some((e) => /standing still/.test(e)), '4e: stay is never ruled out by hold ticks');
+}
+
+
+// 4f. Aspiration. A1: the step onto the portal is on every menu beside it, through a bounce next to the chest. (No rule can
+// rule the portal cell out: stepping on it ends the game, so it never enters the history; this is the end-to-end guard.)
+{
+  knobs({ tabuMoves: true });
+  const rev = reverser();
+  const onto = (c) => /onto the portal/.test(String(c));
+  const b = build(arena(['#######', '#@T...#', '#.....#', '#.....#', '#######'], { treasure: [2, 1] }), { move: (ids, q) => { const rest = ids.filter((i) => !onto(q.criteria[i])); return rev(rest.length ? rest : ids); } });
+  const turns = [];
+  let beside = 0, listed = 0;
+  for (let i = 0; i < 14; i++) {
+    const from = posKey(b.run.game.pos);
+    const n = b.reqs.length;
+    const t = await b.run.playTurn();
+    t.reqs = b.reqs.slice(n);
+    turns.push(t);
+    if (!['1,1', '3,1', '2,2'].includes(from)) continue;
+    beside++;
+    if (reqOf(t).every((r) => moveKeys(r).every((k) => Object.values(r.questions[k].criteria).some(onto)))) listed++;
+  }
+  ok(beside >= 4 && turns.some((t) => (t.tabu?.removed_moves ?? []).length), `4f A1: (setup) it bounced beside the chest (${beside} ticks) and moves were removed`);
+  ok(listed === beside, `4f A1: the portal step is on every menu beside the portal (${listed} of ${beside})`);
+}
+
+// A3: under engage the step toward the engage target stays on the menu even when its cell is ruled out.
+{
+  knobs({ tabuMoves: true, tabuTactics: false, tabuMoods: false });
+  const hall = ['##################', '#................#', '#.@..............#', '#................#', '##################'];
+  const mk = (tactic) => {
+    let n = 0;
+    return build(arena(hall, { numAdversaries: 1, adversaries: [[11, 2]], ghostSkills: 'default', ghostHp: 5 }), {
+      tactic,
+      move: (ids, q) => { n++; const toward = ids.find((i) => /Closer to the target/.test(String(q.criteria[i]))); const away = ids.find((i) => i === OPP[toward]); return (n % 2 ? toward : away) ?? ids.find((i) => i !== 'stay') ?? ids[0]; },
+    });
+  };
+  const cellsOf = (t) => (t.tabu?.cell ?? []).map((e) => e.attr);
+  const closerDest = (r, k, from) => { const id = Object.keys(r.questions[k].criteria).find((i) => /Closer to the target/.test(String(r.questions[k].criteria[i]))); return id ? posKey(stepOf(from, id)) : null; };
+  const res = {};
+  for (const tactic of ['engage', 'slip_past']) {
+    const b = mk(tactic);
+    const turns = [];
+    let from = [...b.run.game.pos];
+    let kept = 0, lost = 0;
+    for (let i = 0; i < 24 && !b.run.game.lost && !b.run.game.won; i++) {
+      const n = b.reqs.length;
+      const t = await b.run.playTurn();
+      t.reqs = b.reqs.slice(n);
+      for (const r of reqOf(t)) for (const k of moveKeys(r)) { const d = closerDest(r, k, from); if (d && cellsOf(t).includes(d)) kept++; }
+      if ((t.tabu?.removed_moves ?? []).length && reqOf(t).some((r) => moveKeys(r).some((k) => closerDest(r, k, from) === null))) lost++;
+      from = [...b.run.game.pos];
+      turns.push(t);
+    }
+    res[tactic] = { kept, lost };
+  }
+  ok(res.engage.kept >= 1, `4f A3: under engage the step toward the target stays while its cell is ruled out (${res.engage.kept} ticks)`);
+  ok(res.slip_past.kept === 0 && res.slip_past.lost >= 1, `4f A3: (control) under slip_past it is removed (${JSON.stringify(res.slip_past)})`);
+}
+
+
+// A4: cornered (cornerMode on): the pocket cells are the way out, so M1 and M2 do not rule cells out (only `stay` can be).
+{
+  const NOOK = ['#################', '#...............#', '#...............#', '#...............#', '#...............#', '#...............#', '#####..##########', '#####.A##########', '#####..##########', '#####@.##########', '#################'];
+  const removedCells = async (mode) => {
+    knobs({ tabuMoves: true, tabuTactics: false, tabuMoods: false, cornerMode: mode });
+    const b = build(arena(NOOK, { numAdversaries: 1, adversaries: [[6, 7]], ghostSkills: 'none' }), { move: reverser(), ghostStay: true });
+    const turns = await play(b, 20);
+    return turns.flatMap((t) => t.tabu?.removed_moves ?? []).filter((d) => d !== 'stay').length;
+  };
+  const off = await removedCells('off');
+  const on = await removedCells('urgent');
+  ok(off >= 1, `4f A4: (control) with cornerMode off the bounce loses cells (${off})`);
+  ok(on === 0, `4f A4: cornered, no cell is ruled out (${on})`);
+}
+
+// A2: the one safe move is kept. In a corridor 2 steps from a waiting enemy (gap 3) only the way back is safe: when a
+// bounce rules that cell out, the safe move comes back (minMoves 1, so only A2 can lift it).
+{
+  knobs({ tabuMoves: true, tabuTactics: false, tabuMoods: false, tabuMinMoves: 1 });
+  const rows = ['#'.repeat(14), '#'.repeat(14), '#.....@.A....#', '#'.repeat(14), '#'.repeat(14)];
+  const b = build(arena(rows, { numAdversaries: 1, adversaries: [[8, 2]], ghostSkills: 'none' }), { move: reverser(), ghostStay: true });
+  const turns = await play(b, 24);
+  const lifted = turns.filter((t) => (t.tabu?.lifted_moves ?? []).length);
+  ok(lifted.length >= 1, `4f A2: the safe move is put back (${lifted.length} ticks)`);
+  ok(lifted.every((t) => t.tabu.lifted_moves.every((d) => reqOf(t).every((r) => moveKeys(r).every((k) => d in r.questions[k].criteria)))), '4f A2: it is on that tick\'s menus');
+  ok(lifted.every((t) => !t.tabu.removed_moves.includes('left') || !t.tabu.lifted_moves.includes('left')), '4f A2: never both removed and lifted');
+  ok(turns.every(absent), '4f A2: the rest stays absent');
+}
+
+// 4g. Answer validation: a stub that answers a direction the menu no longer has gets an allowed move, never the removed one.
+{
+  knobs({ tabuMoves: true });
+  let last = null;
+  const b = build(arena(HALL), { move: (ids) => { const c = last ? OPP[last] : 'right'; last = c; return c; } }); // answers even when it is not offered
+  const turns = await play(b, 14);
+  const hits = turns.filter((t) => (t.tabu?.removed_moves ?? []).length);
+  ok(hits.length >= 1, '4g: (setup) moves were removed');
+  ok(hits.every((t) => !t.tabu.removed_moves.includes(t.dir)), '4g: the move taken is never a removed one');
+  ok(hits.every((t) => b.run.game.availableMoves().length > 0), '4g: still a legal game');
+}
+
+// 4h. A directive suspends the move filter; minMoves is respected over every run in this file.
+{
+  knobs({ tabuMoves: true });
+  const b = build(arena(HALL), { move: reverser() });
+  await play(b, 8);
+  b.run.explorer.setDirective('wait here', { steps: 12 });
+  const turns = await play(b, 8);
+  ok(turns.every((t) => (t.tabu?.removed_moves ?? []).length === 0), '4h: a live directive: nothing is removed');
+  ok(moveMin >= 2, `4h: no next_move / move_if_* question ever had fewer than 2 options (min ${moveMin})`);
+}
+
+// 4i. Off arm and determinism. tabuMoves off sends exactly the requests of tabuEnabled off; a run without a stall is
+// identical either way; two runs agree.
+{
+  const norm = (reqs) => reqs.map((r) => JSON.stringify(sortDeep(JSON.parse(r.body)))).join('\n');
+  const run = async (kn, cfg, ctl, ticks) => { knobs(kn); const b = build(cfg, ctl); await play(b, ticks); return norm(b.reqs); };
+  const mk = () => ({ move: reverser() });
+  const off = await run({ tabuEnabled: false }, arena(HALL), mk(), 20);
+  const mvOff = await run({ tabuMoves: false }, arena(HALL), mk(), 20);
+  const on = await run({ tabuMoves: true }, arena(HALL), mk(), 20);
+  ok(off === mvOff && off.length > 0, '4i: tabuMoves off = tabuEnabled off, byte for byte (stubborn run)');
+  ok(off !== on, '4i: (control) the stubborn run differs with the move level on');
+  const quiet = [];
+  for (const kn of [{ tabuMoves: false }, { tabuMoves: true }]) {
+    knobs(kn);
+    const q = build({ ...arena(['#############', '#@..........#', '#...........#', '#...........#', '#############'], { numAdversaries: 0 }) }, {});
+    await play(q, 6);
+    quiet.push(norm(q.reqs));
+  }
+  ok(quiet[0] === quiet[1] && quiet[0].length > 0, '4i: no stall = identical requests on and off');
+  const a = await run({ tabuMoves: true }, arena(HALL), mk(), 20);
+  ok(a === on, '4i: two runs give identical requests');
+}
+
+// 4j. One move left after the filter (minMoves 1): code takes it, no move question, turn.tabu.forced (turn.forced keeps its meaning).
+{
+  knobs({ tabuMoves: true, tabuMinMoves: 1 });
+  const rows = ['#'.repeat(12), '#'.repeat(12), '#@.........#', '#'.repeat(12), '#'.repeat(12)];
+  const b = build(arena(rows), { move: (ids) => (ids.includes('stay') ? 'stay' : ids[0]) });
+  const turns = await play(b, 10);
+  const f = turns.filter((t) => t.tabu.forced);
+  ok(f.length >= 1, `4j: a tick is forced by the filter (${f.length})`);
+  ok(f.every((t) => t.dir === 'right' && reqOf(t).length === 0 && t.tabu.removed_moves.join() === 'stay'), '4j: it takes the one move left and asks no move question');
+  ok(turns.every((t) => !t.tabu.forced || t.forced), '4j: turn.forced is true too (no move decision)');
+}
+
+// 4k. The corner shuttle of AGENTS "Open questions" (run_away in a closed room), tactic level off: does the move level stop it?
+{
+  const back = async (on) => {
+    knobs({ tabuMoves: on, tabuTactics: false, tabuMoods: false });
+    const b = build(ROOM, { tactic: 'run_away' });
+    const turns = await play(b, 60);
+    const trail = posTrail(b, turns, [2, 4]).map(posKey);
+    return { bounces: trail.filter((p, i) => i >= 2 && p === trail[i - 2]).length, removed: turns.filter((t) => t.tabu.removed_moves.length).length };
+  };
+  const off = await back(false), on = await back(true);
+  console.log('4k shuttle (moves off / on):', JSON.stringify(off), JSON.stringify(on));
+  ok(on.bounces <= off.bounces, '4k: the move level does not make the shuttle worse');
+}
+
 conf({});
-knobs({});
+configureExplorerBrain(DEFAULTS);
 rmSync(root, { recursive: true, force: true });
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }
 console.log('check-tabu: all checks passed');

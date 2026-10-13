@@ -246,6 +246,14 @@ The knight: lives and protection after a hit.
 | `explorer.tabu.moodStrikes` | 2 | 1..10 | live | no | No-gain re-decisions (or failed reviews) that rule a mood out |
 | `explorer.tabu.moodTenure` | 10 | 1..60 | live | no | Fewest steps a mood stays ruled out after an encounter rule-out |
 | `explorer.tabu.moodReviewTenure` | 20 | 1..120 | live | no | Steps a mood stays ruled out after failed approach reviews |
+| `explorer.tabu.moves` | true | on/off | live | no | Tabu at the move level (needs explorer.tabu.enabled) |
+| `explorer.tabu.bounceTenure` | 6 | 1..60 | live | no | Steps the cell a bounce returned to stays ruled out |
+| `explorer.tabu.loopWindow` | 12 | 4..60 | live | no | Steps scanned for a cell entered again and again |
+| `explorer.tabu.loopVisits` | 3 | 2..20 | live | no | Entries of one cell in that window that rule it out |
+| `explorer.tabu.loopTenure` | 8 | 1..60 | live | no | Steps a looped cell stays ruled out |
+| `explorer.tabu.stayRun` | 3 | 2..20 | live | no | Ticks of stay in a row (hold ticks excepted) that rule stay out |
+| `explorer.tabu.stayTenure` | 4 | 1..60 | live | no | Steps stay stays ruled out |
+| `explorer.tabu.minMoves` | 2 | 1..5 | live | no | Fewest moves a request lists after tabu alone |
 | `explorer.brain.cornerMode` | "off" | off / urgent / ascii / route / full | live | no | Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both) |
 | `explorer.perception.sightingNear` | 8 | 1..30 | live | no | A move within this many steps of a sighting counts as toward it |
 | `explorer.perception.zoneSteps` | 6 | 1..30 | live | no | Avoid-zone radius around an older sighting, steps |

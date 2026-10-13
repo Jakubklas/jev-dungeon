@@ -1,6 +1,6 @@
 # PLAN-tabu: hard exclusion of options that keep failing
 
-A plan, not documentation of the code. **Phases 0, 1 and 2 are built** (see Status at the end and AGENTS.md "Tabu"); phases 3-6 are open. Phases need the user's approval
+A plan, not documentation of the code. **Phases 0, 1, 2 and 3 are built** (see Status at the end and AGENTS.md "Tabu"); phases 4-6 are open. Phases need the user's approval
 (AGENTS.md rule 9: `explorer/brain.js` and `adversary/brain.js` belong to other agents).
 
 ## Goal
@@ -353,3 +353,14 @@ stub that already varies never stalls. A live comparison (`--live`, paid) only w
   - Request hashes: four scenarios change (`fixture:{corridor,duel,skills}:first`, `no-explorer-skills`); the first differing
     request of each is the first mood rule-out, and each matches the old fixture with `tabuMoods` off. Re-recorded (only those four) in their own commit.
   - Not tested in isolation: the 10-step tenure after an encounter ends (the check scenarios never leave the encounter).
+- Phase 3 (moves): M1-M3 and A1-A5 in `explorer/brain.js` (`#scoreMoves`, `#noteMove`, `#moveMenu`, `#moveParts` extracted from `#moveQuestion`), `describeMoveParts` returns `safe` per move (no text change), eight knobs (`explorer.tabu.moves`, `.bounceTenure`, `.loopWindow`, `.loopVisits`, `.loopTenure`, `.stayRun`, `.stayTenure`, `.minMoves`), `check-tabu.mjs` section 4, `turn.tabu` gains `removed_moves`, `lifted_moves`, `forced`.
+  - **M1 needs the last move itself to be a return** (`cells[-1] == cells[-3]` and `cells[-1] != cells[-2]`). Without it a stay after an old bounce (`back_and_forth` stays >= 2 for 6 moves) ruled out the cell the explorer stood on.
+  - **M1 and M2 stand aside for 12 steps after a strike or dispel** (same lesson as phase 1: a fight bounces). Without it check-duels' scripted duels lost a placement.
+  - **The tabu cell is the one stepped back to** (`cells[-2]`, the cell a further bounce would enter), not literally "two back" from the cell the explorer stands on.
+  - **A3 keeps every step that closes the known-path distance to the engage target** (and `stay` when the target is the own cell), under `engage` or while `engage` is a tactic being decided. The same keeps `stay` under `hide` (or `hide` being decided) while the explorer stands on the hiding spot: standing still is the tactic (added in review). **A2** is judged against the current approach's move facts (`memory.approach.id`), not per tactic: one list per tick.
+  - **Panic is not exempt** (it only runs; A2 keeps the safe way out). A1 can never be triggered by a rule (stepping on the portal ends the game, so its cell never enters the history); the check proves the end-to-end behaviour only.
+  - **The memory event says the steps left at the time a request drops the move** ("for 5 steps"), since M2 re-extends a live entry while the loop goes on.
+  - **`turn.tabu.forced`** can only be true with `minMoves` 1 (stay is always legal, so the raw legal list has >= 2 moves and the default minimum is 2). Covered in 4j with a corridor dead end.
+  - Existing checks touched: `check-tabu.mjs` sections 2-3 run with `tabuMoves` off (they isolate the tactic and mood levels); `check-dungeon.mjs` worst-case size check runs with it off (its stub stays put on every tick, exactly the stall M3 stops; it would step away and light cells the hand-set fixture keeps dark; tabu only removes options, so those sizes stay an upper bound); `check-duels.mjs` section 10 (health 2 spot check) runs with it off: the scripted policies wait while nothing is in sight, M3 sends them wandering, and the 2-life vs 9-life traces then differ by the wander, not by the lethal guard (the 24 placements run with moves on and show 0 claws).
+  - The corner shuttle of AGENTS "Open questions" (run_away in a closed room, tactic level off, 60 ticks, check-tabu 4k): 10 bounces with the move level off, 8 on. It dampens the shuttle, it does not stop it: the stub follows "Closer to the target", and with minMoves 2 the menu keeps the way back whenever the corner leaves only two moves. The tactic level (T3) is what stops it.
+  - Request hashes: 19 non-dungeon scenarios change (the first diff of each is the first move event in `state.recent.events`); with `tabuMoves` off every one matches the old fixture byte for byte (only the stale `dungeon:1-4,6` differ). Not re-recorded; the orchestrator re-records.

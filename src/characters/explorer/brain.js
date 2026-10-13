@@ -62,6 +62,14 @@ let TABU_MOODS = true; // the mood level (explorer.tabu.moods)
 let TABU_MOOD_STRIKES = 2; // D1: no-gain re-decisions under the same mood (D2: failed reviews in a row) that rule it out
 let TABU_MOOD_TENURE = 10; // D1: fewest steps a mood stays ruled out (it also lasts to the end of the encounter)
 let TABU_MOOD_REVIEW_TENURE = 20; // D2: steps a mood stays ruled out after failed approach reviews
+let TABU_MOVES = true; // the move level (explorer.tabu.moves)
+let TABU_BOUNCE_TENURE = 6; // M1: steps the cell a bounce returned to stays ruled out
+let TABU_LOOP_WINDOW = 12; // M2: the last this many steps are scanned for a cell entered again and again
+let TABU_LOOP_VISITS = 3; // M2: entries of one cell in the window that rule it out
+let TABU_LOOP_TENURE = 8; // M2: steps such a cell stays ruled out
+let TABU_STAY_RUN = 3; // M3: `stay` chosen this many ticks in a row (hold ticks excepted) rules it out
+let TABU_STAY_TENURE = 4; // M3: steps `stay` stays ruled out
+let TABU_MIN_MOVES = 2; // A5: the move menu never drops below this many by tabu alone
 const TABU_GAP_GAIN = 2; // the nearest enemy this many steps further off than at the baseline is a gain
 const TABU_C_GAIN = 5; // ... and so is confidence this much higher
 const NEVER_TABU = ['race_to_exit']; // the win is never ruled out
@@ -311,11 +319,15 @@ export class ExplorerBrain {
   #tabu = createTabu();
   #track = null;
   #wins = 0;
+  #winStep = -Infinity; // the step of the last strike or dispel (a fight bounces: M1 and M2 stand aside for it)
   #gapNow = null;
   #tabuTick = null;
   #moodTrack = null; // the mood picked last and its gain baseline { id, since, base } (D1)
   #moodTick = null; // this tick's mood filter { removed, lifted } for the turn report
   #reviewMood = null; // the mood whose approach reviews are being counted (D2)
+  #cellRing = []; // M2: [{ k, step }] cells entered recently (private: memory.recent.cells holds only 8)
+  #stayRun = 0; // M3: consecutive non-hold ticks that chose `stay`
+  #moveTick = null; // this tick's move filter { removed, lifted, forced } for the turn report
   #told = new Set(); // `${id}@${since}`: rule-outs already logged (once, on the first menu that really dropped them)
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
@@ -851,8 +863,10 @@ export class ExplorerBrain {
     this.#gapNow = sit.threats.encounter?.gap_now ?? null;
     this.#tabuTick = null;
     this.#moodTick = null;
+    this.#moveTick = null;
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
+    this.#scoreMoves(step, prev);
 
     const legal = world.availableMoves();
     if (!legal.length) throw new Error('No legal moves');
@@ -936,6 +950,10 @@ export class ExplorerBrain {
     // the count: HOLD_MAX counts consecutive hold ticks, not ones split by a re-decision on the same cell.
     if (tacticIds.length) this.#hold = { cell: null, n: 0, adj: 0 };
     const held = !tacticIds.length && this.#holding();
+    const { moves, removed: movesOut, lifted: movesBack } = this.#moveMenu(legal, { held, tacticIds, sit, profile, step });
+    const tabuForced = !forced && moves.length === 1; // the filter left one move: code takes it, no move question
+    if (movesOut.length || movesBack.length || tabuForced) this.#moveTick = { removed: movesOut, lifted: movesBack, forced: tabuForced };
+    const skip = forced || tabuForced;
     const questions = {};
     let moveOptions = {}; // per approach id: the shuffled move criteria
     let sharedMoves = null; // tactic-independent facts per move, sent once beside the speculative questions
@@ -970,17 +988,17 @@ export class ExplorerBrain {
         },
         criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
       };
-      if (!forced) {
+      if (!skip) {
         for (const id of tacticIds) {
-          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions, decisionTargets[id]);
+          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions, decisionTargets[id], moves);
           questions[`move_if_${id}`] = q.question;
           moveOptions[id] = q.options;
           // engage judges moves without the minimum gap; the shared facts keep the mood's gap warnings.
           if (id !== 'engage' || !sharedMoves) sharedMoves = q.shared;
         }
       }
-    } else if (!forced && !held) {
-      const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions);
+    } else if (!skip && !held) {
+      const q = this.#moveQuestion(memory.approach.id, sit, profile, false, hasSkillOptions, null, moves);
       questions.next_move = q.question;
       moveOptions[memory.approach.id] = q.options;
     }
@@ -995,20 +1013,20 @@ export class ExplorerBrain {
     if (closingCommittedRoute) this.#review = { step, targetSteps: reviewTarget.steps };
     // No reviews while a tactic or the run for the portal is on: those last as long as the situation does.
     const reviewDue =
-      !forced && !liveDirective && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
+      !skip && !liveDirective && !tacticIds.length && approachId !== 'go_to_exit' && !isTactic(approachId) &&
       !closingCommittedRoute && sinceReview >= REVIEW_EVERY && memory.progress.steps_since_approach >= REVIEW_EVERY;
     if (reviewDue) this.#addReviewQuestions(questions, approachId, rInfo);
     // Legacy leave_now fallback for a known portal without a committed destination.
     // Never while leaving is already the plan, and not beside a tactic question (race_to_exit covers
     // leaving under threat; that request is the largest): it waits for the next tick, a tactic may be on.
-    const askLeave = !forced && !liveDirective && !tacticIds.length && exitSeen(world) && !this.#leaving() && (this.#leaveDue || reviewDue);
+    const askLeave = !skip && !liveDirective && !tacticIds.length && exitSeen(world) && !this.#leaving() && (this.#leaveDue || reviewDue);
     if (askLeave) {
       this.#leaveDue = false;
       questions.leave_now = this.#leaveQuestion(sit);
     }
     // Coin decision: a new pile came into view nearby. next_approach, in this tick's request, after the sentiment call
     // (only on a decision tick: the `coins` trigger asked the mood just before, or another trigger's call serves). Not beside a tactic, a review or leave_now (they are the big requests); it waits.
-    const askCoins = !liveDirective && this.#coinDue && !!trigger && !forced && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
+    const askCoins = !liveDirective && this.#coinDue && !!trigger && !skip && !tacticIds.length && !reviewDue && !askLeave && !isTactic(approachId) &&
       approachId !== 'collect_coins' && !this.#leaving();
     if (askCoins) {
       this.#coinDue = false;
@@ -1020,7 +1038,7 @@ export class ExplorerBrain {
     }
     // directive_done (Noul): an early end for "until relevant". Rides on a request that is made anyway (never the
     // tactic request, the largest; never a forced tick), at most once per DIRECTIVE_ASK_EVERY steps.
-    const askDone = !!liveDirective && !forced && !tacticIds.length && step - this.#dirAskStep >= DIRECTIVE_ASK_EVERY;
+    const askDone = !!liveDirective && !skip && !tacticIds.length && step - this.#dirAskStep >= DIRECTIVE_ASK_EVERY;
     if (askDone) {
       this.#dirAskStep = step;
       questions.directive_done = {
@@ -1037,7 +1055,7 @@ export class ExplorerBrain {
     const skillQ = hasSkillOptions ? skillQuestion(skillOptions, (liveDirective ? directiveLine(liveDirective.text) : profile.skill_priority) + fireLine, { neutral: true }) : null;
     if (skillQ) questions.skill = skillQ;
 
-    let dir = held ? STAY : legal[0];
+    let dir = held ? STAY : moves[0];
     let moveDecision = null;
     let review = null;
     let pendingSwitch = null;
@@ -1066,8 +1084,8 @@ export class ExplorerBrain {
         moveFor = chosen;
       }
       const a = answers[moveKey];
-      if (!forced && a) {
-        dir = legal.includes(a.choice) ? a.choice : legal[0];
+      if (!skip && a) {
+        dir = moves.includes(a.choice) ? a.choice : moves[0];
         // The skill and move answers arrive together. Do not let a bare movement choice walk
         // into a claw that the explorer knows will take every remaining life before its sword can
         // land; hold position and let the tactic be reconsidered instead.
@@ -1111,7 +1129,9 @@ export class ExplorerBrain {
     // The skill resolves BEFORE the step, so the facts Jev read are exact when it lands.
     if (skillKey !== 'none') skillDecision.used = this.#useSkill(skillKey, step);
 
+    const from = world.pos;
     const result = world.move(dir);
+    this.#noteMove(dir, held, from, world.steps);
     recordStep(memory, {
       step: world.steps,
       dir,
@@ -1162,7 +1182,7 @@ export class ExplorerBrain {
       directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
       confidence: this.#confidenceReport(),
-      tabu: TABU_ON ? { ...tabuSnapshot(this.#tabu, world.steps), removed: this.#tabuTick?.removed ?? [], lifted: this.#tabuTick?.lifted ?? [], removed_moods: this.#moodTick?.removed ?? [], lifted_moods: this.#moodTick?.lifted ?? [] } : null,
+      tabu: TABU_ON ? { ...tabuSnapshot(this.#tabu, world.steps), removed: this.#tabuTick?.removed ?? [], lifted: this.#tabuTick?.lifted ?? [], removed_moods: this.#moodTick?.removed ?? [], lifted_moods: this.#moodTick?.lifted ?? [], removed_moves: this.#moveTick?.removed ?? [], lifted_moves: this.#moveTick?.lifted ?? [], forced: this.#moveTick?.forced ?? false } : null,
     };
   }
 
@@ -1180,12 +1200,14 @@ export class ExplorerBrain {
       if (e.type === 'struck') {
         if (e.staggered !== false) this.#struck.set(e.id, step); // a monster the blow did not stagger is not stunned: do not wait on it
         this.#wins += 1;
+        this.#winStep = step;
         this.#confide('struck');
         addEvent(memory, step, `Struck ${e.id} with the ${picked?.skill.source || 'weapon'} (${e.hp} hp left).`);
       } else if (e.type === 'dispelled') {
         const coin = events.some((x) => x.type === 'coin_drop' && x.id === e.id);
         countEncounter(memory, 'dispelled', step);
         this.#wins += 1;
+        this.#winStep = step;
         this.#confide('dispelled');
         addEvent(memory, step, `Dispelled ${e.id}${coin ? '; it dropped a coin' : ''}.`);
         this.#seen.delete(e.id); // it is gone, and the explorer saw it go
@@ -1335,14 +1357,15 @@ export class ExplorerBrain {
 
   // next_move for one approach. speculative: asked once per tactic on a decision tick, so it keeps
   // only the safety line, the tactic's own hint and the mood's priority (the generic list lives in next_move).
-  #moveQuestion(approachId, sit, profile, speculative, skillLine = false, targetOverride = null) {
+  // The per-move facts of one approach (all legal moves; the tabu filter decides which are listed).
+  #moveParts(approachId, profile, speculative, targetOverride = null) {
     const world = this.#world;
     const memory = this.#memory;
     const cells = memory.recent.cells;
     // engage closes in on purpose: its moves are judged without the mood's minimum gap.
     const gap = approachId === 'engage' ? 1 : profile.min_gap;
     const cornered = Boolean(this.#cornerOpt()); // cornerMode: gating relaxed, urgent text (also while a kept route is walked)
-    const parts = describeMoveParts(world, approachId, {
+    return describeMoveParts(world, approachId, {
       minGap: gap,
       goal: speculative ? targetOverride?.cell ?? null : this.#goal(),
       targetOverride,
@@ -1355,10 +1378,20 @@ export class ExplorerBrain {
       multiHold: this.#holdOn === 'multi',
       ...(cornered ? { noGapWarn: true, breakout: this.#cornerOpt().breakout ?? null } : {}),
     });
+  }
+
+  // moves: the tick's move list after the tabu filter (null = every available move).
+  #moveQuestion(approachId, sit, profile, speculative, skillLine = false, targetOverride = null, moves = null) {
+    const world = this.#world;
+    const memory = this.#memory;
+    const gap = approachId === 'engage' ? 1 : profile.min_gap;
+    const cornered = Boolean(this.#cornerOpt());
+    const parts = this.#moveParts(approachId, profile, speculative, targetOverride);
+    const avail = moves ?? world.availableMoves();
     // Option order is shuffled every tick because Jev leans toward the first option.
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`
     // (same for every move_if_<tactic>); each option keeps only its progress toward this tactic's target.
-    const dirs = shuffle(world.availableMoves());
+    const dirs = shuffle(avail);
     // A live directive parks the approach: on an ordinary tick the moves lose their "progress toward the target" part.
     const live = this.directive;
     const parked = Boolean(live) && !speculative && !isTactic(approachId);
@@ -1366,7 +1399,7 @@ export class ExplorerBrain {
     // `stay` is the same under every tactic, so its whole fact goes to the shared facts and the option is short.
     const specOption = (d) => (d === STAY ? (parts[d].holding ? parts[d].whole : 'Stand still.') : parts[d].whole ?? parts[d].target);
     const options = Object.fromEntries(dirs.map((d) => [d, speculative ? specOption(d) : whole(parts[d])]));
-    const shared = Object.fromEntries(world.availableMoves().filter((d) => d === STAY || !parts[d].whole).map((d) => [d, parts[d].shared ?? parts[d].whole]));
+    const shared = Object.fromEntries(avail.filter((d) => d === STAY || !parts[d].whole).map((d) => [d, parts[d].shared ?? parts[d].whole]));
     const question = speculative
       ? `Step for the "${approachId}" tactic? Options: progress to its target; other facts per move: \`surroundings.moves\`.`
       : live
@@ -1738,6 +1771,103 @@ export class ExplorerBrain {
     return removed.length ? allowed : list;
   }
 
+  // ---- PLAN-tabu, move level (M1-M3). A move is ruled out by its destination CELL (never a direction word: the cell is what
+  // was repeated) or, for standing still, by `stay`; each tick the cells are turned back into the directions that lead there.
+  #moveTabuRecord() {
+    return TABU_ON && TABU_MOVES;
+  }
+
+  #moveTabuOn() {
+    return this.#moveTabuRecord() && !this.directive;
+  }
+
+  // The step just taken: the cell ring for M2 (a stay enters nothing) and the stay run for M3 (a hold tick breaks it).
+  #noteMove(dir, held, from, step) {
+    if (!this.#moveTabuRecord()) return;
+    const pos = this.#world.pos;
+    if (!sameCell(from, pos)) this.#cellRing = [...this.#cellRing, { k: key(pos), step }].filter((e) => e.step > step - TABU_LOOP_WINDOW);
+    this.#stayRun = dir === STAY && !held ? this.#stayRun + 1 : 0;
+  }
+
+  // Start of a tick, after aging: what the last steps say. M1 a bounce (the cell stepped back to would be the next bounce), M2 a cell
+  // entered TABU_LOOP_VISITS times in the window, M3 `stay` chosen TABU_STAY_RUN ticks running.
+  #scoreMoves(step, prev) {
+    if (!this.#moveTabuRecord()) return;
+    const r = this.#memory.recent;
+    const c = r.cells;
+    const fighting = step - this.#winStep < TABU_LOOP_WINDOW; // a strike or dispel landed lately: close in, strike, step back is a fight, not a stall
+    if (!fighting && r.back_and_forth >= 2 && c.length >= 3 && sameCell(c.at(-1), c.at(-3)) && !sameCell(c.at(-1), c.at(-2))) { // the last move itself returned (stays and old bounces do not re-fire it)
+      tabuAdd(this.#tabu, 'cell', key(c.at(-2)), { step, tenure: TABU_BOUNCE_TENURE, reason: 'kept stepping back and forth' });
+    }
+    const seen = new Map();
+    if (!fighting) for (const e of this.#cellRing) if (e.step > prev - TABU_LOOP_WINDOW) seen.set(e.k, (seen.get(e.k) ?? 0) + 1);
+    for (const [k, n] of seen) if (n >= TABU_LOOP_VISITS) tabuAdd(this.#tabu, 'cell', k, { step, tenure: TABU_LOOP_TENURE, reason: 'kept coming back to it' });
+    if (this.#stayRun >= TABU_STAY_RUN) {
+      tabuAdd(this.#tabu, 'move', STAY, { step, tenure: TABU_STAY_TENURE, reason: `stood still ${this.#stayRun} times in a row` });
+      this.#stayRun = 0;
+    }
+  }
+
+  // The move list for the tick's questions and answer validation, computed once. Aspiration (never removed): A1 the portal
+  // step, A3 under engage the steps toward the engage target (the hold is the measured zero-claw play) and under hide `stay` on the hiding spot, A4 cornered: cells are
+  // not ruled out (only `stay`), A2 when no safe move would remain the safe ones come back, A5 never fewer than TABU_MIN_MOVES.
+  // Not on a hold tick, not under a live directive. Panic is not exempt: it only runs, and A2 keeps the safe way out.
+  // -> { moves, removed, lifted } (directions)
+  #moveMenu(legal, { held, tacticIds, sit, profile, step }) {
+    const none = { moves: legal, removed: [], lifted: [] };
+    if (held || !this.#moveTabuOn() || legal.length < 2) return none;
+    const world = this.#world;
+    const cornered = Boolean(this.#cornerOpt());
+    const entries = [];
+    for (const e of this.#tabu.entries) {
+      if (e.until <= step) continue;
+      if (e.level === 'move' && e.attr === STAY) entries.push({ level: 'm', attr: STAY, since: e.since, until: e.until, encounter: false, reason: e.reason });
+      else if (e.level === 'cell' && !cornered) {
+        for (const d of legal) if (d !== STAY && key(nextCell(world.pos, d)) === e.attr) entries.push({ level: 'm', attr: d, since: e.since, until: e.until, encounter: false, reason: e.reason });
+      }
+    }
+    if (!entries.length) return none;
+    const keep = [];
+    const t = world.seenTreasure();
+    for (const d of legal) if (d !== STAY && t && sameCell(nextCell(world.pos, d), t)) keep.push(d); // A1
+    if ((this.#memory.approach.id === 'engage' || tacticIds.includes('engage'))) { // A3
+      const target = approachTarget(world, 'engage', { stunned: this.#stunnedIds(), cornered });
+      if (target) {
+        if (target.steps === 0) keep.push(STAY);
+        else {
+          const to = knownDistances(world, target.cell);
+          for (const d of legal) if (d !== STAY && to.get(nextCell(world.pos, d)) < to.get(world.pos)) keep.push(d);
+        }
+      }
+    }
+    if (this.#memory.approach.id === 'hide' || tacticIds.includes('hide')) { // A3 for hide: standing still on the hiding spot is the tactic
+      const target = this.#memory.approach.id === 'hide' && this.#goal() ? { cell: this.#goal() } : approachTarget(world, 'hide', { minGap: profile.min_gap, exclude: this.#exclude, remembered: this.#remembered });
+      if (target && sameCell(target.cell, world.pos)) keep.push(STAY);
+    }
+    const f = filterOptions(legal, { entries }, 'm', step, { keep, min: TABU_MIN_MOVES });
+    let { allowed, removed } = f;
+    const lifted = [...f.lifted];
+    if (removed.length && sit.threats.visible.length) { // A2
+      const parts = this.#moveParts(this.#memory.approach.id, profile, false);
+      const safe = (d) => parts[d]?.safe !== false;
+      if (!allowed.some(safe)) {
+        const back = removed.filter(safe);
+        allowed = legal.filter((d) => allowed.includes(d) || back.includes(d));
+        removed = removed.filter((d) => !back.includes(d));
+        lifted.push(...back);
+      }
+    }
+    for (const d of removed) { // one memory event the first time a request really drops the move
+      const e = entries.find((x) => x.attr === d);
+      const id = `move:${d}@${e.since}`;
+      if (this.#told.has(id)) continue;
+      this.#told.add(id);
+      const what = d === STAY ? 'standing still' : `the cell to the ${dirWord(d)}`;
+      addEvent(this.#memory, Math.max(step - 1, 1), `Ruled out ${what} for ${e.until - step} steps: ${e.reason}.`);
+    }
+    return { moves: allowed, removed, lifted };
+  }
+
   // Going back and forth under a tactic: PINGPONG_FAILS moves in the recent window returned to the
   // cell just left. Only the moves since the last decision count, so a re-decision that keeps the
   // tactic gets a fresh run before it can fail again.
@@ -1946,6 +2076,14 @@ export function configureExplorerBrain(o) {
   if (o.tabuRetreatTicks !== undefined) TABU_RETREAT_TICKS = o.tabuRetreatTicks;
   if (o.tabuEngageHits !== undefined) TABU_ENGAGE_HITS = o.tabuEngageHits;
   if (o.tabuPingpongTenure !== undefined) TABU_PINGPONG_TENURE = o.tabuPingpongTenure;
+  if (o.tabuMoves !== undefined) TABU_MOVES = o.tabuMoves;
+  if (o.tabuBounceTenure !== undefined) TABU_BOUNCE_TENURE = o.tabuBounceTenure;
+  if (o.tabuLoopWindow !== undefined) TABU_LOOP_WINDOW = o.tabuLoopWindow;
+  if (o.tabuLoopVisits !== undefined) TABU_LOOP_VISITS = o.tabuLoopVisits;
+  if (o.tabuLoopTenure !== undefined) TABU_LOOP_TENURE = o.tabuLoopTenure;
+  if (o.tabuStayRun !== undefined) TABU_STAY_RUN = o.tabuStayRun;
+  if (o.tabuStayTenure !== undefined) TABU_STAY_TENURE = o.tabuStayTenure;
+  if (o.tabuMinMoves !== undefined) TABU_MIN_MOVES = o.tabuMinMoves;
   if (o.tabuMoods !== undefined) TABU_MOODS = o.tabuMoods;
   if (o.tabuMoodStrikes !== undefined) TABU_MOOD_STRIKES = o.tabuMoodStrikes;
   if (o.tabuMoodTenure !== undefined) TABU_MOOD_TENURE = o.tabuMoodTenure;
@@ -1956,7 +2094,7 @@ export function configureExplorerBrain(o) {
   }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, tabuEnabled: TABU_ON, tabuTactics: TABU_TACTICS, tabuTacticStrikes: TABU_TACTIC_STRIKES, tabuRetreatTicks: TABU_RETREAT_TICKS, tabuEngageHits: TABU_ENGAGE_HITS, tabuPingpongTenure: TABU_PINGPONG_TENURE, tabuMoods: TABU_MOODS, tabuMoodStrikes: TABU_MOOD_STRIKES, tabuMoodTenure: TABU_MOOD_TENURE, tabuMoodReviewTenure: TABU_MOOD_REVIEW_TENURE, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
+export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, tabuEnabled: TABU_ON, tabuTactics: TABU_TACTICS, tabuTacticStrikes: TABU_TACTIC_STRIKES, tabuRetreatTicks: TABU_RETREAT_TICKS, tabuEngageHits: TABU_ENGAGE_HITS, tabuPingpongTenure: TABU_PINGPONG_TENURE, tabuMoods: TABU_MOODS, tabuMoodStrikes: TABU_MOOD_STRIKES, tabuMoodTenure: TABU_MOOD_TENURE, tabuMoodReviewTenure: TABU_MOOD_REVIEW_TENURE, tabuMoves: TABU_MOVES, tabuBounceTenure: TABU_BOUNCE_TENURE, tabuLoopWindow: TABU_LOOP_WINDOW, tabuLoopVisits: TABU_LOOP_VISITS, tabuLoopTenure: TABU_LOOP_TENURE, tabuStayRun: TABU_STAY_RUN, tabuStayTenure: TABU_STAY_TENURE, tabuMinMoves: TABU_MIN_MOVES, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
 
 // ---- Prompt wording from the central config (src/config/runtime.js). A key set to null (or absent) means the built-in text,
 // which is copied here at load, before any configure call. Static text only: nothing in it can pull in game data.

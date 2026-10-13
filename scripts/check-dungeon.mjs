@@ -13,7 +13,7 @@ import {
 } from '../src/characters/explorer/perception.js';
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { REQUEST_BYTES } from '../src/config/registry.js'; // the one definition of the request-size bounds
-import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
+import { SENTIMENTS, ExplorerBrain, configureExplorerBrain, explorerBrainSnapshot } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { LIMITS, MOOD_IDS, addEvent, addLandmark, countEncounter, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -969,6 +969,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // neutral zone and close tactics, so this is the worst case inside the zone.
       // Caps run: start 30 puts C in the midlow tier (about 43) (bold is offered there, with every retreat still on the menu), the largest
       // menu a C-capped brain can see with the boldest gap; in mid and high the retreats are left off (mid-ground fix).
+      // The stub stays put on every tick, which is exactly the stall the move tabu (PLAN-tabu M3) stops: it would step away and
+      // light cells this hand-set fixture keeps dark. Moves off here; tabu only removes options, so the sizes are an upper bound.
+      configureExplorerBrain({ ...explorerBrainSnapshot(), tabuMoves: false });
       for (const conf of [FIXED_MOOD, { caps: true, start: 30 }]) for (const [mode, wantTactics, bound] of [['chase', 5, REQUEST_BYTES.explorerChasing], ['patrol', 6, REQUEST_BYTES.explorerPatrolling]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
@@ -1011,6 +1014,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         console.log(`  worst-case decision tick (${mode}${conf.fixedMood ? ', fixed mood' : ', confidence caps'}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
+      configureExplorerBrain({ ...explorerBrainSnapshot(), tabuMoves: true });
     }
     // Outnumbered: three chasers inside the fire strike's 9x9 block, one adjacent, so the skill question carries the
     // sword, the shield and the fire strike at once on the decision tick, with lit coins in the room.
