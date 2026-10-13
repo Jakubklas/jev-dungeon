@@ -79,6 +79,15 @@ const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trai
 // The real Jev call; a Run or a check passes `ask` to replace it.
 const askReal = ({ state, questions, body }) => askJev(state, questions, body);
 
+// An aborted decide(): thrown before any further Jev call, or when the signal fires while one is in flight.
+export class CallAborted extends Error {
+  constructor(message = 'The call was aborted.') { super(message); this.name = 'CallAborted'; }
+}
+
+function sameCells(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((c, i) => c[0] === b[i][0] && c[1] === b[i][1]);
+}
+
 // Sentiment profiles. Each one changes behaviour in code, not just a label:
 //   min_gap    - the closest (in known-path steps) adversaries may come: decides which tactics are
 //                feasible (perception.tacticFeasibility), tactic targets, and the "below your
@@ -353,6 +362,9 @@ export class ExplorerBrain {
   // Engage hold (P7a): { cell, n, adj } = where the explorer waits, consecutive hold ticks there, ticks spent beside the ghost.
   #hold = { cell: null, n: 0, adj: 0 };
   #holdOn = true;
+  #signal = null; // decide()'s abort signal, read by #request
+  #ctx = null; // decide()'s private context for apply()
+  #seq = 0; // intent counter: apply() takes only the latest decide()'s intent
   #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
   // Confidence model (PLAN-confidence C2, off by default): #cs is confidence.js's state (value, counts, the
   // encounter's flags); memory.progress.confidence mirrors { value, counts } only with the toggle on.
@@ -524,10 +536,12 @@ export class ExplorerBrain {
 
   // One Jev request. Keeps its exact body for lastRequest()/lastRequests().
   async #request(kind, state, questions) {
+    if (this.#signal?.aborted) throw new CallAborted();
     const body = JSON.stringify({ model: jevModel(), state, questions });
     this.#lastBodies.push(body);
     const started = performance.now();
-    const answers = await this.#ask({ kind, state, questions, body });
+    const answers = await this.#ask({ kind, state, questions, body, signal: this.#signal ?? undefined });
+    if (this.#signal?.aborted) throw new CallAborted();
     return { answers, ms: Math.round(performance.now() - started) };
   }
 
@@ -819,7 +833,46 @@ export class ExplorerBrain {
     return target;
   }
 
+  // One turn: decide, apply, then the memory write. The legacy single-player driver (Run.playTurn) calls this;
+  // the hosted runtime calls decide() outside its mutation lock and apply() inside it.
   async takeTurn() {
+    const { intent } = await this.decide();
+    const turn = this.apply(intent);
+    await this.save();
+    return turn;
+  }
+
+  // Everything up to the world mutation: observation, triggers, Jev calls, answer parsing and the decision
+  // bookkeeping that does not depend on the move's result. It never writes to the Game (decide may await, apply
+  // may not). Returns { intent, pending }: `intent` is plain JSON (what apply needs), `pending` the private
+  // context apply picks up (also kept in a private field, so apply(intent) alone is enough). An aborted `signal`
+  // rejects with CallAborted before any further Jev call; a decide that rejects restores the few trigger fields it
+  // had already consumed, so the next decide starts clean.
+  async decide({ signal } = {}) {
+    if (signal?.aborted) throw new CallAborted();
+    const info = this.#encounter;
+    const saved = { pending: info.pending, lastDecision: info.lastDecision, leaveDue: this.#leaveDue, coinDue: this.#coinDue, coinStep: this.#coinStep, dirAskStep: this.#dirAskStep };
+    this.#signal = signal ?? null;
+    this.#ctx = null;
+    try {
+      const ctx = await this.#decideTurn();
+      this.#ctx = ctx;
+      return { intent: ctx.intent, pending: ctx };
+    } catch (e) {
+      info.pending = saved.pending;
+      info.lastDecision = saved.lastDecision;
+      this.#leaveDue = saved.leaveDue;
+      this.#coinDue = saved.coinDue;
+      this.#coinStep = saved.coinStep;
+      this.#dirAskStep = saved.dirAskStep;
+      this.#ctx = null;
+      throw e;
+    } finally {
+      this.#signal = null;
+    }
+  }
+
+  async #decideTurn() {
     const world = this.#world;
     const memory = this.#memory;
     const info = this.#encounter;
@@ -1137,20 +1190,59 @@ export class ExplorerBrain {
     if (decision) decision.apiMs = apiMs;
     // (apiMs is the whole decision tick: sentiment + tick request)
 
+    // The intent: what apply() does to the world. Dash extends the move only when a legal direction was chosen.
+    const chosen = skillKey !== 'none' ? this.#skills.get(skillKey) : null;
+    const dashes = chosen?.skill.kind === 'dash' && dir !== STAY && legal.includes(dir);
+    const intent = {
+      kind: 'explorer',
+      seq: ++this.#seq,
+      step,
+      skill: skillKey === 'none' ? null : skillKey,
+      skill_cells: chosen?.target?.cells ? chosen.target.cells.map((c) => [...c]) : null, // the aim apply() re-checks
+      move: dir,
+      distance: dashes ? chosen.skill.distance : 1,
+      held,
+    };
+    return { intent, step, policy, decision, review, skillDecision, apiMs, moveDecision, pendingSwitch, pendingLeave, pendingCoins, doneNow };
+  }
+
+  // The world mutation of a turn, synchronous. Re-validates the intent against the CURRENT world: a skill that is
+  // no longer offered or whose aimed cells changed, or a move that is no longer available, becomes a no-op and the
+  // turn carries `stale: [['skill' | 'move', reason], ...]` (absent when nothing was stale). No file is written:
+  // await save() afterwards (outside any lock). Returns the turn object takeTurn returns.
+  apply(intent) {
+    const ctx = this.#ctx;
+    if (!ctx || !intent || intent.seq !== ctx.intent.seq) throw new Error('apply() needs the intent of the latest decide()');
+    this.#ctx = null;
+    const world = this.#world;
+    const memory = this.#memory;
+    const info = this.#encounter;
+    const { step, decision, review, skillDecision, apiMs, moveDecision, pendingSwitch, pendingLeave, pendingCoins, doneNow } = ctx;
+    let policy = ctx.policy;
+    const stale = [];
+    const dir = intent.move;
+    const held = intent.held;
+    const skillKey = intent.skill ?? 'none';
+    const moveOk = world.availableMoves().includes(dir);
+    if (!moveOk) stale.push(['move', world.won || world.lost ? 'game over' : 'not available now']);
+
     // The skill resolves before movement. Dash extends that move only when a legal direction was chosen.
     let distance = 1;
     if (skillKey !== 'none') {
-      const chosenSkill = this.#skills.get(skillKey)?.skill;
-      if (chosenSkill?.kind !== 'dash' || (dir !== STAY && legal.includes(dir))) {
+      const offered = skillKey in this.#skillOptions(); // fresh options also refresh the targets useSkill reads
+      const picked = this.#skills.get(skillKey);
+      if (!offered) stale.push(['skill', 'no longer offered']);
+      else if (intent.skill_cells && !sameCells(intent.skill_cells, picked?.target?.cells)) stale.push(['skill', 'its aimed cells changed']);
+      else if (picked?.skill.kind !== 'dash' || (moveOk && dir !== STAY)) {
         skillDecision.used = this.#useSkill(skillKey, step);
-        if (skillDecision.used && chosenSkill?.kind === 'dash') distance = chosenSkill.distance;
+        if (skillDecision.used && picked.skill.kind === 'dash') distance = picked.skill.distance;
       }
     }
 
     const from = world.pos;
-    const result = world.move(dir, distance);
-    this.#noteMove(dir, held, from, world.steps);
-    recordStep(memory, {
+    const result = moveOk ? world.move(dir, distance) : { moved: false, revealed: 0, revisit: false, won: world.won };
+    if (moveOk) this.#noteMove(dir, held, from, world.steps);
+    if (moveOk) recordStep(memory, {
       step: world.steps,
       dir,
       pos: world.pos,
@@ -1193,9 +1285,10 @@ export class ExplorerBrain {
       this.#confide('regen');
     }
     this.#syncConfidence(); // memory.progress.confidence.now follows sightings too, not only events
-    await this.#save();
+    this.#syncSkills();
 
     return {
+      ...(stale.length ? { stale } : {}),
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
       directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
@@ -1237,10 +1330,20 @@ export class ExplorerBrain {
     return key;
   }
 
-  // Mirrors the live skills into memory, then saves (every save goes through here).
-  async #save() {
+  // Mirrors the live skills into memory (sync: apply() does it under the lock).
+  #syncSkills() {
     setSkills(this.#memory, this.#skills.summaries());
+  }
+
+  // Mirrors the live skills into memory, then saves (every save goes through here). Public so a runtime can write
+  // the turn's memory files after apply(), outside its mutation lock; takeTurn() calls it itself.
+  async save() {
+    this.#syncSkills();
     await saveMemory(this.#memory, this.#memoryDir);
+  }
+
+  async #save() {
+    await this.save();
   }
 
   // Records a catch (called by turn.js after the adversaries moved) and saves.
