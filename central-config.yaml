@@ -5,7 +5,7 @@
 
 # Dungeon layout, light, coins and hearts. Developer only.
 world:
-  sightRange: 7 # How far anyone sees along a clear line (explorer and monsters)
+  sightRange: 20 # How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters)
   coins:
     floorPerCoin: 60 # Floor cells per coin: lower = more coins
     max: 30 # Coins lying around at the start (0 = none)
@@ -98,7 +98,7 @@ world:
 explorer:
   graceTicks: 4 # Steps of protection after the explorer is hit
   lives: 5 # Lives the explorer starts with
-  skills: [ sword_strike, shield_block, fire_strike ] # Skills the explorer starts with (at most 4; empty = none)
+  skills: [ sword_strike, shield_block, fire_strike, dash ] # Skills the explorer starts with (at most 4; empty = none)
   brain:
     reviewEvery: 8 # Steps between approach reviews
     approachFailing: 0.5 # approach_working below this switches the approach
@@ -345,7 +345,7 @@ explorer:
     # The one sentence that says what self.confidence means (the built-in wording; edit to change it, delete to restore)
     confidenceSentence: " `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered."
 
-# Sword, shield and the stun they cause.
+# Explorer and monster combat skills, plus the explorer's Dash.
 skills:
   sword_strike:
     damage: 1 # Hit points a sword strike takes
@@ -354,8 +354,10 @@ skills:
     effectiveness: 0.6 # Chance a raised shield stops a claw (0-1)
     cooldown: 2 # Steps before the shield can be raised again
   fire_strike:
-    damage: 2 # Hit points the fire strike takes from every enemy in its 9x9 area
+    damage: 3 # Hit points the fire strike takes from every enemy in its 9x9 area
     cooldown: 120 # Steps before the fire strike is ready again
+  dash:
+    cooldown: 20 # Seconds before Dash is ready again
   stunTicks: 2 # Ticks a struck monster loses (no move, no Jev call)
   minProbability: 0.5 # Jev must be at least this sure to use a skill
   questionText:

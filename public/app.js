@@ -28,6 +28,7 @@ let approachesUsed = new Set();
 let eventLog = [];        // newest first: { step, text, type }
 let strikeFx = null;      // this tick's attacks to flash: { t0, strikes } (S5), null when none
 let fireFx = null;        // the fire strike's blast: { t0, cells, centre }, kept past the next views until its 18 frames are done
+let dashFx = null;        // the explorer's dash streak, following its actual start and landing cells
 let lastConfidence = null; // turn.confidence ({ value, band, delta, reason }); null with the confidenceModel toggle off
 let lastSkillDecision = null; // turn.skill_decision with its step, null before the first one
 let elapsed = 0, resumedAt = 0;
@@ -87,6 +88,7 @@ const STRIKE_HOLD = .5;           // share of STRIKE_MS before the fade starts
 const STRIKE_COLOR = '#ff3a2c', BLOCK_COLOR = '#8fb4ff';
 const SHIELD_SLASH_MS = 260;      // the parry crescent: 6 frames like the sword's slash, a little quicker
 let SLASH_MS = 340;             // the slash crescent sweeps in the first part of STRIKE_MS, then is gone
+const DASH_MS = 340, DASH_FRAMES = 6;
 let FIRE_CALL_MS = 550;          // the explorer shouts FIRE_SHOUT this long before the fire strike's step lands and the blast plays
 const FIRE_SHOUT = 'Fire Strike!';
 let FIRE_MS = 1490;             // the fire strike's blast: 18 sprite frames (fall, burst, burn, smoke), about 83 ms each
@@ -393,11 +395,11 @@ const isoY = (gx, gy) => (gx + gy) * HH;
 // face: 1 = right, -1 = left (mirrored), from the sign of the screen-x travel.
 const actors = new Map();
 function actorPos(a, now) {
-  let k = Math.min(1, Math.max(0, (now - a.t0) / TWEEN_MS));
+  let k = Math.min(1, Math.max(0, (now - a.t0) / (a.ms ?? TWEEN_MS)));
   k = k * k * (3 - 2 * k);
   return [a.from[0] + (a.to[0] - a.from[0]) * k, a.from[1] + (a.to[1] - a.from[1]) * k];
 }
-function moveActor(id, pos, now, snap) {
+function moveActor(id, pos, now, snap, ms = TWEEN_MS) {
   const a = actors.get(id);
   if (!a) {
     actors.set(id, { from: [...pos], to: [...pos], t0: 0, face: 1 });
@@ -409,13 +411,17 @@ function moveActor(id, pos, now, snap) {
   a.from = snap ? [...pos] : actorPos(a, now);
   a.to = [...pos];
   a.t0 = now;
+  a.ms = ms;
 }
 // After each new view. A ghost that was not drawn last time, or jumped, snaps into place
 // instead of streaking across the fog.
-function syncActors(reset) {
+function syncActors(reset, dash = false) {
   const now = performance.now();
   if (reset) actors.clear();
-  moveActor('@', game.pos, now, false);
+  const oldPos = actors.get('@')?.to;
+  moveActor('@', game.pos, now, false, dash ? DASH_MS : TWEEN_MS);
+  dashFx = dash && oldPos && (oldPos[0] !== game.pos[0] || oldPos[1] !== game.pos[1])
+    ? { t0: now, from: [...oldPos], to: [...game.pos] } : null;
   if (FACE_X[game.facing]) actors.get('@').face = FACE_X[game.facing]; // server facing wins when present
   const ids = new Set();
   for (const ad of game.adversaries ?? []) {
@@ -525,15 +531,16 @@ function resetBoard() {
   syncActors(true);
   strikeFx = null;
   fireFx = null;
+  dashFx = null;
   snapCamera();
 }
 
 // A new view arrived (a step): refresh everything derived from it.
-function boardUpdate() {
+function boardUpdate(turn) {
   miniDirty = true; // also covers coin_piles changes: the minimap redraws whenever a view arrives
   computeFog();
   indexProps();
-  syncActors(false);
+  syncActors(false, turn?.skill_decision?.used === 'dash');
   // Only a view that arrives from a step flashes its strikes (a page load does not replay them). A view
   // without strikes leaves a running flash alone, so fast steps don't cut it short.
   if (Array.isArray(game.strikes) && game.strikes.length) strikeFx = { t0: performance.now(), strikes: game.strikes };
@@ -958,6 +965,34 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   });
 }
 
+// A slash-shaped streak follows the dash path, with its broad bright head just behind the
+// knight. It is drawn in the knight's entity pass before the body, so it never covers the sprite.
+function drawDashTrail(px, py, now) {
+  if (!dashFx) return;
+  const t = (now - dashFx.t0) / DASH_MS;
+  if (t >= 1) { dashFx = null; return; }
+  const frame = Math.max(0, Math.min(DASH_FRAMES - 1, Math.floor(t * DASH_FRAMES)));
+  const progress = (frame + 1) / DASH_FRAMES;
+  const dx = (dashFx.to[0] - dashFx.to[1] - dashFx.from[0] + dashFx.from[1]) * HW;
+  const dy = (dashFx.to[0] + dashFx.to[1] - dashFx.from[0] - dashFx.from[1]) * HH;
+  const travel = Math.hypot(dx, dy);
+  if (travel < 1) return;
+  const ux = dx / travel, uy = dy / travel, nx = -uy, ny = ux;
+  const length = Math.min(48, Math.max(12, travel * progress));
+  b.globalAlpha = frame >= DASH_FRAMES - 2 ? .55 : 1;
+  for (let i = 2; i <= length; i++) {
+    const u = 1 - i / length; // thin tail at the old cell, broad head behind the body
+    const width = Math.max(1, Math.round(1 + 4 * Math.sin(u * Math.PI / 2)));
+    for (let j = -width; j <= width; j++) {
+      const edge = Math.abs(j) / width;
+      const tone = edge < .22 && u > .35 ? 3 : edge < .5 ? 2 : edge < .8 ? 1 : 0;
+      b.fillStyle = SLASH_COLORS.sword[tone];
+      b.fillRect(Math.round(px - ux * i + nx * j), Math.round(py - uy * i + ny * j - 10), 1, 1);
+    }
+  }
+  b.globalAlpha = 1;
+}
+
 // The crescent both swings share (the sword slash and the shield's parry), swept around (ox, oy) toward (dx, dy):
 // `frames` discrete frames, `sweep` radians when finished, arc radius `reach`, half-width swelling from `wTail` at
 // the tail to about wTail + wHead at the head, the head bowed `bow` px further out; 4 tones of `pal`, rim to core.
@@ -1187,6 +1222,7 @@ function drawEntity(en, now, cx, cy) {
     return;
   }
   if (en.kind === 'knight') {
+    drawDashTrail(px, py, now);
     b.fillStyle = PALETTE.shadow;
     pixelEllipse(px, py, 6, 2);
     const spr = frameOf(sprites.knight, now);
@@ -1399,12 +1435,11 @@ function updateThoughts(prime = false) {
   lastRemark = text;
 }
 
-// The explorer calls out its fire strike: the shout borrows its bubble like a remark, then the approach key is put
-// back. It holds the bubble until shoutUntil (the call plus the first half of the blast): a new approach line waits
-// for the next view after that instead of cutting the shout short.
+// Skill callouts borrow the explorer's bubble like a remark, then restore the approach key.
+// A new approach line waits until the callout's hold has passed.
 let shoutUntil = 0;
-function explorerShout(text) {
-  shoutUntil = performance.now() + FIRE_CALL_MS + FIRE_MS / 2;
+function explorerShout(text, holdMs = FIRE_CALL_MS + FIRE_MS / 2) {
+  shoutUntil = performance.now() + holdMs;
   const t = thoughts.get('@');
   const approachKey = t?.key ?? null, approachTag = t?.tag ?? null;
   think('@', `shout:${text}:${performance.now()}`, text, 'explorer');
@@ -1778,7 +1813,7 @@ function renderSkills() {
       el('i', null, 'skill-pip'),
       el('b', k.name ?? label(id), 'skill-name'),
       el('span', k.kind ? label(k.kind) : '', 'skill-kind'),
-      el('span', ready ? 'ready' : `cooldown ${k.cooldown_left ?? '?'}`, 'skill-state'),
+      el('span', ready ? 'ready' : `cooldown ${k.cooldown_left ?? '?'}${k.kind === 'dash' ? 's' : ''}`, 'skill-state'),
     );
     if (used) li.append(el('span', 'used', 'skill-used'));
     return li;
@@ -2252,7 +2287,8 @@ async function loop() {
       renderTurn(res.data.turn);
       renderMemory();
       renderReview();
-      boardUpdate();
+      boardUpdate(res.data.turn);
+      if (res.data.turn?.skill_decision?.used === 'dash') explorerShout('Dash!', DASH_MS + 400);
       updateThoughts();
       if (game.over) {
         endGame();

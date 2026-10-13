@@ -13,7 +13,7 @@ import {
 } from '../src/characters/explorer/perception.js';
 import { knownLineOfSight } from '../src/characters/explorer/encounter.js';
 import { REQUEST_BYTES } from '../src/config/registry.js'; // the one definition of the request-size bounds
-import { SENTIMENTS, ExplorerBrain } from '../src/characters/explorer/brain.js';
+import { SENTIMENTS, ExplorerBrain, configureExplorerBrain, explorerBrainSnapshot } from '../src/characters/explorer/brain.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { LIMITS, MOOD_IDS, addEvent, addLandmark, countEncounter, createMemory, validateMemory } from '../src/characters/explorer/memory.js';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -54,6 +54,8 @@ const ALLOWED_IMPORTS = {
   '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
   // Pure helpers shared with the adversary side (PLAN-adversary-memory.md A3); they import nothing from the game.
   '../shared/memory-kit.js': null,
+  // tabu.js (PLAN-tabu.md): the tabu lists both characters use. Pure, imports nothing (check-tabu asserts it).
+  '../shared/tabu.js': null,
   // Skills (PLAN-skills.md): the brain builds its skill set and asks the `skill` question through these two
   // modules only. They hold no game state; src/skills/ is guarded below (section 0c). resolve.js is not allowed.
   // skillConfig returns the settings numbers (stun ticks, coin drop chance) for the rules sentence: no game state.
@@ -99,7 +101,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   // morale.js (PLAN-monster-morale.md): the monster's morale model. Pure, imports nothing (check-morale asserts it),
   // so brain.js, memory.js and adversary.js may import it, exactly as the explorer's confidence.js is treated.
   './morale.js': null,
-  '../shared/memory-kit.js': null, '../../jev.js': null, 'node:fs/promises': null,
+  '../shared/memory-kit.js': null, '../shared/tabu.js': null, '../../jev.js': null, 'node:fs/promises': null,
   // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
   '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
   './adversary.js': ['ADVERSARY_SPEED'],
@@ -124,7 +126,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
 //     sibling skills files and DIRS from dungeon.js.
 {
   const SKILL_ALLOWED_IMPORTS = {
-    './skill.js': null, './attack.js': null, './area.js': null, './block.js': null, './skill-set.js': null, './loadouts.js': null,
+    './skill.js': null, './attack.js': null, './area.js': null, './block.js': null, './dash.js': null, './skill-set.js': null, './loadouts.js': null,
     './question.js': null, './config.js': null, '../dungeon.js': ['DIRS'],
   };
   const sk = (n, src) => fogViolations(n, src, SKILL_ALLOWED_IMPORTS);
@@ -967,6 +969,9 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
       // neutral zone and close tactics, so this is the worst case inside the zone.
       // Caps run: start 30 puts C in the midlow tier (about 43) (bold is offered there, with every retreat still on the menu), the largest
       // menu a C-capped brain can see with the boldest gap; in mid and high the retreats are left off (mid-ground fix).
+      // The stub stays put on every tick, which is exactly the stall the move tabu (PLAN-tabu M3) stops: it would step away and
+      // light cells this hand-set fixture keeps dark. Moves off here; tabu only removes options, so the sizes are an upper bound.
+      configureExplorerBrain({ ...explorerBrainSnapshot(), tabuMoves: false });
       for (const conf of [FIXED_MOOD, { caps: true, start: 30 }]) for (const [mode, wantTactics, bound] of [['chase', 5, REQUEST_BYTES.explorerChasing], ['patrol', 6, REQUEST_BYTES.explorerPatrolling]]) {
         const big = handGame(wide, start, 13);
         big.light = big.light.map((row, y) => row.map((v) => (y <= 9 ? v : 0)));
@@ -1009,6 +1014,7 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
         console.log(`  worst-case decision tick (${mode}${conf.fixedMood ? ', fixed mood' : ', confidence caps'}, coins, remembered ghost, portal): ${peak} bytes with ${most} tactics offered (bound ${bound})`);
         rmSync(bd, { recursive: true, force: true });
       }
+      configureExplorerBrain({ ...explorerBrainSnapshot(), tabuMoves: true });
     }
     // Outnumbered: three chasers inside the fire strike's 9x9 block, one adjacent, so the skill question carries the
     // sword, the shield and the fire strike at once on the decision tick, with lit coins in the room.
@@ -1282,17 +1288,19 @@ const WARY = SENTIMENTS.wary.min_gap, AGGRO = SENTIMENTS.bold.min_gap;
     const brain = new ExplorerBrain(new KnownWorld(g), { ask: smartAsk('wary'), confidence: FIXED_MOOD, memoryDir: pathToFileURL(dir + '/') });
     const a = chaser(ghost);
     g.adversaries = [a];
-    const cells = [[...g.pos]], ghostState = { budget: 0 }, tactics = new Set();
+    const cells = [[...g.pos]], under = [null], ghostState = { budget: 0 }, tactics = new Set();
     for (let t = 0; t < 15; t++) {
       const turn = await withSeed(100 + t, () => brain.takeTurn());
       if (turn.decision?.tactic?.choice) tactics.add(turn.decision.tactic.choice);
       cells.push([...g.pos]);
+      under.push(brain.memory.approach.id); // the tactic this move was made under
       walkToward(g, a, ghostState);
     }
     // Ping-pong = moves that step straight back to the cell just left (A-B-A), the count recent.back_and_forth
-    // keeps. Turning round once at the end of a run costs one.
+    // keeps. Turning round once at the end of a run costs one. Only moves made under run_away count: when tabu
+    // (PLAN-tabu T3) rules a shuttling run_away out, the step to engage's holding cell is not a run_away bounce.
     let pp = 0;
-    for (let i = 2; i < cells.length; i++) if (cells[i].join() === cells[i - 2].join() && cells[i].join() !== cells[i - 1].join()) pp++;
+    for (let i = 2; i < cells.length; i++) if (under[i] === 'run_away' && cells[i].join() === cells[i - 2].join() && cells[i].join() !== cells[i - 1].join()) pp++;
     pingPongRuns.push(pp);
     if (pp >= 3) fail(`ping-pong under run_away: ${pp} undone moves in 15 ticks from ${me} with the ghost at ${ghost} (tactics ${[...tactics]}): ${cells.map((c) => c.join(',')).join(' ')}`);
     validateMemory(brain.memory);

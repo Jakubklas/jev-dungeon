@@ -13,7 +13,7 @@ import {
 import { addEvent, createMemory, validateMemory } from '../src/characters/adversary/memory.js';
 import { configureWorld } from '../src/dungeon.js';
 import { configureAdversaries } from '../src/characters/adversary/adversary.js';
-import { brainView, buildRequest } from '../src/characters/adversary/brain.js';
+import { brainView, buildRequest, configureAdversaryBrain } from '../src/characters/adversary/brain.js';
 import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
 import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
 import { skillConfig, configureSkills } from '../src/skills/config.js';
@@ -41,6 +41,9 @@ function handMap(rows, rooms = [{ x: 1, y: 1, w: rows[0].length - 2, h: rows.len
   }).join(''));
   const dungeon = { seed: 1, width: rows[0].length, height: rows.length, tiles, start, treasure, rooms };
   const game = new Game(dungeon);
+  // Fully lit: sight needs the adversary on a revealed cell (seesExplorer), and these maps test ghost
+  // behaviour, not lighting, while their scripts move game.pos directly. Section 5d0 tests the fog rule.
+  for (const row of game.light) row.fill(1);
   game.adversaries = [];
   return game;
 }
@@ -642,6 +645,26 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   }
 }
 
+// 5d0. Sight in revealed areas only: SIGHT_RANGE may exceed LIGHT_RADIUS, but an adversary on an
+//      unlit cell neither sees the explorer nor is seen by it.
+{
+  const old = { sight: SIGHT_RANGE };
+  configureWorld({ sightRange: 20 });
+  try {
+    const game = new Game({ seed: 1, width: 24, height: 3, tiles: ['#'.repeat(24), '#' + '.'.repeat(22) + '#', '#'.repeat(24)], start: [1, 1], treasure: null, rooms: [{ x: 1, y: 1, w: 22, h: 1 }] });
+    const a = adversary('a1', [16, 1]); // 15 cells off, beyond the start's light disc
+    game.adversaries = [a];
+    check(!game.isKnown(a.pos) && !seesExplorer(game, a), 'sight: an adversary on an unlit cell is not seen, even within SIGHT_RANGE');
+    game.light[1][16] = 0.5;
+    check(seesExplorer(game, a), 'sight: the same adversary on a lit cell 15 away is seen with SIGHT_RANGE 20');
+    a.pos = [22, 1]; game.light[1][22] = 0.5; // 21 away: beyond SIGHT_RANGE even though lit
+    check(!seesExplorer(game, a), 'sight: a lit cell beyond SIGHT_RANGE is not seen');
+  } finally {
+    configureWorld({ sightRange: old.sight });
+  }
+  console.log('sight: only in revealed areas, up to SIGHT_RANGE');
+}
+
 // 5d2. Pack hunting: a spotter alerts patrolling packmates within ALERT_STEPS (path), who join the
 //      hunt at the spot it saw the explorer; a hunting adversary then tracks the explorer
 //      through any packmate's sight (team sight).
@@ -694,6 +717,9 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
 // 5f. Memory shape: re-sighting does not flood `tried`, the tally counts, events stay few, and the
 //     request carries surroundings and team. No probabilities reach Jev; the UI view keeps them.
 {
+  // This block's stub teleports and shuttles on purpose to count re-sightings; monster tabu (PLAN-tabu phase 5) would
+  // rightly rule that stall out and add events, so it is off here (check-tabu section 6 covers the tabu behaviour).
+  configureAdversaryBrain({ advTabuEnabled: false });
   const game = twoRooms();
   const a = adversary('a1', [2, 1]);
   game.adversaries = [a];
@@ -720,6 +746,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   m = validateMemory(a.memory);
   check(m.approach.tried.length === 1 && m.approach.tried[0].id === 'sweep_last_seen', `memory: tried after giving up ${JSON.stringify(m.approach.tried)}`);
   check(m.events.at(-1).text.startsWith('Gave up') && m.events.length === 2, `memory: events after giving up ${JSON.stringify(m.events)}`);
+  configureAdversaryBrain({ advTabuEnabled: true });
   // The events cap and the no-duplicate-tick rule.
   for (let i = 0; i < 12; i++) addEvent(m, `moment ${i}`, i + 100);
   check(m.events.length === 5 && m.events[0].text === 'moment 7', `memory: events cap ${m.events.length}`);

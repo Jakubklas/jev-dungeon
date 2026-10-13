@@ -1,7 +1,8 @@
+#!/usr/bin/env node
 // CLI for the hub (hub.js): starts, lists and stops extra /arena/<name>/ (normal dungeon) and
 // /gym/<name>/ (testbed) instances, each with its own settings, data folder and log.
-//   node scripts/arenas.mjs up --arena 3 --set speed=0.8 --gym 5 --opt size=9x9 --set lives=3
-// `node scripts/arenas.mjs help` has the full syntax. Starting instances is free: nothing here calls Jev.
+//   dungeon-cli up --arena 3 --set speed=0.8 --gym 5 --opt size=9x9 --set lives=3
+// `dungeon-cli help` has the full syntax. Starting instances is free: nothing here calls Jev.
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync, openSync, closeSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const RUNS = join(ROOT, 'runs');
 const HUB_FILE = join(RUNS, 'hub.json');
 
-const HELP = `Usage: node scripts/arenas.mjs <command>
+const HELP = `Usage: dungeon-cli <command>
 
   up <groups>     Start instances. A group starts at --arena N (normal dungeons, URL /arena/<name>/) or
                   --gym N (testbed arenas, URL /gym/<name>/); the options after it belong to that group:
@@ -132,7 +133,7 @@ if (cmd === 'up') {
   const { instances } = await call(hub, '/api/instances', { instances: groups });
   console.log(`Started ${instances.length} instances (nothing has called Jev; stepping does):`);
   print(hub, instances);
-  console.log(`\nLogs: node scripts/arenas.mjs logs <name>    Stop: node scripts/arenas.mjs down ${instances.map((i) => i.key).join(' ')}`);
+  console.log(`\nLogs: dungeon-cli logs <name>    Stop: dungeon-cli down ${instances.map((i) => i.key).join(' ')}`);
 } else if (cmd === 'list') {
   const hub = runningHub();
   print(hub, (await call(hub, '/api/instances')).instances);

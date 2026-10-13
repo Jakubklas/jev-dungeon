@@ -222,6 +222,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
 | Facing | Sign of the change in screen x: right/up faces right, left/down faces left; mirrored around `anchorX` | AGENTS.md, facing rule |
 | Chase glow | 3 red rings, pulse `.75 + .25·sin(now/180)` | `drawEntity` |
 | Sword / claw slash | 340 ms, 6 frames | `SLASH_MS` |
+| Dash | 340 ms, 6 frames: the knight moves along its full dash path while a pixel streak in the sword's blue-white ramp trails behind its body in the same direction, with a thin tail and broad bright head. Its thought bubble says "Dash!" | `DASH_MS`, `DASH_FRAMES`, `drawDashTrail` |
 | Fire strike blast | 1490 ms, 18 frames (about 83 ms each), on its own clock so the next steps don't cut it; anchored at the middle of the whole 9x9 block (the knight's cell) (`strike.centre`), drawn at the end of the floor pass (Pass A), so walls, solid props and characters cover it and it stops at the walls of a hallway or corner (the sword slash and claw stay above the walls), no slash | `FIRE_MS` (`ui.fireMs`), `drawFire` |
 | Fire strike call-out | The explorer's bubble shouts "Fire Strike!" for 550 ms on the board as it was before the step (the enemies still standing), then the step lands and the blast plays; the shout holds the bubble through the first half of the blast | `FIRE_CALL_MS` (`ui.fireCallMs`), `FIRE_SHOUT`, `explorerShout` |
 | Strike diamonds | 800 ms (hold 50%, 2 pulses, fade) | `STRIKE_MS`, `STRIKE_HOLD` |

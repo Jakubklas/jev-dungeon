@@ -6,7 +6,8 @@
 // the measure-memory stub ('first': the first option of every question, which never fights) and with a fighting
 // executor, (b) generated dungeons, (c) hand-picked testbed brain scenarios (moods, tactics, props, coins,
 // characters, skills off, lives). Math.random (the option shuffle) is a seeded PRNG per scenario and fetch is a
-// throwing tripwire, so a scenario is reproducible and free.
+// throwing tripwire, so a scenario is reproducible and free. Its clock advances one second per
+// game turn, making Dash's real-time cooldown deterministic in the recorded requests.
 // Each request is hashed twice: `h` over the JSON with keys sorted (the contract) and `r` over the body as sent
 // (key order kept: the option order of every question is part of the request). `p` holds short hashes of the
 // depth-2 parts (state.self, questions.next_move, ...) so a mismatch can name the first differing key path.
@@ -55,7 +56,7 @@ const firstAsk = async ({ questions }) => Object.fromEntries(Object.entries(ques
 
 // 'fight': a fixed mood, a tactic preference list, skill = first non-none key (or none), moves read from the facts,
 // plus a seeded walk-in probability p (own stream). It reads the game only to find the nearest ghost for a walk-in.
-function fightAsk(game, { mood = 'bold', tactics = ['engage', 'run_away'], skill = true, p = 0, seed = 1 }) {
+export function fightAsk(game, { mood = 'bold', tactics = ['engage', 'run_away'], skill = true, p = 0, seed = 1 }) {
   const own = mulberry32(seed * 104729 + 17);
   let drawn = -1, walkIn = false;
   return async ({ questions, state }) => {
@@ -121,8 +122,10 @@ export async function playScenario(s, opts = {}, { keepBodies = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'jev-reqhash-'));
   const url = pathToFileURL(dir + '/');
   const real = Math.random;
+  const realNow = Date.now;
   Math.random = mulberry32(0x5eed ^ [...s.name].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7));
   const holder = {};
+  Date.now = () => 1_000_000 + (holder.game?.steps ?? 0) * 1000;
   const records = [];
   try {
     const decide = s.stub === 'first' ? firstAsk : clawDecide;
@@ -144,6 +147,7 @@ export async function playScenario(s, opts = {}, { keepBodies = false } = {}) {
     return { records, ticks, outcome: game.won ? 'won' : game.lost ? 'lost' : 'running' };
   } finally {
     Math.random = real;
+    Date.now = realNow;
     rmSync(dir, { recursive: true, force: true });
   }
 }

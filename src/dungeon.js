@@ -524,7 +524,7 @@ export function generateDungeon(seed = randomSeed()) {
         for (let x = r.x; x < r.x + r.w; x++) {
           const d = dist[y * width + x];
           if (d > 0 && d >= TREASURE_SHARE * maxD) pool.push([x, y]);
-          if (!spawnable && d >= SPAWN_STEPS && !(Math.hypot(x - start[0], y - start[1]) <= SIGHT_RANGE &&
+          if (!spawnable && d >= SPAWN_STEPS && !(Math.hypot(x - start[0], y - start[1]) <= startSight() &&
             hasLineOfSight({ width, height, tiles: grid }, start, [x, y]))) spawnable = true;
         }
       }
@@ -582,6 +582,13 @@ function lightAround(game, [cx, cy]) {
 // Real tiles: for adversary movement, never for explorer perception.
 export function isFloor(dungeon, [x, y]) {
   return inBounds(dungeon, [x, y]) && dungeon.tiles[y][x] === '.';
+}
+
+// How far the explorer sees from the start at step 0: an adversary is seen only on a lit cell, and
+// at step 0 only the start's light disc is lit. Spawn rules use it, so a sight range above the light
+// radius does not change any dungeon.
+export function startSight() {
+  return Math.min(SIGHT_RANGE, LIGHT_RADIUS);
 }
 
 // Supercover line between cell centres: every cell the segment touches, and both side cells
@@ -705,9 +712,11 @@ export class Game {
     return steps.length ? [...steps, STAY] : steps;
   }
 
-  // One step. Illegal moves (into a wall) and moves once the game is won or lost do nothing.
+  // One turn of movement. Dash may cross up to four consecutive floor cells in that turn;
+  // each crossed cell is visited, lit and collected, and a portal ends the move immediately.
   // STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
-  applyMove(dir) {
+  applyMove(dir, distance = 1) {
+    if (!Number.isInteger(distance) || distance < 1 || distance > 4) throw new RangeError('move distance must be 1..4');
     if (dir === STAY && !this.won && !this.lost) {
       this.steps++;
       const respawned = this.respawnHearts();
@@ -717,34 +726,43 @@ export class Game {
     if (this.won || this.lost || !this.legalMoves().includes(dir)) {
       return { moved: false, revealed: 0, revisit: false, won: this.won };
     }
-    const next = [this.pos[0] + DIRS[dir][0], this.pos[1] + DIRS[dir][1]];
-    const k = key(next);
-    const revisit = (this.visits[k] ?? 0) > 0;
-    this.visits[k] = (this.visits[k] ?? 0) + 1;
-    this.pos = next;
-    this.facing = dir;
     this.steps++;
-    this.trail.push([...next]);
-    const respawned = this.respawnHearts(); // before the pickup; one due on this very cell waits (respawnHearts)
-    const revealed = lightAround(this, next);
-    const here = this.coinPiles.filter((c) => same(c, next)).length;
-    if (here) {
-      this.coinPiles = this.coinPiles.filter((c) => !same(c, next)); // replace: twin() shares the old array
-      this.coins += here;
-    }
-    let healed = 0;
-    if (this.health < this.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
-      const taken = this.heartPiles.filter((c) => same(c, next));
-      this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
-      if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: this.steps + HEART_RESPAWN }))]; // replace: twin() shares the old array
-      this.heartAt = this.steps;
-      healed = round2(Math.min(this.maxHealth, this.health + 1) - this.health); // a fractional health never goes above max
-      this.health = round2(this.health + healed);
+    let revealed = 0, revisit = false, coins = 0, healed = 0, respawned = 0, travelled = 0;
+    this.facing = dir;
+    for (let i = 0; i < distance; i++) {
+      const next = [this.pos[0] + DIRS[dir][0], this.pos[1] + DIRS[dir][1]];
+      if (!isFloor(this.dungeon, next)) break;
+      const k = key(next);
+      revisit ||= (this.visits[k] ?? 0) > 0;
+      this.visits[k] = (this.visits[k] ?? 0) + 1;
+      this.pos = next;
+      this.trail.push([...next]);
+      travelled++;
+      if (i === 0) respawned = this.respawnHearts(); // before pickup, once per turn
+      revealed += lightAround(this, next);
+      const here = this.coinPiles.filter((c) => same(c, next)).length;
+      if (here) {
+        this.coinPiles = this.coinPiles.filter((c) => !same(c, next)); // replace: twin() shares the old array
+        this.coins += here;
+        coins += here;
+      }
+      if (this.health < this.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
+        const taken = this.heartPiles.filter((c) => same(c, next));
+        this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
+        if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: this.steps + HEART_RESPAWN }))];
+        this.heartAt = this.steps;
+        const gain = round2(Math.min(this.maxHealth, this.health + 1) - this.health);
+        this.health = round2(this.health + gain);
+        healed = round2(healed + gain);
+      }
+      if (this.dungeon.treasure && same(next, this.dungeon.treasure)) {
+        this.won = true;
+        this.winBy = 'chest';
+        break;
+      }
     }
     const regen = this.regenerate();
-    this.won = !!this.dungeon.treasure && same(next, this.dungeon.treasure); // testbed arenas may have no chest
-    if (this.won) this.winBy = 'chest';
-    return { moved: true, revealed, revisit, won: this.won, coins: here, healed, regen, respawned };
+    return { moved: true, revealed, revisit, won: this.won, coins, healed, regen, respawned, ...(distance > 1 ? { travelled } : {}) };
   }
 
   // Picked-up hearts whose time has come go back on their own cell. One due on the explorer's cell

@@ -60,7 +60,7 @@ export class KnownWorld {
   }
 
   // The explorer's own step.
-  move(dir) { return this.#game.applyMove(dir); }
+  move(dir, distance = 1) { return this.#game.applyMove(dir, distance); }
 
   // Uses the skill behind `key` of `skillSet`'s latest options() call, before the step: an attack turns to
   // its aim and strikes its cells, a block raises the stance until the next step. Returns the events
@@ -83,6 +83,8 @@ export class KnownWorld {
       events = resolveAttack(this.#game, EXPLORER, cells, skill.damage, { skill: skill.id, centre });
     } else if (skill.kind === 'block') {
       this.#game.block = { effectiveness: skill.effectiveness, until_step: this.#game.steps + 1 };
+    } else if (skill.kind === 'dash') {
+      // The brain applies the chosen movement direction after this skill is marked used.
     } else {
       return null;
     }

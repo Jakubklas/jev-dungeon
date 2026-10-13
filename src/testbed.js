@@ -2,7 +2,7 @@
 // cover, open space, corridors) without a whole procedurally generated dungeon around it.
 // Builds the same dungeon shape generateDungeon returns, plus the adversary list; turn.js
 // `newTestGame(config)` turns it into a game. No Jev calls here. See AGENTS.md "Testbed".
-import { DIRS, SIGHT_RANGE, hasLineOfSight, rng } from './dungeon.js';
+import { DIRS, hasLineOfSight, rng, startSight } from './dungeon.js';
 import { SOLID_KINDS, SMALL_KINDS, KINDS, FOOTPRINT_STANDIN, FORGE_SHAPES } from './props/catalog.js';
 import { Adversary } from './characters/adversary/adversary.js';
 import { PRESET_IDS, charactersFor } from './characters/adversary/character.js';
@@ -412,7 +412,7 @@ export function buildArena(rawConfig = {}) {
       return [...c];
     });
   } else {
-    const sees = (c) => Math.hypot(c[0] - start[0], c[1] - start[1]) <= SIGHT_RANGE &&
+    const sees = (c) => Math.hypot(c[0] - start[0], c[1] - start[1]) <= startSight() &&
       hasLineOfSight({ width, height, tiles }, start, c);
     const pool = [...dist].filter(([k, d]) => d >= cfg.minAdversaryGap)
       .map(([k]) => k.split(',').map(Number))

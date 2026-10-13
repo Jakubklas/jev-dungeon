@@ -29,8 +29,8 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.kinds.troll.speed` | 0.65 | 0.2..1 | next | no | A troll moves at this share of the ghost speed. |
 | `monsters.kinds.troll.stunTicks` | 0 | 0..6 | next | no | Ticks a sword hit stuns a troll (0 = it only loses hit points: no knockback, no lost step). |
 | `monsters.spawn.minSteps` | 20 | 1..60 | next | no | Path steps a monster spawns away from the explorer start |
-| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
-| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
+| `monsters.kinds.ghost.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills a ghost has (at most 4; empty = none) |
+| `monsters.kinds.troll.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills a troll has (at most 4; empty = none) |
 | `monsters.kinds.ghost.speed` | 1 | 0.2..1 | next | no | Share of the global monster speed (1 = full) |
 | `monsters.kinds.ghost.clawCooldown` | null | 0..6 | next | no | Ghost claw cooldown, steps (null = the global clawCooldown) |
 | `monsters.kinds.troll.clawCooldown` | null | 0..6 | next | no | Troll claw cooldown, steps (null = the global clawCooldown) |
@@ -59,6 +59,12 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.characters.lonerHearing` | 10 | 1..60 | next | no | A loner answers a call only when the explorer is this close, steps |
 | `monsters.brain.pingpongs` | 3 | 2..10 | live | no | Back-and-forth steps while searching before a monster re-picks its search approach |
 | `monsters.brain.skillNear` | 10 | 1..30 | live | no | A monster asks about a skill when the explorer is within this many cells |
+| `monsters.tabu.enabled` | true | on/off | live | no | Tabu: bounce cells and ping-ponged search approaches are left off a monster's request |
+| `monsters.tabu.bounceTenure` | 6 | 1..60 | live | no | Ticks the cell a monster's bounce returned to stays ruled out |
+| `monsters.tabu.loopWindow` | 12 | 4..40 | live | no | Steps a monster's loop rule looks back over |
+| `monsters.tabu.loopVisits` | 3 | 2..10 | live | no | Entries of one cell within the loop window that rule it out for a monster |
+| `monsters.tabu.loopTenure` | 8 | 1..60 | live | no | Ticks a looped-through cell stays ruled out for a monster |
+| `monsters.tabu.minMoves` | 2 | 1..4 | live | no | Fewest moves a monster's request lists after tabu alone |
 | `monsters.perception.sweepRadius` | 10 | 1..40 | live | no | Default sweep radius around the last sighting, steps (a character may override) |
 | `monsters.perception.cutMin` | 3 | 1..20 | live | no | Nearest cut-off candidate from the last sighting, steps |
 | `monsters.perception.cutMax` | 24 | 1..100 | live | no | Farthest cut-off candidate from the last sighting, steps (a character may override) |
@@ -119,13 +125,13 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.kinds.tree_giant.speed` | 0.5 | 0.1..2 | next | no | Tree giant movement share of explorer speed |
 | `monsters.kinds.tree_giant.stunTicks` | 0 | 0..6 | next | no | Tree giant stun ticks after a sword hit |
 | `monsters.kinds.tree_giant.clawCooldown` | 3 | 0..6 | next | no | Tree giant steps between attacks |
-| `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
+| `monsters.kinds.tree_giant.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Tree giant skills (at most 4; empty = none) |
 | `monsters.kinds.wolf.hp` | 3 | 1..20 | next | no | Wolf base hp before level scaling |
 | `monsters.kinds.wolf.clawDamage` | 1 | 1..6 | next | no | Wolf base attack damage before level scaling |
 | `monsters.kinds.wolf.speed` | 2 | 0.1..3 | next | no | Wolf movement share of explorer speed |
 | `monsters.kinds.wolf.stunTicks` | 1 | 0..6 | next | no | Wolf stun ticks after a sword hit |
 | `monsters.kinds.wolf.clawCooldown` | 1 | 0..6 | next | no | Wolf steps between attacks |
-| `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |
+| `monsters.kinds.wolf.skills` | ["claw_strike"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Wolf skills (at most 4; empty = none) |
 | `monsters.kinds.ghost.weight` | 0.75 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds (wolves match ghost weight, tree giants use half troll weight) |
 | `monsters.kinds.troll.weight` | 0.25 | number >= 0 (relative) | next | no | Spawn weight, relative to the other kinds |
 | `monsters.characters.mix` | "mixed" | "mixed" / "standard" / weights | next | no | Character mix of spawned monsters |
@@ -137,7 +143,7 @@ Dungeon layout, light, coins and hearts. Developer only.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
-| `world.sightRange` | 7 | 3..12 | live | no | How far anyone sees along a clear line (explorer and monsters) |
+| `world.sightRange` | 7 | 3..30 | live | no | How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters) |
 | `world.coins.floorPerCoin` | 60 | 10..1000 | next | no | Floor cells per coin: lower = more coins |
 | `world.coins.max` | 30 | 0..100 | next | no | Coins lying around at the start (0 = none) |
 | `world.hearts.roomsPerHeart` | 4 | 1..20 | next | no | One heart (restores a life) per this many rooms |
@@ -217,7 +223,7 @@ The knight: lives and protection after a hit.
 | `explorer.regen.steps` | 30 | 0..200 | live | no | Steps between natural heals of a hurt explorer (0 = no regen) |
 | `explorer.regen.amount` | 0.5 | 0..3 | live | no | Lives healed per natural heal (fractions allowed, up to max lives) |
 | `explorer.progress.redirect` | true | on/off | next | no | true = a sustained retreat is redirected to the deepest known frontier; false = tracked only |
-| `explorer.skills` | ["sword_strike","shield_block","fire_strike"] | list of sword_strike, shield_block, fire_strike, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
+| `explorer.skills` | ["sword_strike","shield_block","fire_strike","dash"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
 | `explorer.brain.reviewEvery` | 8 | 1..50 | live | no | Steps between approach reviews |
 | `explorer.brain.approachFailing` | 0.5 | 0..1 | live | no | approach_working below this switches the approach |
 | `explorer.brain.redecideCooldown` | 3 | 1..20 | live | no | Least ticks between decisions for a failing tactic |
@@ -236,6 +242,24 @@ The knight: lives and protection after a hit.
 | `explorer.brain.directiveDone` | 0.5 | 0..1 | live | no | directive_done above this ends the player directive |
 | `explorer.brain.directiveAskEvery` | 5 | 1..50 | live | no | Steps between directive_done questions |
 | `explorer.brain.leaveNow` | 0.5 | 0..1 | live | no | leave_now above this switches to go_to_exit |
+| `explorer.tabu.enabled` | true | on/off | live | no | Tabu: options that kept failing are left off the explorer's menus |
+| `explorer.tabu.tactics` | true | on/off | live | no | Tabu at the tactic level (needs explorer.tabu.enabled) |
+| `explorer.tabu.tacticStrikes` | 2 | 1..10 | live | no | Re-decisions with no gain that rule a tactic out for the encounter |
+| `explorer.tabu.retreatTicks` | 12 | 2..60 | live | no | Ticks of run_away or hide with no gain that rule it out |
+| `explorer.tabu.engageHits` | 2 | 1..10 | live | no | Hits taken under engage with no strike landed that rule it out |
+| `explorer.tabu.pingpongTenure` | 8 | 1..60 | live | no | Steps a tactic stays ruled out after it ping-ponged |
+| `explorer.tabu.moods` | true | on/off | live | no | Tabu at the mood level (needs explorer.tabu.enabled) |
+| `explorer.tabu.moodStrikes` | 2 | 1..10 | live | no | No-gain re-decisions (or failed reviews) that rule a mood out |
+| `explorer.tabu.moodTenure` | 10 | 1..60 | live | no | Fewest steps a mood stays ruled out after an encounter rule-out |
+| `explorer.tabu.moodReviewTenure` | 20 | 1..120 | live | no | Steps a mood stays ruled out after failed approach reviews |
+| `explorer.tabu.moves` | true | on/off | live | no | Tabu at the move level (needs explorer.tabu.enabled) |
+| `explorer.tabu.bounceTenure` | 6 | 1..60 | live | no | Steps the cell a bounce returned to stays ruled out |
+| `explorer.tabu.loopWindow` | 12 | 4..60 | live | no | Steps scanned for a cell entered again and again |
+| `explorer.tabu.loopVisits` | 3 | 2..20 | live | no | Entries of one cell in that window that rule it out |
+| `explorer.tabu.loopTenure` | 8 | 1..60 | live | no | Steps a looped cell stays ruled out |
+| `explorer.tabu.stayRun` | 3 | 2..20 | live | no | Ticks of stay in a row (hold ticks excepted) that rule stay out |
+| `explorer.tabu.stayTenure` | 4 | 1..60 | live | no | Steps stay stays ruled out |
+| `explorer.tabu.minMoves` | 2 | 1..5 | live | no | Fewest moves a request lists after tabu alone |
 | `explorer.brain.cornerMode` | "off" | off / urgent / ascii / route / full | live | no | Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both) |
 | `explorer.perception.sightingNear` | 8 | 1..30 | live | no | A move within this many steps of a sighting counts as toward it |
 | `explorer.perception.zoneSteps` | 6 | 1..30 | live | no | Avoid-zone radius around an older sighting, steps |
@@ -379,7 +403,7 @@ The knight: lives and protection after a hit.
 
 ## skills
 
-Sword, shield and the stun they cause.
+Explorer and monster combat skills, plus the explorer's Dash.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
@@ -390,6 +414,7 @@ Sword, shield and the stun they cause.
 | `skills.stunTicks` | 2 | 0..6 | next | no | Ticks a struck monster loses (no move, no Jev call) |
 | `skills.fire_strike.damage` | 2 | 1..5 | next | no | Hit points the fire strike takes from every enemy in its 9x9 area |
 | `skills.fire_strike.cooldown` | 120 | 0..1000 | next | no | Steps before the fire strike is ready again |
+| `skills.dash.cooldown` | 20 | 0..300 | next | no | Seconds before Dash is ready again |
 | `skills.minProbability` | 0.5 | 0.1..1 | next | no | Jev must be at least this sure to use a skill |
 | `skills.questionText.default.question` | (built-in wording) | text, up to 300 chars | live | no | Skill question lead for monsters |
 | `skills.questionText.default.none` | (built-in wording) | text, up to 300 chars | live | no | Skill question "none" option for monsters |

@@ -7,6 +7,7 @@
 import { PLACEMENTS, man, openGroups, playDuel } from './lib/duel-harness.mjs';
 import { multiGrid } from './measure-outnumbered.mjs';
 import { configureLevels } from '../src/characters/adversary/kinds.js';
+import { configureExplorerBrain, explorerBrainSnapshot } from '../src/characters/explorer/brain.js';
 // Levels off on purpose: section 10 derives a 2-life run from a 9-life run, which assumes play does not depend on lives. With levels on,
 // the explorer stops engaging once one claw would kill it (matchup), so the premise fails by design. Level play is in check-levels.mjs.
 configureLevels({ levelsEnabled: false });
@@ -169,6 +170,11 @@ for (const r of today) {
 // 10. Low-health execution may now hold a lethal walk-in, and natural regen can restore fractional
 // lives. Measure real loss instead of assuming a health-9 trace is identical at two lives.
 {
+  // The scripted policies wait (stay) while nothing is in sight, which the move tabu (PLAN-tabu M3) reads as a stall and answers
+  // by sending the knight wandering; the two traces compared here (2 lives vs 9) then differ by that wander, not by the lethal guard
+  // this section measures. The 24 placements above run with the move level on and still show 0 claws.
+  const TABU = explorerBrainSnapshot();
+  configureExplorerBrain({ ...TABU, tabuMoves: false });
   const groups = [];
   for (const n of [0, 1, 2, 3]) for (const [i, g] of openGroups(3, n, 'pairfront').entries()) if (i % 2 === 0) groups.push(g);
   let n = 0, realDeaths = 0;
@@ -182,6 +188,7 @@ for (const r of today) {
   }
   check(n === 20, `health 2 spot check: 20 runs (got ${n})`);
   check(realDeaths >= 1, `health 2 spot check: actual losses remain covered (got ${realDeaths})`);
+  configureExplorerBrain(TABU);
   for (const g of groups.slice(0, 10)) {
     const r = await playDuel({ ghosts: g, ghostHp: 3, policy: 'walk-in', hold: 'multi', health: 2, maxTicks: 90 });
     check(!r.lost && r.dispelled === 3, `multi hold, really at 2 lives, ${JSON.stringify(g)}: alive and all dispelled (lost ${r.lost}, dispelled ${r.dispelled})`);
