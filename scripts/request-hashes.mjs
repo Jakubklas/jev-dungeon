@@ -55,7 +55,7 @@ const firstAsk = async ({ questions }) => Object.fromEntries(Object.entries(ques
 
 // 'fight': a fixed mood, a tactic preference list, skill = first non-none key (or none), moves read from the facts,
 // plus a seeded walk-in probability p (own stream). It reads the game only to find the nearest ghost for a walk-in.
-function fightAsk(game, { mood = 'bold', tactics = ['engage', 'run_away'], skill = true, p = 0, seed = 1 }) {
+export function fightAsk(game, { mood = 'bold', tactics = ['engage', 'run_away'], skill = true, p = 0, seed = 1 }) {
   const own = mulberry32(seed * 104729 + 17);
   let drawn = -1, walkIn = false;
   return async ({ questions, state }) => {

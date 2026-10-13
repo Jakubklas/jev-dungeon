@@ -1,6 +1,6 @@
 # PLAN-tabu: hard exclusion of options that keep failing
 
-A plan, not documentation of the code. **Phases 0, 1, 2, 3, 4 and 5 are built** (see Status at the end and AGENTS.md "Tabu"); phase 6 is open. Phases need the user's approval
+A plan, not documentation of the code. **Phases 0, 1, 2, 3, 4 and 5 are built** (see Status at the end and AGENTS.md "Tabu"); phase 6 (measurement script) is built, its live comparison is open. Phases need the user's approval
 (AGENTS.md rule 9: `explorer/brain.js` and `adversary/brain.js` belong to other agents).
 
 ## Goal
@@ -307,6 +307,42 @@ strikes / dispels / hits / deaths, portal wins, Jev calls per tick (it should dr
 choices forced), request bytes. The stubs need a "stubborn" mode that repeats its last answer, since a
 stub that already varies never stalls. A live comparison (`--live`, paid) only when the user asks for it.
 
+### Free results (stubbed Jev, `node scripts/measure-tabu.mjs`, 20 dungeon seeds, 5 reps per arena, about 50 s)
+
+`off` = both tabu toggles off, `on` = the default. Per game averages unless noted; same dice in both arms. Monsters use the duel harness's claw stub.
+
+```
+group        stub      arm    n   b&f   rep encLen  strk  disp  hits dead portal clear call/t   expB   monB  tbT/M/Mv   fMv  mMv/fA
+closed-room  stubborn  off    5   1.0   9.0   34.0   0.0   0.0   4.4    5      0     0   1.71   4615   3727 0.0/0.0/0.0   0.0 0.0/0.0
+closed-room  stubborn  on     5   2.6   5.2   80.0   0.0   0.0   3.6    0      0     0   1.67   4992   3710 8.8/5.4/13.8   0.0 2.6/0.0
+dead-end     stubborn  off    5   0.0  10.0   33.8   0.0   0.0   4.6    5      0     0   1.70   4362   3261 0.0/0.0/0.0   0.0 0.0/0.0
+dead-end     stubborn  on     5   0.2   9.2   33.8   0.0   0.0   4.6    5      0     0   1.72   4364   3261 1.6/0.0/0.0   0.0 0.0/0.0
+two-ghosts   stubborn  off    5   1.4  10.2   42.2   0.0   0.0   4.8    5      0     0   2.29   5204   3735 0.0/0.0/0.0   0.0 0.0/0.0
+two-ghosts   stubborn  on     5   2.0   5.2   69.8   0.0   0.0   4.4    3      0     0   2.26   5613   3744 8.6/6.6/10.0   0.0 4.2/0.0
+fixtures     stubborn  off   30   0.4  10.0   29.3   0.0   0.0   3.7   23      0     0   1.67   4368   3998 0.0/0.0/0.0   0.0 0.0/0.0
+fixtures     stubborn  on    30   1.7   4.9   39.7   0.0   0.0   3.4   13      1     0   1.79   4802   4074 3.6/1.7/7.2   0.0 1.6/0.0
+dungeons     stubborn  off   20   1.2  10.9   15.1   0.0   0.0   2.6   12      0     0   1.31   3953   4423 0.0/0.0/0.0   0.0 0.0/0.0
+dungeons     stubborn  on     20   3.8   7.2   22.7   0.0   0.0   3.5   13      0     0   1.61   4472   4523 1.8/0.4/15.8   0.0 7.2/0.1
+TOTAL        stubborn  off   65   0.7  10.2   26.3   0.0   0.0   3.6   50      0     0   1.52   4221   4033
+TOTAL        stubborn  on    65   2.3   6.0   38.3   0.0   0.0   3.6   34      1     0   1.74   4727   4134
+TOTAL        fight     off   65   6.2   4.0    8.1   4.7   2.1   0.4    2      0    33   1.35   4181   4550
+TOTAL        fight     on    65   3.8   3.8    8.3   4.7   2.1   0.4    1      2    33   1.35   4201   4559
+```
+
+(The `fight` rows of the arena groups are identical on and off: that stub never stalls, so tabu never fires there; the full table is the script's output. Columns: see the script header.)
+
+Reading it, without more claims than the numbers carry:
+- With the stalling stub tabu cuts the longest repeated-cell run (10.2 to 6.0 entries in 12 steps) and the deaths (50 to 34 of 65 games); in the closed-room shuttle none of 5 games ends in death against 5 of 5.
+- Back-and-forth *rises* with the stubborn stub (0.7 to 2.3 per game): a stub that repeats its last answer takes the one cell tabu leaves it, then steps back, so M1/M2 turn a long shuttle into short bounces. The repeated-cell run and the deaths are the better measure of the stall here.
+- Jev calls per tick do **not** drop (1.52 to 1.74 with the stubborn stub, 1.35 both with `fight`): a rule-out does not force a call away unless one option is left, and `minMoves` 2 plus the never-empty rules keep two (forced moves: 0 in every group). The promise in the plan ("tabu makes some choices forced, so calls should drop") does not hold with these defaults. Part of the rise is that longer encounters (80 vs 34 ticks in the closed room) are more ticks with a ghost in sight.
+- Request bytes rise about 12 percent for the explorer with the stubborn stub (4221 to 4727 B; not traced further); with `fight` they are within 1 percent.
+- The `fight` stub (strikes and dispels as before: 4.7 and 2.1 per game both arms; hits 0.4 both) shows no regression in fights; fixtures: back-and-forth 7.1 to 4.0 on the 30 fixture games.
+- Monster tabu: with the claw stub it fires in both stub sets (ticks with a dropped monster move per game: 3.5 stubborn, 1.4 `fight`, 4.4 in the dungeons with `fight`); forced search approaches are rare (0.1 to 0.9 per game). With `--monsters stubborn` (stubborn explorer, 130 games, 23 s): explorer deaths 26 to 11 of 65, repeated-cell run 11.5 to 6.7.
+
+### Live comparison
+
+(To be filled in after a paid `--live` run.)
+
 ## Risks
 
 - **Over-exclusion makes things worse.** Removing the safe option in a genuinely bad spot. The
@@ -320,7 +356,7 @@ stub that already varies never stalls. A live comparison (`--live`, paid) only w
 
 ## Status
 
-**Built: phases 0, 1 and 2** (branch `feat/tabu-search`).
+**Built: phases 0 to 6** (phase 6: measurement script only; the live comparison is open; branch `feat/tabu-search`).
 
 - Phase 0: `src/characters/shared/tabu.js` (also exports `entryOf`), `scripts/check-tabu.mjs` section 1, both fog-guard
   allowlists, six registry rows (`explorer.tabu.enabled`, `.tactics`, `.tacticStrikes`, `.retreatTicks`, `.engageHits`,
@@ -383,3 +419,4 @@ stub that already varies never stalls. A live comparison (`--live`, paid) only w
   - Request hashes: eight non-dungeon scenarios change (`fixture:{charline,duel,home,open,pack,skills}:first`, `no-explorer-skills`, `no-skill-answers`; the explorer's request differs where a monster that used to ping-pong now takes another route); each matches the fixture with `advTabuEnabled: false`. Re-recorded (only those eight) in their own commit; two of them differ only in option order, because a monster request with fewer options draws `Math.random` fewer times. `dungeon:1-4,6` are the old stale ones.
   - Chase not weakened (review): `measure-memory --who adversary --accept --seeds 16 --ticks 250` (stubbed, wandering explorer) gives full-map hits 81 off / 80 on, limited-map 77 / 76.
   - Size: `measure-memory --who adversary` (avg 4.3 KB / max 6.5 KB on the pack fixture) and `--morale on` (avg 4.7 / max 6.4 KB) pass their asserts.
+- Phase 6 (measurement): `scripts/measure-tabu.mjs` (free by default, `--live` needs `--games N`), results above under Measurement. `scripts/request-hashes.mjs` now exports `fightAsk` (no behaviour change, fixture untouched).
