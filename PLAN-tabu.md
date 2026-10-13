@@ -341,7 +341,21 @@ Reading it, without more claims than the numbers carry:
 
 ### Live comparison
 
-(To be filled in after a paid `--live` run.)
+Paid run, 2026-10-13, real Jev for the explorer and the monsters, `JEV_CONFIG=none` (code defaults), 16 games in
+adjacent off/on pairs, at most 80 ticks each (248 ticks, 321 explorer + monster requests in all):
+
+| scenario | games (off / on) | ticks per game | outcome | strikes / dispels / hits | calls per tick | tabu fired |
+| --- | --- | --- | --- | --- | --- | --- |
+| closed room (12x5, 1 ghost) | 3 / 3 | 5 | all cleared | 2 / 1 / 0 | 1.60 / 1.60 | never |
+| two-ghost room (13x5) | 3 / 3 | 7 | all cleared | 3 / 2 / 0 | 1.71 / 1.71 | never |
+| `fixture:door` | 2 / 2 | 39-48 | all through the portal | 2 / 1 / 0 | 1.15 / 1.13 | never |
+
+The real Jev did not stall in any of them. It picked `engage`, held, struck first and cleared both rooms, with no
+back-and-forth (b&f 0 in every game). The off and on room games agree on every metric; the door games differ by up to two
+ticks (Jev's answers vary slightly between calls). Tabu is a safety net for stalls these arenas don't produce live; the
+stubbed runs above are where it acts. Nothing here argues for retuning a number, so the starting values stay. A live
+stall measurement needs arenas that make Jev hesitate (low confidence, a `too_strong` monster, several chasers in a
+corridor); that was not run.
 
 ## Risks
 
