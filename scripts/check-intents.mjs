@@ -72,6 +72,9 @@ function fingerprint(game) {
   });
 }
 
+// apiMs is wall-clock time: it differs between two runs under load, so the comparison leaves it out.
+const noTiming = (k, v) => (k === 'apiMs' ? undefined : v);
+
 // ---- 1. decide() leaves the Game byte-identical; takeTurn == decide + apply + save over 30 ticks ----
 async function lockstep(ticks, mk) {
   seedRandom(7);
@@ -96,8 +99,8 @@ async function lockstep(ticks, mk) {
     await b.explorer.save();
     out.reqB.push(b.explorer.lastRequests());
     out.evB.push(JSON.stringify((await stepAdversaries(b.game, { decide })).events));
-    out.turnsA.push(JSON.stringify(turnA));
-    out.turnsB.push(JSON.stringify(turnB));
+    out.turnsA.push(JSON.stringify(turnA, noTiming));
+    out.turnsB.push(JSON.stringify(turnB, noTiming));
     if (turnB.skill_decision?.used) out.strikes++;
     if (turnB.stale) out.stale++;
     if (fingerprint(a.game) !== fingerprint(b.game)) out.fp = 'diverged';
