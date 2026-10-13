@@ -11,7 +11,7 @@
 export const CATEGORIES = {
   world: { userSetting: false, doc: 'Dungeon layout, light, coins and hearts. Developer only.' },
   explorer: { userSetting: false, doc: 'The knight: lives and protection after a hit.' },
-  skills: { userSetting: false, doc: 'Sword, shield and the stun they cause.' },
+  skills: { userSetting: false, doc: 'Explorer and monster combat skills, plus the explorer\'s Dash.' },
   monsters: { userSetting: false, doc: 'Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.' },
   player: { userSetting: true, doc: 'Directives the player may whisper to the explorer.' },
   limits: { userSetting: false, doc: 'Memory and prompt-size limits.' },

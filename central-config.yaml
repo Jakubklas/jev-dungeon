@@ -345,7 +345,7 @@ explorer:
     # The one sentence that says what self.confidence means (the built-in wording; edit to change it, delete to restore)
     confidenceSentence: " `self.confidence` weighs your lives, sword and the enemies you know against how your fights went; it decides which moods are offered."
 
-# Sword, shield and the stun they cause.
+# Explorer and monster combat skills, plus the explorer's Dash.
 skills:
   sword_strike:
     damage: 1 # Hit points a sword strike takes

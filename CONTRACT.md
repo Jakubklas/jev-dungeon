@@ -268,7 +268,7 @@ The explorer carries sword strike, shield block, fire strike and Dash; each ghos
 export class Skill {                              // skill.js. One stateful instance per character per skill.
   static kind = 'skill'
   constructor({ id, name, source = '', text = '', cooldown = 0 })  // id snake_case and not 'none'; cooldown a whole number >= 0
-  id, name, source /* 'sword'|'shield'|'claw' */, text, cooldown
+  id, name, source /* 'sword'|'shield'|'claw'|'fire'|'boots' */, text, cooldown
   get kind, ready, cooldownLeft, uses, lastUsedStep
   markUsed(step), turnPassed()                    // use starts the cooldown; the owner's turn end counts it down
   options(view, self)                             // -> [{ key, fact, target }]; base offers nothing. Reads only its arguments (fog).

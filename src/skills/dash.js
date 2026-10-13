@@ -26,11 +26,16 @@ export class DashSkill extends Skill {
 
   turnPassed() {} // seconds elapse even while the game is paused
 
+  summary() {
+    const left = this.cooldownLeft;
+    return { ...super.summary(), ready: left === 0, cooldown_left: left };
+  }
+
   options(view, self) { // eslint-disable-line no-unused-vars
     if (!this.ready || !self?.availableMoves?.some((dir) => dir !== 'stay')) return [];
     return [{
       key: this.id,
-      fact: `Move up to ${this.distance} cells along next_move; stop at a wall or portal. Flee immediate danger, chase a target now, or explore faster. Cooldown ${this.cooldown} s.`,
+      fact: `Dash up to ${this.distance} cells via next_move. Stops at walls. Flee danger, chase targets, explore fast. ${this.cooldown}s cooldown.`,
       target: null,
     }];
   }

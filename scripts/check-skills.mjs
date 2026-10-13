@@ -639,7 +639,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
   now += 19_001;
   check(!dash.ready && dash.cooldownLeft === 1, 'dash remains unavailable before 20 seconds');
   now += 999;
-  check(dash.ready && dash.cooldownLeft === 0 && dash.options({}, self).length === 1, 'dash returns exactly at 20 seconds');
+  check(dash.ready && dash.cooldownLeft === 0 && dash.summary().cooldown_left === 0 && dash.options({}, self).length === 1, 'dash returns exactly at 20 seconds');
 
   const g = arena(['#############', '#...........#', '#.@.........#', '#...........#', '#############']);
   g.coinPiles = [[3, 2], [5, 2]];
@@ -664,7 +664,7 @@ const ghostAt = (g, id, pos) => { const a = g.adversaries.find((x) => x.id === i
     const run = newTestGame({ map: ['#############', '#...........#', '#.@.........#', '#...........#', '#############'], explorerSkills: ['dash'], seed: 7 },
       { ask, decide: ask, memoryDir: url, dir: url });
     const turn = await run.playTurn();
-    check(question && 'dash' in question.criteria && /Flee immediate danger/.test(question.criteria.dash) && /chase a target now/.test(question.criteria.dash) && /explore/.test(question.criteria.dash), 'Jev sees when and how to use Dash');
+    check(question && 'dash' in question.criteria && /Flee danger/.test(question.criteria.dash) && /chase targets/.test(question.criteria.dash) && /explore/.test(question.criteria.dash), 'Jev sees when and how to use Dash');
     check(turn.skill_decision?.used === 'dash' && run.game.steps === 1 && eq(run.game.pos, [6, 2]), 'brain uses Dash with its chosen move');
     check(run.explorer.memory.skills[0].kind === 'dash' && !run.explorer.memory.skills[0].ready, 'Dash cooldown is mirrored in memory');
   } finally { rmSync(dirR, { recursive: true, force: true }); }

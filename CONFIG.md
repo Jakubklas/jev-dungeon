@@ -403,7 +403,7 @@ The knight: lives and protection after a hit.
 
 ## skills
 
-Sword, shield and the stun they cause.
+Explorer and monster combat skills, plus the explorer's Dash.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |

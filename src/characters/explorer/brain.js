@@ -999,7 +999,7 @@ export class ExplorerBrain {
       };
       if (!skip) {
         for (const id of tacticIds) {
-          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions && !('dash' in skillOptions), decisionTargets[id], moves);
+          const q = this.#moveQuestion(id, sit, profile, true, hasSkillOptions && !('dash' in skillOptions), decisionTargets[id], moves, 'dash' in skillOptions);
           questions[`move_if_${id}`] = q.question;
           moveOptions[id] = q.options;
           // engage judges moves without the minimum gap; the shared facts keep the mood's gap warnings.
@@ -1399,7 +1399,7 @@ export class ExplorerBrain {
   }
 
   // moves: the tick's move list after the tabu filter (null = every available move).
-  #moveQuestion(approachId, sit, profile, speculative, skillLine = false, targetOverride = null, moves = null) {
+  #moveQuestion(approachId, sit, profile, speculative, skillLine = false, targetOverride = null, moves = null, dashReady = false) {
     const world = this.#world;
     const memory = this.#memory;
     const gap = approachId === 'engage' ? 1 : profile.min_gap;
@@ -1457,7 +1457,7 @@ export class ExplorerBrain {
           ...(sit.threats.remembered.length ? ['Do not head toward where an enemy was last seen (`threats.remembered`) unless the directive needs it.'] : []),
         ]
       : speculative
-      ? [...cornerLines, ...(portalSeen ? [portalLine] : []), ...safety, ...(engaging || cornered ? [] : [profile.move_priority])]
+      ? [...cornerLines, ...(portalSeen ? [portalLine] : []), ...safety, ...(engaging || cornered || dashReady ? [] : [profile.move_priority])]
       : engaging ? [
           // engage: the hint in `safety` is the whole plan. The mood's lines ("moving toward one is fine"), "stay makes no
           // progress" and "reveal new cells" would talk the explorer off the holding cell (P7a).
