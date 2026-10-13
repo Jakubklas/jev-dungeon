@@ -113,6 +113,8 @@ for (const k of R.KNOBS) {
 
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
+  roomCapacity: (await import('../src/service/lobby.js')).DEFAULTS.capacity,
+  keyRetryMs: (await import('../src/service/lobby.js')).DEFAULTS.keyRetryMs,
   regenSteps: D.REGEN_STEPS, helpReachSteps: D.HELP_REACH_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN, stepMs: D.STEP_MS, cadenceMs: D.CADENCE_MS,
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
   layout: D.LAYOUT,

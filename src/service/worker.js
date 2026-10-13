@@ -41,6 +41,7 @@ export class WorkerHost {
   #actors = new Map();
   #keys = new Map();
   #revision;
+  #rules;
 
   constructor({ root, revision, rules, serverKey = null, emit = () => {}, fetchImpl = null } = {}) {
     this.#store = new FileStore(root);
@@ -48,11 +49,14 @@ export class WorkerHost {
     this.#emit = emit;
     this.#fetchImpl = fetchImpl;
     this.#revision = revision;
+    this.#rules = rules;
     applyRulesSnapshot(rules);
   }
 
   #gateway(id) {
     return new Gateway({ serverKey: () => this.#serverKey, recorder: new CallsRecorder(this.#store, id),
+      timeoutMs: this.#rules.jevTimeoutMs, retries: this.#rules.jevRetries,
+      retryStatus: this.#rules.jevRetryStatus, model: this.#rules.jevModel,
       ...(this.#fetchImpl ? { fetchImpl: this.#fetchImpl } : {}) });
   }
 
@@ -67,10 +71,14 @@ export class WorkerHost {
 
   #hooks(id) {
     return {
-      onEvent: (record, metrics) => this.#emit({ type: 'record', id, record, metrics }),
-      onKeyRejected: (participantId) => this.#emit({ type: 'key_rejected', id, participantId }),
+      onEvent: (record, metrics) => this.#emit({ type: 'record', id, record, metrics,
+        participants: this.#actors.get(id)?.game.explorers.map((e) => ({ id: e.id, status: e.status })) ?? [] }),
+      onKeyRejected: (participantId) => {
+        this.#keys.get(id)?.delete(participantId);
+        this.#emit({ type: 'key_rejected', id, participantId });
+      },
       onServerKeyRejected: () => this.#emit({ type: 'server_key_rejected', id }),
-      onFinished: (outcome) => this.#emit({ type: 'finished', id, outcome }),
+      onFinished: (outcome) => { this.#keys.delete(id); this.#emit({ type: 'finished', id, outcome }); },
       onError: (error) => this.#emit({ type: 'error', id, message: String(error?.message ?? error) }),
     };
   }
@@ -119,17 +127,21 @@ export class WorkerHost {
     if (!actor) throw new Error('game is not loaded');
     if (op === 'pause') return { changed: await actor.pause('host') };
     if (op === 'resume') return { changed: await actor.resume() };
-    if (op === 'stop') { await actor.stop(); return { changed: true }; }
-    if (op === 'forfeit') return { changed: await actor.forfeitExplorer(participantId) };
+    if (op === 'stop') { await actor.stop(); this.#keys.delete(id); return { changed: true }; }
+    if (op === 'forfeit') {
+      this.#keys.get(id)?.delete(participantId);
+      return { changed: await actor.forfeitExplorer(participantId) };
+    }
     if (op === 'directive') {
       const directive = await actor.enqueue(() => {
-        const value = actor.brain(participantId).setDirective(text);
+        const value = actor.brain(participantId).setDirective(text, { steps: this.#rules.injectSteps });
         actor.record('directive', { actor: participantId, text: value?.text ?? null });
         return value;
       });
       return { directive, queued: false };
     }
     if (op === 'view') {
+      if (reveal) await actor.enqueue(() => actor.record('host_reveal', { lifecycle: true }));
       const restoredLobby = Lobby.restore(lobby);
       const brains = new Map(restoredLobby.participants.filter((p) => p.slot !== null).map((p) => [p.participantId, actor.brain(p.participantId)]));
       return projectGame({ game: actor.game, brains, lobby: restoredLobby, id, mode,

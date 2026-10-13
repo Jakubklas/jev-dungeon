@@ -158,7 +158,11 @@ export class HostedService {
   }
 
   async #worker(revision) {
-    if (this.#workers.has(revision)) return this.#workers.get(revision);
+    if (this.#workers.has(revision)) {
+      const worker = this.#workers.get(revision);
+      await worker.ready;
+      return worker;
+    }
     const snapshot = this.#store.readRevision(revision);
     if (!snapshot) throw new Error(`missing rules revision ${revision}`);
     const worker = new WorkerClient({ revision, rules: snapshot.values, root: this.#store.root,
@@ -180,7 +184,8 @@ export class HostedService {
       const meta = saved.meta;
       const lobby = Lobby.restore(meta.lobby);
       const g = { id, mode: meta.mode, rulesRevision: meta.rulesRevision, seed: meta.seed,
-        lobby, ranking: meta.ranking, directiveAt: new Map() };
+        lobby, rules: saved.rules?.rules ?? this.#store.readRevision(meta.rulesRevision)?.values,
+        ranking: meta.ranking, directiveAt: new Map() };
       this.#games.set(id, g);
       if (saved.state) {
         const changed = lobby.restoreAfterRestart().changed;
@@ -199,14 +204,15 @@ export class HostedService {
         this.#runtimeMetrics.actor_queue_delay_ms, e.record.applied_at - e.record.completed_at);
       if (Number.isFinite(e.metrics?.event_write_ms)) this.#runtimeMetrics.event_write_delay_ms = Math.max(
         this.#runtimeMetrics.event_write_delay_ms, e.metrics.event_write_ms);
-      if (e.record.type === 'explorer_turn' && e.record.health === 0) {
-        const p = g.lobby.participant(e.record.actor);
+      let rosterChanged = false;
+      for (const state of e.participants ?? []) {
+        const p = g.lobby.participant(state.id);
         if (p && (p.state === 'active' || p.state === 'awaiting_key')) {
-          g.lobby.died(p.participantId);
-          this.#saveMeta(g);
-          this.#broadcastLobby(g);
+          if (state.status === 'dead') { g.lobby.died(p.participantId); rosterChanged = true; }
+          if (state.status === 'forfeited') { g.lobby.forfeit(p.participantId); rosterChanged = true; }
         }
       }
+      if (rosterChanged) { this.#saveMeta(g); this.#broadcastLobby(g); }
       this.#broadcast(g, 'event', e.record.seq, this.#publicEvent(e.record));
       this.#broadcastViews(g);
     } else if (e.type === 'key_rejected') {
@@ -265,10 +271,13 @@ export class HostedService {
     if (!p?.keyDeadline) return;
     const timer = setTimeout(async () => {
       this.#keyTimers.delete(tag);
-      if (!g.lobby.tick().includes(participantId)) return;
-      await this.#call(g, 'forfeit', { participantId });
-      this.#saveMeta(g);
-      this.#broadcastLobby(g);
+      const expired = g.lobby.tick();
+      if (!expired.length) return;
+      try {
+        for (const expiredId of expired) await this.#call(g, 'forfeit', { participantId: expiredId });
+        this.#saveMeta(g);
+        this.#broadcastLobby(g);
+      } catch (error) { this.#logger.error('key expiry failed', { game: g.id, message: error.message }); }
     }, Math.max(0, p.keyDeadline - Date.now()));
     timer.unref?.();
     this.#keyTimers.set(tag, timer);
@@ -375,7 +384,7 @@ export class HostedService {
       const lobby = new Lobby({ id, mode: body.mode, capacity: rules.roomCapacity ?? 4,
         keyRetryMs: rules.keyRetryMs ?? 120000 });
       this.#ok(lobby.join({ participantId, name: name.name, keyPresent: true }));
-      const g = { id, mode: body.mode, rulesRevision, seed: Math.floor(Math.random() * 2 ** 32),
+      const g = { id, mode: body.mode, rulesRevision, rules, seed: Math.floor(Math.random() * 2 ** 32),
         lobby, ranking: null, directiveAt: new Map() };
       this.#games.set(id, g);
       this.#saveMeta(g);
@@ -421,6 +430,11 @@ export class HostedService {
       this.#ok(g.lobby.keyRestored(p.participantId));
       await this.#call(g, 'set_key', { participantId: p.participantId, key: body.key });
       clearTimeout(this.#keyTimers.get(`${id}:${p.participantId}`));
+      if (g.lobby.status === 'paused' && g.lobby.pauseReason === 'keys_needed' && g.lobby.allKeysPresent()) {
+        this.#ok(g.lobby.resume());
+        await this.#call(g, 'resume');
+        this.#broadcastLobby(g);
+      }
       this.#saveMeta(g);
       return { participant: { state: p.state, key_present: true } };
     });
@@ -443,10 +457,11 @@ export class HostedService {
     r.add('POST', '/v1/games/:id/directives', async (req, res, { id }) => {
       this.#take(req, 'directives');
       const g = this.#getGame(id), p = this.#requireMember(req, g), body = await readJson(req);
-      if (typeof body.text !== 'string' || body.text.length > 140) throw asError(400, 'invalid');
+      if (!g.rules.injectEnabled) throw asError(403, 'directives_disabled');
+      if (typeof body.text !== 'string' || [...body.text].length > g.rules.injectMaxChars) throw asError(400, 'invalid');
       if (g.lobby.status !== 'running' || p.state !== 'active') throw asError(409, 'not_running');
       const previous = g.directiveAt.get(p.participantId) ?? -Infinity;
-      const wait = previous + 10000 - Date.now();
+      const wait = previous + g.rules.injectCooldownS * 1000 - Date.now();
       if (wait > 0) throw asError(429, 'cooldown', { retry_in_ms: wait });
       g.directiveAt.set(p.participantId, Date.now());
       return this.#call(g, 'directive', { participantId: p.participantId, text: body.text });

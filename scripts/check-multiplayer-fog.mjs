@@ -6,6 +6,8 @@ import { buildArena } from '../src/testbed.js';
 import { Adversary, beginAdversaryTick, decideAdversary } from '../src/characters/adversary/adversary.js';
 import { KnownWorld } from '../src/characters/explorer/known-world.js';
 import { situation } from '../src/characters/explorer/perception.js';
+import { Lobby } from '../src/service/lobby.js';
+import { projectGame } from '../src/service/project.js';
 
 const uninstall = installTripwire();
 const rows = [
@@ -50,5 +52,13 @@ try {
   const facts = (game) => JSON.stringify(situation(new KnownWorld(game, 'p1')));
   assert.equal(facts(a), facts(b), 'hidden monster movement changed a frozen help report');
   assert.equal(new KnownWorld(a, 'p1').helpReports()[0].cell.join(','), '8,2');
+  const lobby = new Lobby({ id: 'gm_fog' });
+  lobby.join({ participantId: 'p1', name: 'One' });
+  lobby.join({ participantId: 'p2', name: 'Two' });
+  lobby.start('p1');
+  a.strikes = [{ by: 'a1', cells: [[9, 4]], result: 'miss' }];
+  b.strikes = [{ by: 'a1', cells: [[10, 5]], result: 'miss' }];
+  const screen = (game) => projectGame({ game, brains: new Map(), lobby, id: 'gm_fog', mode: 'shared', rulesRevision: 1, viewerId: 'p1' });
+  assert.deepEqual(screen(a), screen(b), 'hidden monster strike leaked into the player projection');
   console.log('multiplayer fog: hidden target and reported monster twins: ok');
 } finally { uninstall(); }

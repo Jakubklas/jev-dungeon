@@ -9,6 +9,8 @@
 
 // A category is a YAML path prefix. The longest matching prefix decides the default for its knobs.
 export const CATEGORIES = {
+  rooms: { userSetting: false, doc: 'Hosted waiting-room capacity.' },
+  service: { userSetting: false, doc: 'Hosted participant key retry window.' },
   world: { userSetting: false, doc: 'Dungeon layout, light, coins and hearts. Developer only.' },
   rules: { userSetting: false, doc: 'World time: one step is rules.stepMs (400 ms); every step-count duration is that many steps of it. At the default: grace 4 steps = 1.6 s, heart respawn 200 steps = 80 s, regen every 30 steps = 12 s, sword cooldown 1 step = 0.4 s, shield 2 = 0.8 s, fire strike 120 = 48 s, stun 2 = 0.8 s, a block lasts to the next step = 0.4 s; a monster moves every stepMs / speed (speed 0.6 = 667 ms). rules.cadenceMs (90 ms) is the shortest pause between one decision of an actor and the next. Developer only.' },
   explorer: { userSetting: false, doc: 'The knight: lives and protection after a hit.' },
@@ -23,6 +25,8 @@ export const CATEGORIES = {
 };
 
 const PAGE_ROWS = [
+  { key: 'roomCapacity', path: 'rooms.capacity', group: 'Service', label: 'Room capacity', hint: 'Players allowed in a new shared room.', doc: 'Players allowed in a new shared room', type: 'range', min: 1, max: 4, step: 1, def: 4, when: 'next', page: false },
+  { key: 'keyRetryMs', path: 'service.keyRetryMs', group: 'Service', label: 'Key retry window', hint: 'Milliseconds to replace a rejected participant key.', doc: 'Milliseconds to replace a rejected participant key before forfeit', type: 'range', min: 1000, max: 600000, step: 1000, def: 120000, when: 'next', page: false },
   { key: 'speed', path: 'monsters.global.speed', group: 'Adversaries', label: 'Speed', hint: 'Fraction of the explorer\'s speed (1 = as fast).', doc: 'Monster speed as a share of the explorer (1 = same speed)', type: 'range', min: 0.1, max: 1, step: 0.05, def: 0.6, when: 'live' },
   { key: 'chaseRange', path: 'monsters.global.chaseRange', group: 'Adversaries', label: 'Chase range', hint: 'Cells within which a seen explorer starts a hunt.', doc: 'Cells within which a seen explorer starts a hunt', type: 'range', min: 1, max: 12, step: 1, def: 7, when: 'live' },
   { key: 'sightRange', path: 'world.sightRange', group: 'Adversaries', label: 'Sight range', hint: 'How far anyone sees along a clear line through revealed cells (both sides).', doc: 'How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters)', type: 'range', min: 3, max: 30, step: 1, def: 7, when: 'live' },

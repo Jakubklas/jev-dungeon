@@ -34,15 +34,22 @@ export function projectGame({ game, brains, lobby, id, mode, rulesRevision, view
       health: e.health, max_health: e.maxHealth, invulnerable: game.graceActive(e), coins: e.coins };
   });
   const spectator = !self || self.status === 'dead' || self.status === 'forfeited';
+  const explorerIds = new Set(game.explorers.map((e) => e.id));
+  const strikes = game.strikes.filter((s) => reveal || explorerIds.has(s.by) || team.has(s.by))
+    .map((s) => ({ ...s, cells: s.cells.filter(([x, y]) => lit(x, y)).map((c) => [...c]) }))
+    .filter((s) => s.cells.length);
   const out = {
     width: base.width, height: base.height, tiles, start: lit(...base.start) ? base.start : null,
     treasure: base.treasure && lit(...base.treasure) ? base.treasure : null,
     props: base.props.filter((p) => lit(p.x, p.y)), decor: base.decor.filter((d) => lit(d.x, d.y)),
     coin_piles: base.coin_piles.filter(([x, y]) => lit(x, y)), light: base.light,
+    heart_piles: game.heartPiles.filter(([x, y]) => lit(x, y)).map((c) => [...c]),
     pos: self?.pos ?? base.pos, steps: self?.steps ?? base.steps, health: self?.health ?? 0,
     max_health: self?.maxHealth ?? base.max_health, coins: self?.coins ?? 0,
     facing: self?.facing ?? base.facing, won: game.won, lost: game.lost, won_by: game.winBy,
-    over: game.won || game.lost, strikes: game.strikes, explored_pct: base.explored_pct,
+    over: game.won || game.lost, strikes, explored_pct: base.explored_pct,
+    invulnerable: self ? game.graceActive(self) : false,
+    block: self && game.blockActive(self) ? self.block : null,
     adversaries, explorers, route: null, self: viewerId, spectator,
     memory: spectator ? null : (brains.get(self.id)?.memory ?? null),
     directive: spectator ? null : (brains.get(self.id)?.directive ?? null),

@@ -8,7 +8,7 @@ The default data folder is `runs/server/`. It contains the exclusive `server.loc
 
 Stop the service cleanly before copying the data folder. Preserve file permissions, especially the `host-token` file (mode `0600`). Store backups somewhere access-controlled: names, game state, event history, and call metadata are present even though keys and request bodies are not.
 
-To restore, stop any service using the target folder, replace the complete data folder from the backup, then start the service with the same `DATA_DIR`. The store lock prevents two service processes from owning one folder. Recovery uses `state.json` as the committed point and drops event-log entries beyond its `event_seq`; it then pauses active games for key re-entry. A copied host token remains valid only if `HOST_TOKEN` is unset and the restored token file is used.
+To restore, stop any service using the target folder, replace the complete data folder from the backup, then start the service with the same `DATA_DIR`. The store lock prevents two service processes from owning one folder. Recovery uses `state.json` as the committed point and drops event-log entries beyond its `event_seq`; it then pauses active games for key re-entry. The host token is regenerated at startup unless `HOST_TOKEN` is pinned; use the newly printed host URL.
 
 Call records keep HTTP status, byte counts, duration, actor, and outcome. They do not keep keys, prompts, or responses. A torn final JSONL line is ignored when reading logs. Keep the folder as one backup unit; copying only `state.json` or only `events.jsonl` breaks the recovery boundary.
 
