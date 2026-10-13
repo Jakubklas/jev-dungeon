@@ -49,12 +49,15 @@ export function knownDistances(world, from, blocked = null, admit = null, endCel
   const endIdx = endCell ? at(endCell) : -1;
   const portal = allowPortal ? null : world.seenTreasure();
   const portalIdx = portal ? at(portal) : -1;
+  // A teammate's cell is a solid obstacle (it is on our side but occupies the cell; a move into it is illegal).
+  const mates = world.teammates?.() ?? [];
+  const mateIdx = mates.length ? new Set(mates.map((m) => at(m.pos)).filter((i) => i !== at(from))) : null;
   for (let i = 0; i < order.length; i++) {
     const d = dist[at(order[i])] + 1;
     for (const n of neighbours(order[i])) {
       if (!knownFloor(world, n)) continue;
       const ni = at(n);
-      if (dist[ni] >= 0 || ni === blockedIdx || (ni === portalIdx && ni !== endIdx)) continue;
+      if (dist[ni] >= 0 || ni === blockedIdx || (ni === portalIdx && ni !== endIdx) || mateIdx?.has(ni)) continue;
       if (ni === endIdx) { dist[ni] = d; continue; }
       if (admit && !admit(n, d)) continue;
       dist[ni] = d;

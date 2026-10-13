@@ -211,7 +211,7 @@ const TACTIC_MOVE_HINT = {
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
-const rules = (hasSkills = true, combat = null, directive = false) =>
+const rules = (hasSkills = true, combat = null, directive = false, teammates = false) =>
   'Goal: reach and step through the portal at the dungeon\'s end; only the portal wins. Advance: dispel enemies in your way, permanently removing obstacles and pursuers; slip past when fighting would prevent reaching it. Retreat to recover or reposition, then advance again. Score: coins held when you win. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
@@ -219,7 +219,8 @@ const rules = (hasSkills = true, combat = null, directive = false) =>
   '`threats.visible`: in sight now, with each health bar (`hp`); `threats.remembered`: seen earlier, frozen where last seen.' +
   (combat ? ` ${combatRule(combat)}` : '') +
   (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '') +
-  (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '');
+  (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '') +
+  (teammates ? ' The explorers in `surroundings.teammates` are teammates on your side: they cannot hurt you, are not threats, and a cell one stands on is not a move.' : '');
 
 // What a dispel pays, for the tactic priority line: "may drop a coin" (the chance is never stated), nothing at 0.
 const engagePays = (p) => `dispelling it permanently removes an obstacle or pursuer on the way to the portal${p > 0 ? ' and may drop a coin' : ''}`;
@@ -557,7 +558,7 @@ export class ExplorerBrain {
     // While a directive is live the approach is shown as parked (unless a tactic already parked it).
     const parked = live && !isTactic(a.id) ? { id: a.id, since_step: a.since_step, reason: 'player directive' } : null;
     return {
-      game: rules(this.#skills.size > 0, this.#combat(), Boolean(live)),
+      game: rules(this.#skills.size > 0, this.#combat(), Boolean(live), Boolean(sit.surroundings.teammates)),
       ...(live ? { directive: { text: live.text, steps_left: live.steps_left, from_step: live.from_step } } : {}),
       self: { ...sit.self, confidence: this.#confidenceWord(), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: this.#corner && (CORNER_MODE === 'ascii' || CORNER_MODE === 'full') && this.#corner.diagram?.length

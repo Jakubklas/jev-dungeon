@@ -362,6 +362,21 @@ check(explorerCalls > 0, 'stub explorer was asked');
   console.log(`coins: testbed option, ASCII map, 20 generated seeds (${spreadOk} spread over every room)`);
 }
 
+// 9. explorers: extra explorer start cells (teammates)
+{
+  check(normalizeConfig({}).explorers === null, 'explorers: default none');
+  check(normalizeConfig({ explorers: '3,3;4,4' }).explorers.join('|') === '3,3|4,4', 'explorers: URL form');
+  check(buildArena({ explorers: [[2, 2]], numAdversaries: 0 }).config.explorers.length === 1, 'explorers: kept in the config');
+  throwsBad({ explorers: [[0, 0]] }, 'explorers: wall cell');
+  throwsBad({ explorers: [[6, 6]] }, 'explorers: on the start');
+  throwsBad({ explorers: [[2, 2], [2, 2]] }, 'explorers: duplicate');
+  throwsBad({ explorers: [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1]] }, 'explorers: too many');
+  const base = buildArena({ explorers: [[2, 2]], numAdversaries: 0 });
+  const plain = buildArena({ numAdversaries: 0 });
+  check(JSON.stringify(base.dungeon) === JSON.stringify(plain.dungeon), 'explorers: the arena itself is unchanged');
+  console.log('explorers: testbed option');
+}
+
 console.log(`stub calls: explorer ${explorerCalls}, adversaries ${adversaryCalls} (no network)`);
 rmSync(dir, { recursive: true, force: true });
 

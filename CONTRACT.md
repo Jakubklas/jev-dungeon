@@ -318,10 +318,13 @@ export function resolveAttack(game, attacker, cells, damage, { canHit, onHit, ra
 The explorer's only window on a game (the one explorer file allowed to hold a `Game`, in a private `#game`). Reads are live, never cached, and fog-safe:
 
 ```js
-new KnownWorld(game)
+new KnownWorld(game, explorerId = primary)   // every read is that explorer's; light is shared by all explorers of a game
+get id
 get pos, steps, visits, health, maxHealth, graceLeft, won, facing, coins   // the explorer's own state (coins: its purse)
 get width, height                       // grid size, only for sizing arrays; says nothing about the layout
-isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()
+isKnown(cell), knownTile(cell), knownFloorCount(), legalMoves(), availableMoves()   // a teammate's cell is not a legal move
+teammates()                             // -> [{ id, pos }] the other ACTIVE explorers, global (through walls), copies; never threats
+helpReports()                           // -> [] for now (WP-H fills it)
 visibleAdversaries()                    // -> [{ id, pos, mode, distance, hp, maxHp, stun, level, clawDamage }] the explorer sees now (hp: the health bar it sees; level and clawDamage are in-sight reads likewise, PLAN-levels)
 get levelsOn                            // whether monsters.levels.enabled is on (config switch, no game state); off, no level reaches matchup() or Jev
 seenTreasure()                          // -> the portal cell once lit, else null (also null when there is none)
@@ -331,6 +334,24 @@ useSkill(skillSet, key)                 // before the step: an attack turns to i
                                         // a block sets game.block = { effectiveness, until_step: steps + 1 }. Marks the skill used. -> events[] | null (unknown key, not ready, game over)
 ```
 Static guard (`scripts/check-dungeon.mjs`, section 0): every other `src/characters/explorer/*.js` file must not contain `game.x`, `game[...]`, `.dungeon`, dynamic or namespace imports, or imports outside this allowlist: `DIRS, LIGHT_RADIUS, STAY, EXPLORER_LIVES, SIGHT_RANGE` from dungeon.js (`SIGHT_RANGE` is a constant, used only to expire a remembered sighting); `ADVERSARY_SPEED, GRACE_TICKS` from adversary.js; sibling explorer files (including `./confidence.js`, listed explicitly in the allowlist: pure, imports nothing); `../../jev.js`; `node:fs/promises`; the `src/skills/` exports (`buildSkillSet`, `skillQuestion`, `pickSkill`, and the `resolve.js` pair that only `known-world.js` imports). `src/skills/` has its own guard (section 0c): `options()` reads only its arguments.
+
+### Several explorers (WP-C; also in AGENTS.md "World & perception")
+```js
+export class ExplorerState { id, pos, steps, visits, trail, health, maxHealth, regenAt, graceTicks, facing, block, coins, heartAt,
+                             status /* 'active'|'dead'|'forfeited'|'won' */, outcome /* { strikes, dispels, diedAt, portal } */ }
+export let HELP_REACH_STEPS = 48;            // knob explorer.helpReachSteps, > monsters.pack.alertSteps (configureWorld({ helpReachSteps }))
+new Game(dungeon, { explorers: [{ id, start }] })   // default [{ id: 'explorer', start: dungeon.start }]
+game.explorers, game.primary, game.explorer(id = primary), game.activeExplorers(), game.explorerAt(cell, exceptId), game.targetExplorer(cell)
+game.pos / steps / visits / trail / health / maxHealth / regenAt / graceTicks / facing / block / coins / heartAt   // accessors onto the primary
+game.legalMoves(id), availableMoves(id), applyMove(dir, distance, id), damage(amount, sourceId, id), respawnHearts(id), regenerate(id)
+game.twin(overrides)                         // also shallow-copies every ExplorerState
+// adversary.js: seesExplorer(game, a, explorer?), visibleAdversaries(game, explorer?), graceLeft(game, explorer?)
+// resolve.js: an explorer attacker is any handle with `explorer: true` (EXPLORER = { id: 'explorer', explorer: true }); canHit(victim) / onHit(victim);
+//   hit / blocked / caught events carry `explorer: id` when the game has more than one explorer.
+// turn.js: new Run(dungeon, adversaries, { explorers, askFor(id) }) -> run.explorer (primary brain), run.explorers = [{ id, brain }]
+// testbed: option `explorers: [[x, y], ...]` (extra explorers explorer2.., explorerStartsOf(dungeon, cfg))
+```
+Jev state, with at least one teammate only: `surroundings.teammates = [{ id, direction, distance }]` (compass8 from the explorer; known-path steps, else rounded Euclidean) and one rules sentence.
 
 ### `known-map.js`, `encounter.js`, `perception.js` (world agent)
 

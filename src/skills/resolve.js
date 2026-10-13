@@ -5,12 +5,13 @@
 import { isFloor } from '../dungeon.js';
 import { skillConfig } from './config.js';
 
-export const EXPLORER = Object.freeze({ id: 'explorer' }); // the attacker handle for the explorer's strikes
+export const EXPLORER = Object.freeze({ id: 'explorer', explorer: true }); // the attacker handle for the explorer's strikes
 
 const same = (a, b) => a[0] === b[0] && a[1] === b[1];
 
 // Applies one attack. cells: any cells (off-map and wall cells are dropped). canHit() gates damage on
-// the explorer (grace, one hit per tick); onHit() runs after damage lands so the caller can latch it.
+// the explorer struck (grace, one hit per tick); onHit() runs after damage lands so the caller can latch it. Both get
+// the explorer struck. An explorer attacker is any handle with `explorer: true` (EXPLORER, or { id, explorer: true }).
 // skill: the skill id, recorded on the strike only when given (the UI draws the fire strike's blast from it);
 // centre: [x, y] (fractional) the blast is drawn at, the middle of the whole block even where walls cut cells off.
 // Returns the events; the strike is also recorded in game.strikes as { by, cells, result }.
@@ -18,31 +19,37 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
   const events = [];
   const live = cells.filter((c) => isFloor(game.dungeon, c));
   let result = 'miss';
-  const fromExplorer = attacker.id === EXPLORER.id;
+  const fromExplorer = attacker.explorer === true;
+  const striker = fromExplorer ? game.explorer(attacker.id) : null;
 
-  if (!fromExplorer && live.some((c) => same(c, game.pos)) && !game.lost && !game.won) {
-    const at = [...game.pos];
-    if (game.block && game.steps <= game.block.until_step && (rand ?? (() => game.skillRandom()))() < game.block.effectiveness) {
+  // A monster's strike lands on the first active explorer standing in its cells; explorers never hurt each other.
+  const victim = !fromExplorer && !game.lost && !game.won ? game.explorers.find((e) => e.status === 'active' && live.some((c) => same(c, e.pos))) : null;
+  if (victim) {
+    const at = [...victim.pos];
+    const who = game.explorers.length > 1 ? { explorer: victim.id } : {}; // which explorer was struck (only worth saying with several)
+    if (victim.block && victim.steps <= victim.block.until_step && (rand ?? (() => game.skillRandom()))() < victim.block.effectiveness) {
       result = 'blocked';
-      events.push({ id: attacker.id, type: 'blocked', at });
-    } else if (!canHit()) {
+      events.push({ id: attacker.id, type: 'blocked', at, ...who });
+    } else if (!canHit(victim)) {
       result = 'protected';
     } else {
       result = 'hit';
-      const { health, lost } = game.damage(damage, attacker.id);
-      onHit();
-      events.push({ id: attacker.id, type: 'hit', at, health });
-      if (lost) events.push({ id: attacker.id, type: 'caught', at });
+      const { health, lost } = game.damage(damage, attacker.id, victim.id);
+      onHit(victim);
+      events.push({ id: attacker.id, type: 'hit', at, health, ...who });
+      if (lost) events.push({ id: attacker.id, type: 'caught', at, ...who });
     }
   }
 
   if (fromExplorer) {
     for (const a of [...game.adversaries]) {
       if (!live.some((c) => same(c, a.pos))) continue;
-      const out = a.takeHit(damage, [...game.pos], game); // Adversary owns its hp, stun and knockback
+      const out = a.takeHit(damage, [...striker.pos], game); // Adversary owns its hp, stun and knockback
       const at = [...a.pos];
       result = 'hit';
+      striker.outcome.strikes++;
       if (out.dispelled) {
+        striker.outcome.dispels++;
         game.adversaries.splice(game.adversaries.indexOf(a), 1); // in place: other holders of the array see it
         result = 'dispelled';
         // The tick's dispels, for the death cry: surviving monsters within sight or earshot lose morale (stepAdversaries).
@@ -59,7 +66,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
         if (!game.dungeon.treasure && !game.adversaries.length && !game.won && !game.lost) {
           game.won = true;
           game.winBy = 'cleared';
-          events.push({ id: 'explorer', type: 'cleared', at });
+          events.push({ id: attacker.id, type: 'cleared', at });
         }
       } else {
         events.push({ id: a.id, type: 'struck', at, hp: out.hp, staggered: out.staggered });
@@ -68,7 +75,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
   }
 
   // `from` is where the attacker stood when it struck (the explorer often steps on before the view is drawn): the UI aims the slash from it.
-  const from = [...(fromExplorer ? game.pos : attacker.pos)];
+  const from = [...(fromExplorer ? striker.pos : attacker.pos)];
   // `skill` is set only for a skill the UI draws its own way (the fire strike); a plain strike keeps the old shape.
   game.strikes.push({ by: attacker.id, from, cells: live.map((c) => [...c]), result, ...(skill ? { skill } : {}), ...(centre ? { centre } : {}) });
   events.push({ id: attacker.id, type: 'strike', cells: live.map((c) => [...c]), result });

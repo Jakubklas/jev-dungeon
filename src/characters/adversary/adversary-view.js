@@ -67,13 +67,13 @@ export class AdversaryView {
 
   // The explorer's cell while this ghost has it in sight, else null.
   explorer() {
-    return this.#a.hunt.inSight ? [...this.#game.pos] : null;
+    return this.#a.hunt.inSight ? [...this.#game.targetExplorer(this.#a.pos).pos] : null;
   }
 
   // Direction of the explorer's latest move, read only while it is in sight.
   heading() {
     if (!this.#a.hunt.inSight) return null;
-    const t = this.#game.trail ?? [];
+    const t = this.#game.targetExplorer(this.#a.pos).trail ?? [];
     if (t.length < 2) return null;
     const [p, q] = t.slice(-2);
     const dx = q[0] - p[0], dy = q[1] - p[1];

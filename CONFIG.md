@@ -222,6 +222,7 @@ The knight: lives and protection after a hit.
 | `explorer.lives` | 4 | 1..9 | next | yes | Lives the explorer starts with |
 | `explorer.regen.steps` | 30 | 0..200 | live | no | Steps between natural heals of a hurt explorer (0 = no regen) |
 | `explorer.regen.amount` | 0.5 | 0..3 | live | no | Lives healed per natural heal (fractions allowed, up to max lives) |
+| `explorer.helpReachSteps` | 48 | 2..200 | live | no | Known-path steps for a teammate help report (must exceed monsters.pack.alertSteps) |
 | `explorer.progress.redirect` | true | on/off | next | no | true = a sustained retreat is redirected to the deepest known frontier; false = tracked only |
 | `explorer.skills` | ["sword_strike","shield_block","fire_strike","dash"] | list of sword_strike, shield_block, fire_strike, dash, claw_strike (max 4) | next | no | Skills the explorer starts with (at most 4; empty = none) |
 | `explorer.brain.reviewEvery` | 8 | 1..50 | live | no | Steps between approach reviews |

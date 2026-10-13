@@ -112,7 +112,7 @@ for (const k of R.KNOBS) {
 
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
-  regenSteps: D.REGEN_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN,
+  regenSteps: D.REGEN_STEPS, helpReachSteps: D.HELP_REACH_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN,
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
   layout: D.LAYOUT,
   torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
@@ -374,6 +374,8 @@ await S.applyNextGame();
 check(EM.LIMITS.events === 9 && EM.LIMITS.directive === 200 && AM.LIMITS.events === 7 && AT.attackSnapshot().limSkillFact === 100 && C.PRIORITY_MAX === 120, 'limits follow the file from the next game');
 const crossLim = L.crossProblems({ ...L.defaults(), limExplorer_directive: 100 });
 check(crossLim.some((w) => w.includes('directive')), 'a directive limit below the directive length setting is refused');
+check(L.crossProblems({ ...L.defaults() }).length === 0 && L.defaults().helpReachSteps === 48 && L.defaults().helpReachSteps > L.defaults().alertSteps, 'helpReachSteps defaults to 48, above the pack alert reach');
+check(L.crossProblems({ ...L.defaults(), helpReachSteps: 24 }).some((w) => w.includes('helpReachSteps')), 'helpReachSteps not above alertSteps is refused');
 check(L.crossProblems({ ...L.defaults(), limMonster_moves: 4 }).some((w) => w.includes('recent-moves')), 'a monster memory limit below a character trait level is refused');
 check(L.crossProblems({ ...L.defaults(), limExplorer_recentCells: 7 }).some((w) => w.includes('recentCells')), 'recentCells below recentMoves + 2 is refused');
 writeFileSync(cfg, 'explorer: { lives: 2 }\n');

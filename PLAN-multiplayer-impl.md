@@ -325,3 +325,12 @@ WP-A ∥ WP-B -> WP-C -> WP-D -> WP-E -> WP-F -> WP-G -> WP-H -> WP-I ∥ WP-J. 
 4. **A two-call decision tick builds its second request when the first answer arrives** (from the world at that
    instant, still fog-safe), not from the snapshot taken at decision start: the second request depends on the first
    answer.
+5. **No `A teammate stands there.` move fact (WP-C).** A step into a teammate is illegal, so `legalMoves` / `availableMoves`
+   never offer it and no move question or sentence mentions it; the teammate is solid in `knownDistances` instead, and the
+   `surroundings.teammates` group plus the rules sentence ("a cell one stands on is not a move") tell Jev why. Showing a
+   fact for an option that is not offered would only cost bytes.
+6. **Heart respawn deadline uses the picking explorer's step counter (WP-C)** until WP-D moves it to the world clock;
+   `respawnHearts(id)` compares against the explorer whose move triggers it.
+7. **`check-portal-objective` is flaky independent of WP-C**: it runs 12-20 `takeTurn`s with `Math.random`-shuffled
+   options and, rarely, the explorer wins before the loop ends (`No legal moves`). Seen once in a full `check-all` run
+   and not reproduced in 31 reruns; the script is untouched.

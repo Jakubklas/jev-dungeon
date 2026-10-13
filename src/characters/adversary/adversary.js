@@ -380,9 +380,12 @@ function plainKnobsOf(a) {
 // areas: an adversary standing on an unlit (fogged) cell neither sees the explorer nor is seen by it,
 // so SIGHT_RANGE may exceed LIGHT_RADIUS without the explorer seeing into the dark. Within
 // LIGHT_RADIUS of the explorer every cell is lit, so the default range of 7 is unaffected.
-export function seesExplorer(game, adversary) {
-  return euclid(game.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
-    hasLineOfSight(game.dungeon, game.pos, adversary.pos);
+// `explorer` (an id or ExplorerState) tests that one explorer; without it, whichever active explorer the monster
+// would react to (the nearest it sees), so with one explorer nothing changes.
+export function seesExplorer(game, adversary, explorer = null) {
+  const e = explorer === null ? game.targetExplorer(adversary.pos) : game.explorer(explorer);
+  return euclid(e.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
+    hasLineOfSight(game.dungeon, e.pos, adversary.pos);
 }
 
 // Trigger for patrol/search -> chase. The user wrote "has a direct line of sight ... and is at
@@ -390,13 +393,15 @@ export function seesExplorer(game, adversary) {
 // change `<= CHASE_RANGE` to `>= CHASE_RANGE` on the line below. Note: seesExplorer already caps
 // distance at SIGHT_RANGE (7), so the flipped trigger only fires when SIGHT_RANGE is raised too.
 export function startsChase(game, adversary) {
-  return seesExplorer(game, adversary) && euclid(game.pos, adversary.pos) <= knobsOf(adversary).chaseRange;
+  return seesExplorer(game, adversary) && euclid(game.targetExplorer(adversary.pos).pos, adversary.pos) <= knobsOf(adversary).chaseRange;
 }
 
-export function visibleAdversaries(game) {
+// The adversaries one explorer (default: the primary) sees right now.
+export function visibleAdversaries(game, explorer = null) {
+  const e = game.explorer(explorer);
   return (game.adversaries ?? [])
-    .filter((a) => seesExplorer(game, a))
-    .map((a) => ({ id: a.id, pos: [...a.pos], mode: a.mode, distance: Math.round(euclid(game.pos, a.pos) * 10) / 10 }));
+    .filter((a) => seesExplorer(game, a, e))
+    .map((a) => ({ id: a.id, pos: [...a.pos], mode: a.mode, distance: Math.round(euclid(e.pos, a.pos) * 10) / 10 }));
 }
 
 // Route from `from` to `to` along a shortest floor path, excluding `from`.
@@ -458,7 +463,7 @@ function pickPatrolGoal(game, a) {
 
 function turnOn(game, a, events, tick) {
   a.mode = 'chase';
-  a.lastSeen = [...game.pos];
+  a.lastSeen = [...game.targetExplorer(a.pos).pos];
   a.goal = null;
   a.route = null;
   events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
@@ -472,6 +477,7 @@ function turnOn(game, a, events, tick) {
 function alertNearby(game, spotter, events, tick) {
   if (!knobsOf(spotter).makesCalls) return; // a loner does not call (a shaken monster calls anyway: morale)
   const near = floorDistances(game.dungeon, spotter.pos);
+  const target = game.targetExplorer(spotter.pos).pos;
   let answered = false;
   for (const o of game.adversaries) {
     if (o === spotter || o.hunt.on) continue;
@@ -480,15 +486,15 @@ function alertNearby(game, spotter, events, tick) {
     if (d === undefined || d > hear.alertSteps) continue;
     if (!hear.answersCalls) {
       // A loner answers only when the explorer is already close to it.
-      const toExplorer = hear.answersWithin === null ? undefined : floorDistances(game.dungeon, o.pos).get(key(game.pos));
+      const toExplorer = hear.answersWithin === null ? undefined : floorDistances(game.dungeon, o.pos).get(key(target));
       if (toExplorer === undefined || toExplorer > hear.answersWithin) continue;
     }
     o.mode = 'search';
-    o.lastSeen = [...game.pos];
+    o.lastSeen = [...target];
     o.goal = null;
     o.route = null;
-    switchOnAlerted(o, tick, game.pos, spotter.hunt.heading, spotter.id);
-    viewOf(game, o).hear(viewOf(game, spotter), game.pos, tick); // the call carries the spotter's nearby known cells
+    switchOnAlerted(o, tick, target, spotter.hunt.heading, spotter.id);
+    viewOf(game, o).hear(viewOf(game, spotter), target, tick); // the call carries the spotter's nearby known cells
     sweepFrom(viewOf(game, o), o);
     events.push({ id: o.id, type: 'alerted', at: [...o.pos], by: spotter.id });
     events.push({ id: o.id, type: 'brain_on', at: [...o.pos] });
@@ -522,12 +528,13 @@ function senseHunting(game, a, events, tick, startOfTick) {
       a.mode = 'chase';
       events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
     }
-    a.lastSeen = [...game.pos];
+    const where = game.targetExplorer(a.pos).pos;
+    a.lastSeen = [...where];
     const own = seesExplorer(game, a);
     // Team sight: a packmate that sees the explorer calls out where it is, and its nearby known cells come with the call.
     if (!own && limitedActive()) {
       const caller = [...game.adversaries].sort(byId).find((o) => o !== a && o.hunt.on && seesExplorer(game, o));
-      if (caller) viewOf(game, a).hear(viewOf(game, caller), game.pos, tick);
+      if (caller) viewOf(game, a).hear(viewOf(game, caller), where, tick);
     }
     seen(viewOf(game, a), a, tick, { startOfTick, own });
     return true;
@@ -582,8 +589,9 @@ function supportFor(game, a) {
 // Is the explorer boxed in right next to this monster? Only ever asked while it is in sight, so it is
 // something the monster can actually see.
 function corneredNow(game, a) {
-  if (!a.hunt.inSight || euclid(a.pos, game.pos) > 2) return false;
-  const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [game.pos[0] + dx, game.pos[1] + dy])).length;
+  const at = game.targetExplorer(a.pos).pos;
+  if (!a.hunt.inSight || euclid(a.pos, at) > 2) return false;
+  const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [at[0] + dx, at[1] + dy])).length;
   return ways <= 2;
 }
 
@@ -641,7 +649,7 @@ function patrolStep(game, a) {
 // to the last-seen cell, else to the nearest unchecked cell around it. Returns a direction or null.
 function codeHuntDir(game, a) {
   const h = a.hunt;
-  let target = h.inSight ? game.pos : a.lastSeen;
+  let target = h.inSight ? game.targetExplorer(a.pos).pos : a.lastSeen;
   if (target && same(target, a.pos)) target = approachTarget(viewOf(game, a), a, h, 'sweep_last_seen')?.cell ?? null;
   if (!target) return null;
   if (limitedActive()) {
@@ -666,16 +674,16 @@ function codeHuntDir(game, a) {
 // stepped in from) when given, else the first floor neighbour in DIRS order that is not the
 // explorer's cell, preferring one that is not the cell the explorer just came from. Stays put
 // only when boxed in. No rng, so seeds stay reproducible.
-function knockBack(game, a, from = null) {
+function knockBack(game, a, from = null, ex = game.targetExplorer(a.pos)) {
   a.route = null; // patrol routes assume contiguous cells
   // The budget is kept on purpose: a bump must not cost the ghost its next act, or a ghost bumped every tick
   // (explorer pushing it down a corridor) would never strike. Only a sword hit stuns (Adversary.takeHit).
-  if (from && isFloor(game.dungeon, from) && !same(from, game.pos)) {
+  if (from && isFloor(game.dungeon, from) && !same(from, ex.pos)) {
     a.pos = [...from];
     return;
   }
-  const prev = game.trail?.length > 1 ? game.trail.at(-2) : null;
-  const options = neighbours(game.dungeon, a.pos).filter((c) => !same(c, game.pos));
+  const prev = ex.trail?.length > 1 ? ex.trail.at(-2) : null;
+  const options = neighbours(game.dungeon, a.pos).filter((c) => !same(c, ex.pos) && !game.explorerAt(c));
   const pick = options.find((c) => !prev || !same(c, prev)) ?? options[0];
   if (pick) a.pos = pick;
 }
@@ -684,9 +692,11 @@ function knockBack(game, a, from = null) {
 // knocked back (event 'bump'), with no life lost and no grace started, so no adversary ever ends a tick on a
 // living explorer. Only a claw strike (strikeWith) takes lives.
 function bumpCheck(game, a, events, from = null) {
-  if (game.lost || !same(a.pos, game.pos)) return;
+  if (game.lost) return;
+  const ex = game.explorerAt(a.pos); // any explorer: a touch only bumps
+  if (!ex) return;
   events.push({ id: a.id, type: 'bump', at: [...a.pos] });
-  knockBack(game, a, from);
+  knockBack(game, a, from, ex);
 }
 
 // The direction of the single step from `from` to `to`, or null (no step).
@@ -700,10 +710,10 @@ function strikeWith(game, a, key, latch) {
   if (!picked || !picked.skill.ready || picked.skill.kind !== 'attack') return { events: [], used: null, lost: false };
   a.facing = picked.target.dir;
   const events = resolveAttack(game, a, picked.target.cells, picked.skill.damage, {
-    canHit: () => latch.canHit(),
-    onHit: () => {
-      latch.hit = true;
-      game.graceTicks = GRACE_TICKS;
+    canHit: (e) => latch.canHit(e),
+    onHit: (e) => {
+      latch.markHit(e);
+      e.graceTicks = GRACE_TICKS;
       noteHit(a, game.adversaryTicks);
     },
   });
@@ -717,12 +727,22 @@ function strikeWith(game, a, key, latch) {
 
 // Grace ticks left after the latest hit (0 = the explorer can be hit). Fog-safe: it is the
 // explorer's own state.
-export function graceLeft(game) {
-  return game.graceTicks;
+export function graceLeft(game, explorer = null) {
+  return game.explorer(explorer).graceTicks;
 }
 
 // Lives one claw strike of this ghost takes (the rules text tells Jev).
 const clawDamage = (a) => a.skills.skills.find((k) => k.kind === 'attack')?.damage ?? 1;
+
+// The tick's hit gate: one hit per explorer per tick, none while `open(explorer)` is false (grace).
+function hitLatch(game, open) {
+  const hurt = new Set();
+  return {
+    get hit() { return hurt.size > 0; },
+    canHit(e = game.explorers[0]) { return !hurt.has(e.id) && open(e); },
+    markHit(e) { hurt.add(e.id); },
+  };
+}
 
 const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 
@@ -761,9 +781,10 @@ export function beginAdversaryTick(game) {
   const events = [];
   const turns = [];
   if (game.won || game.lost) return { ctx: { over: true, events, turns, order: [] }, thinkers: [] };
-  const protectedNow = graceLeft(game) > 0;
-  if (protectedNow) game.graceTicks--;
-  const hit = { hit: false, canHit() { return !protectedNow && !this.hit; } };
+  // Grace is read once per explorer at the start of the tick, then counted down; a latch allows one hit per explorer per tick.
+  const protectedNow = new Set(game.explorers.filter((e) => e.graceTicks > 0).map((e) => e.id));
+  for (const e of game.explorers) if (e.graceTicks > 0) e.graceTicks--;
+  const hit = hitLatch(game, (e) => !protectedNow.has(e.id));
   const order = [...game.adversaries].sort(byId);
   const stunned = new Set(order.filter((a) => a.tickStun()));
   for (const a of order) bumpCheck(game, a, events);
@@ -897,7 +918,7 @@ export function monsterTurnStart(game, a, { now = null } = {}) {
   viewOf(game, a).update(tick);
   senseStart(game, a, events, tick);
   moralePhase(game, [a], new Set(), events, tick);
-  const hit = { hit: false, canHit() { return graceLeft(game) <= 0 && !this.hit; } }; // grace is read when the claw lands
+  const hit = hitLatch(game, (e) => e.graceTicks <= 0); // grace is read when the claw lands
   return { over: false, events, turns: [], order: [a], stunned: new Set(), tick, hit, cfgOf: cfgFor, thinks: a.hunt.on, from: [...a.pos] };
 }
 

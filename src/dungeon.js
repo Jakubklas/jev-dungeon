@@ -18,6 +18,7 @@ export let LOOP_MIN = 2; // ... and at least this many
 export let TREASURE_SHARE = 0.6; // the portal sits at least this share of the farthest path distance from the start
 export let EXPLORER_LIVES = 4; // lives the explorer starts with
 export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus loops; 'linear': one winding path of rooms to the portal, with side rooms
+export let HELP_REACH_STEPS = 48; // known-path steps within which a teammate gets a help report (several explorers; read by the multiplayer runtime)
 export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
 export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
 export let HEART_RESPAWN = 200; // a picked-up heart comes back on its cell this many steps later (0 = never)
@@ -32,6 +33,7 @@ export function configureWorld(o) {
   if (o.maxSize !== undefined) MAX_SIZE = o.maxSize;
   if (o.lives !== undefined) EXPLORER_LIVES = o.lives;
   if (o.regenSteps !== undefined) REGEN_STEPS = o.regenSteps;
+  if (o.helpReachSteps !== undefined) HELP_REACH_STEPS = o.helpReachSteps;
   if (o.regenAmount !== undefined) REGEN_AMOUNT = o.regenAmount;
   if (o.heartRespawn !== undefined) HEART_RESPAWN = o.heartRespawn;
   if (o.roomArea !== undefined) ROOM_AREA = o.roomArea;
@@ -618,18 +620,40 @@ export function hasLineOfSight(dungeon, a, b) {
   return true;
 }
 
+// One explorer's own state (several can share a Game, PLAN-multiplayer). The legacy single-explorer
+// fields of Game (pos, steps, health, ...) are accessors onto the primary (explorers[0]). Light, loot,
+// monsters and the win are shared; everything here is personal. Lives in this file (no new relative import).
+export class ExplorerState {
+  constructor(id, start, lives = EXPLORER_LIVES) {
+    this.id = id;
+    this.pos = [...start];
+    this.steps = 0; // its own decision counter
+    this.visits = { [key(start)]: 1 };
+    this.trail = [[...start]];
+    this.health = lives;
+    this.maxHealth = lives;
+    this.regenAt = null; // the step of the last regen heal
+    this.graceTicks = 0; // ticks of hit protection left
+    this.facing = 'right';
+    this.block = null; // shield stance: null | { effectiveness, until_step }
+    this.coins = 0;
+    this.heartAt = null; // the step a heart was last picked up
+    this.status = 'active'; // 'active' | 'dead' | 'forfeited' | 'won'
+    this.outcome = { strikes: 0, dispels: 0, diedAt: null, portal: false }; // for the ranking
+  }
+}
+
 // The game state and everything that mutates or reads it directly. It lives in this file (not its
 // own) because scripts/check-props.mjs copies dungeon.js to a temp dir. Fields are public on
 // purpose: the check scripts set them directly. Never JSON-clone or spread one: `litOutside` is a
 // Set and the methods live on the prototype (use `twin`).
 export class Game {
-  constructor(dungeon) {
+  constructor(dungeon, { explorers = null } = {}) {
     let floorCount = 0;
     for (const row of dungeon.tiles) for (const c of row) if (c === '.') floorCount++;
     this.dungeon = dungeon;
-    this.pos = [...dungeon.start];
-    this.steps = 0;
-    this.visits = { [key(dungeon.start)]: 1 };
+    this.explorers = (explorers?.length ? explorers : [{ id: 'explorer', start: dungeon.start }]).map((e) => new ExplorerState(e.id, e.start ?? dungeon.start));
+    if (new Set(this.explorers.map((e) => e.id)).size !== this.explorers.length) throw new Error('explorer ids must be unique');
     this.light = Array.from({ length: dungeon.height }, () => Array(dungeon.width).fill(0));
     this.knownCount = 0;
     this.knownFloor = 0; // running count of known floor cells (knownFloorCount reads it)
@@ -638,46 +662,58 @@ export class Game {
     this.won = false;
     this.lost = false;
     this.caughtBy = null;
-    this.health = EXPLORER_LIVES;
-    this.maxHealth = EXPLORER_LIVES;
-    this.regenAt = null; // the step of the last regen heal (Run.playTurn turns it into a `regen` event)
-    this.graceTicks = 0; // ticks of hit protection left (adversary.js GRACE_TICKS counts it down)
-    this.trail = [[...dungeon.start]];
     this.adversaries = [];
     this.adversaryTicks = 0; // world ticks the adversaries have run (adversary.js)
     this.patrolRand = null; // per-game patrol RNG, created on the first patrol goal (adversary.js)
-    this.facing = 'right'; // the explorer's 4-way facing: last step's direction or last strike's aim
-    this.block = null; // the explorer's shield stance: null | { effectiveness, until_step }
     this.strikes = []; // strikes this tick: { by, cells, result } (src/skills/resolve.js)
     this.dispelled = []; // monsters dispelled this tick: { id, at } (resolve.js); the death cry reads it (monster morale)
     this.skillRand = null; // seeded block-roll stream, created on the first roll (skillRandom)
     this.coinPiles = (dungeon.coins ?? []).map((c) => [...c]); // coins on the floor, one [x, y] per coin (duplicates = a bigger pile); replaced, never spliced. Opening coins: src/coins.js
-    this.coins = 0; // the explorer's total
     this.heartPiles = (dungeon.hearts ?? []).map((c) => [...c]); // floating hearts: stepping on one restores a life (applyMove); replaced, never spliced. Testbed `hearts` option only
     this.heartsTaken = []; // picked-up hearts waiting to respawn: { cell: [x, y], due: step } (HEART_RESPAWN); replaced, never spliced
-    this.heartAt = null; // the step a heart was last picked up (Run.playTurn's `heart` event reads it)
     this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
-    lightAround(this, this.pos);
+    for (const e of this.explorers) lightAround(this, e.pos); // shared, max-only light
   }
+
+  // The primary explorer (explorers[0]): what every legacy single-explorer field below reads and writes.
+  get primary() { return this.explorers[0]; }
+  // An explorer by id; no id (or the legacy default) means the primary. Unknown ids throw.
+  explorer(id) {
+    if (id === undefined || id === null) return this.explorers[0];
+    if (typeof id === 'object') return id;
+    const e = this.explorers.find((x) => x.id === id);
+    if (!e) throw new Error(`unknown explorer ${id}`);
+    return e;
+  }
+  // Explorers still in play (not dead, forfeited or through the portal), in list order.
+  activeExplorers() { return this.explorers.filter((e) => e.status === 'active'); }
 
   // Shallow copy like the old `{ ...game, ...overrides }` spread: arrays and objects not in
   // `overrides` are shared. Keeps the prototype so methods work. `litOutside` must be a Set.
-  // Only the fog twin tests use it.
+  // Each explorer is shallow-copied too, so overriding `pos` (an accessor onto the primary) on a twin
+  // never moves the original's explorer. Only the fog twin tests use it.
   twin(overrides = {}) {
-    return Object.assign(Object.create(Game.prototype), this, overrides);
+    const t = Object.assign(Object.create(Game.prototype), this);
+    t.explorers = this.explorers.map((e) => Object.assign(Object.create(ExplorerState.prototype), e));
+    return Object.assign(t, overrides);
   }
 
-  // Takes lives off the explorer. The game is lost (caughtBy = sourceId) only when health hits 0.
-  // No-op once won or lost. Returns the state after the hit.
-  damage(amount = 1, sourceId = null) {
-    if (this.won || this.lost) return { health: this.health, lost: this.lost };
-    this.health = Math.max(0, round2(this.health - amount));
-    if (this.health === 0) {
-      this.lost = true;
-      this.caughtBy = sourceId;
+  // Takes lives off an explorer (the primary by default). The explorer dies at 0 health; the game is
+  // lost (caughtBy = sourceId) when no explorer is left active. No-op once won or lost. Returns the state after the hit.
+  damage(amount = 1, sourceId = null, explorerId = null) {
+    const e = this.explorer(explorerId);
+    if (this.won || this.lost || e.status !== 'active') return { health: e.health, lost: this.lost };
+    e.health = Math.max(0, round2(e.health - amount));
+    if (e.health === 0) {
+      e.status = 'dead';
+      e.outcome.diedAt = e.steps;
+      if (!this.activeExplorers().length) {
+        this.lost = true;
+        this.caughtBy = sourceId;
+      }
     }
-    return { health: this.health, lost: this.lost };
+    return { health: e.health, lost: this.lost };
   }
 
   // Next number of the per-game skill RNG (block rolls). Its own stream, created on the first call, so
@@ -693,85 +729,114 @@ export class Game {
     return this.coinRand();
   }
 
-  // Start-of-tick cleanup for skill state: strikes are per tick, a block lapses once steps passes until_step.
+  // Start-of-tick cleanup for skill state: strikes are per tick, a lapsed block goes (each explorer's own).
   clearTickState() {
     this.strikes = [];
     this.dispelled = [];
-    if (this.block && this.steps > this.block.until_step) this.block = null;
+    for (const e of this.explorers) if (e.block && e.steps > e.block.until_step) e.block = null;
   }
 
-  legalMoves() {
-    if (this.won || this.lost) return [];
-    const [x, y] = this.pos;
-    return Object.keys(DIRS).filter((d) => isFloor(this.dungeon, [x + DIRS[d][0], y + DIRS[d][1]]));
+  // The active explorer standing on `cell`, other than `exceptId` (a teammate blocks a move into it).
+  explorerAt(cell, exceptId = null) {
+    return this.explorers.find((e) => (e.status === 'active' || e.status === 'won') && e.id !== exceptId && same(e.pos, cell)) ?? null;
+  }
+
+  // Whom a monster at `cell` reacts to: the nearest active explorer it can see (range, line of sight, its
+  // own cell lit), else the nearest active one, else the primary. One explorer: always that explorer.
+  // Full multi-target monster AI is a later step; this keeps every monster read explorer-parametric.
+  targetExplorer(cell) {
+    if (this.explorers.length === 1) return this.explorers[0];
+    const live = this.explorers.filter((e) => e.status === 'active');
+    if (live.length <= 1) return live[0] ?? this.explorers[0];
+    const d = (e) => Math.hypot(e.pos[0] - cell[0], e.pos[1] - cell[1]);
+    const nearest = (list) => list.reduce((best, e) => (d(e) < d(best) ? e : best));
+    const seen = live.filter((e) => d(e) <= SIGHT_RANGE && this.isKnown(cell) && hasLineOfSight(this.dungeon, e.pos, cell));
+    return nearest(seen.length ? seen : live);
+  }
+
+  // Steps the explorer could take: floor cells, never one holding another active explorer.
+  legalMoves(explorerId = null) {
+    const e = this.explorer(explorerId);
+    if (this.won || this.lost || e.status !== 'active') return [];
+    const [x, y] = e.pos;
+    return Object.keys(DIRS).filter((d) => {
+      const c = [x + DIRS[d][0], y + DIRS[d][1]];
+      return isFloor(this.dungeon, c) && (this.explorers.length < 2 || !this.explorerAt(c, e.id));
+    });
   }
 
   // The explorer's per-tick options: every legal step plus STAY (stand still). Empty once the game is over.
-  availableMoves() {
-    const steps = this.legalMoves();
+  availableMoves(explorerId = null) {
+    const steps = this.legalMoves(explorerId);
     return steps.length ? [...steps, STAY] : steps;
   }
 
   // One turn of movement. Dash may cross up to four consecutive floor cells in that turn;
   // each crossed cell is visited, lit and collected, and a portal ends the move immediately.
   // STAY keeps the position: the tick still counts as a step, but nothing is revealed or revisited.
-  applyMove(dir, distance = 1) {
+  // A cell holding another active explorer is not enterable (Dash stops before it). First applied pickup wins.
+  applyMove(dir, distance = 1, explorerId = null) {
     if (!Number.isInteger(distance) || distance < 1 || distance > 4) throw new RangeError('move distance must be 1..4');
-    if (dir === STAY && !this.won && !this.lost) {
-      this.steps++;
-      const respawned = this.respawnHearts();
-      const regen = this.regenerate();
+    const e = this.explorer(explorerId);
+    if (dir === STAY && !this.won && !this.lost && e.status === 'active') {
+      e.steps++;
+      const respawned = this.respawnHearts(e);
+      const regen = this.regenerate(e);
       return { moved: false, stayed: true, revealed: 0, revisit: false, won: this.won, regen, respawned };
     }
-    if (this.won || this.lost || !this.legalMoves().includes(dir)) {
+    if (this.won || this.lost || !this.legalMoves(e).includes(dir)) {
       return { moved: false, revealed: 0, revisit: false, won: this.won };
     }
-    this.steps++;
+    e.steps++;
     let revealed = 0, revisit = false, coins = 0, healed = 0, respawned = 0, travelled = 0;
-    this.facing = dir;
+    e.facing = dir;
     for (let i = 0; i < distance; i++) {
-      const next = [this.pos[0] + DIRS[dir][0], this.pos[1] + DIRS[dir][1]];
-      if (!isFloor(this.dungeon, next)) break;
+      const next = [e.pos[0] + DIRS[dir][0], e.pos[1] + DIRS[dir][1]];
+      if (!isFloor(this.dungeon, next) || this.explorerAt(next, e.id)) break;
       const k = key(next);
-      revisit ||= (this.visits[k] ?? 0) > 0;
-      this.visits[k] = (this.visits[k] ?? 0) + 1;
-      this.pos = next;
-      this.trail.push([...next]);
+      revisit ||= (e.visits[k] ?? 0) > 0;
+      e.visits[k] = (e.visits[k] ?? 0) + 1;
+      e.pos = next;
+      e.trail.push([...next]);
       travelled++;
-      if (i === 0) respawned = this.respawnHearts(); // before pickup, once per turn
+      if (i === 0) respawned = this.respawnHearts(e); // before pickup, once per turn
       revealed += lightAround(this, next);
       const here = this.coinPiles.filter((c) => same(c, next)).length;
       if (here) {
         this.coinPiles = this.coinPiles.filter((c) => !same(c, next)); // replace: twin() shares the old array
-        this.coins += here;
+        e.coins += here;
         coins += here;
       }
-      if (this.health < this.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
+      if (e.health < e.maxHealth && this.heartPiles.some((c) => same(c, next))) { // a heart is only used up when it heals
         const taken = this.heartPiles.filter((c) => same(c, next));
         this.heartPiles = this.heartPiles.filter((c) => !same(c, next));
-        if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: this.steps + HEART_RESPAWN }))];
-        this.heartAt = this.steps;
-        const gain = round2(Math.min(this.maxHealth, this.health + 1) - this.health);
-        this.health = round2(this.health + gain);
+        if (HEART_RESPAWN > 0) this.heartsTaken = [...this.heartsTaken, ...taken.map(() => ({ cell: [...next], due: e.steps + HEART_RESPAWN }))];
+        e.heartAt = e.steps;
+        const gain = round2(Math.min(e.maxHealth, e.health + 1) - e.health);
+        e.health = round2(e.health + gain);
         healed = round2(healed + gain);
       }
       if (this.dungeon.treasure && same(next, this.dungeon.treasure)) {
         this.won = true;
         this.winBy = 'chest';
+        e.outcome.portal = true;
+        e.status = 'won';
         break;
       }
     }
-    const regen = this.regenerate();
+    const regen = this.regenerate(e);
     return { moved: true, revealed, revisit, won: this.won, coins, healed, regen, respawned, ...(distance > 1 ? { travelled } : {}) };
   }
 
-  // Picked-up hearts whose time has come go back on their own cell. One due on the explorer's cell
+  // Picked-up hearts whose time has come go back on their own cell. One due on an active explorer's cell
   // waits until it stands elsewhere, so a heart never reappears under it. Called by applyMove after the
-  // step is counted and before the pickup (a stay counts too). Returns how many came back.
+  // step is counted and before the pickup (a stay counts too). `by` is the explorer whose step clock reads
+  // the due time (the primary by default). Returns how many came back.
   // The explorer is never told hearts respawn: it just sees one again once its cell is lit.
-  respawnHearts() {
+  respawnHearts(by = null) {
     if (!this.heartsTaken.length) return 0;
-    const back = this.heartsTaken.filter((h) => h.due <= this.steps && !same(h.cell, this.pos));
+    const e = this.explorer(by);
+    const back = this.heartsTaken.filter((h) => h.due <= e.steps && !this.explorerAt(h.cell));
     if (!back.length) return 0;
     this.heartsTaken = this.heartsTaken.filter((h) => !back.includes(h)); // replace, never splice: twin() shares arrays
     this.heartPiles = [...this.heartPiles, ...back.map((h) => [...h.cell])];
@@ -780,12 +845,13 @@ export class Game {
 
   // Slow natural healing: every REGEN_STEPS steps a hurt, living explorer gets REGEN_AMOUNT lives back, up to max.
   // Called by applyMove after the step is counted (a stay counts too). Returns the lives healed (0 if none).
-  regenerate() {
-    if (!REGEN_STEPS || !REGEN_AMOUNT || this.steps % REGEN_STEPS !== 0) return 0;
-    if (this.won || this.lost || this.health >= this.maxHealth) return 0;
-    const gained = round2(Math.min(this.maxHealth, this.health + REGEN_AMOUNT) - this.health);
-    this.health = round2(this.health + gained);
-    this.regenAt = this.steps;
+  regenerate(explorerId = null) {
+    const e = this.explorer(explorerId);
+    if (!REGEN_STEPS || !REGEN_AMOUNT || e.steps % REGEN_STEPS !== 0) return 0;
+    if (this.won || this.lost || e.status !== 'active' || e.health >= e.maxHealth) return 0;
+    const gained = round2(Math.min(e.maxHealth, e.health + REGEN_AMOUNT) - e.health);
+    e.health = round2(e.health + gained);
+    e.regenAt = e.steps;
     return gained;
   }
 
@@ -808,6 +874,32 @@ export class Game {
   exploredPct() {
     return Math.round((this.knownFloorCount() / this.floorCount) * 100);
   }
+
+  // Legacy single-explorer fields: accessors onto the primary explorer, so every existing caller and check works.
+  get pos() { return this.explorers[0].pos; }
+  set pos(v) { this.explorers[0].pos = v; }
+  get steps() { return this.explorers[0].steps; }
+  set steps(v) { this.explorers[0].steps = v; }
+  get visits() { return this.explorers[0].visits; }
+  set visits(v) { this.explorers[0].visits = v; }
+  get trail() { return this.explorers[0].trail; }
+  set trail(v) { this.explorers[0].trail = v; }
+  get health() { return this.explorers[0].health; }
+  set health(v) { this.explorers[0].health = v; }
+  get maxHealth() { return this.explorers[0].maxHealth; }
+  set maxHealth(v) { this.explorers[0].maxHealth = v; }
+  get regenAt() { return this.explorers[0].regenAt; }
+  set regenAt(v) { this.explorers[0].regenAt = v; }
+  get graceTicks() { return this.explorers[0].graceTicks; }
+  set graceTicks(v) { this.explorers[0].graceTicks = v; }
+  get facing() { return this.explorers[0].facing; }
+  set facing(v) { this.explorers[0].facing = v; }
+  get block() { return this.explorers[0].block; }
+  set block(v) { this.explorers[0].block = v; }
+  get coins() { return this.explorers[0].coins; }
+  set coins(v) { this.explorers[0].coins = v; }
+  get heartAt() { return this.explorers[0].heartAt; }
+  set heartAt(v) { this.explorers[0].heartAt = v; }
 
   // Everything the browser needs. The full map is included only so the UI can offer
   // a debug "reveal map" toggle; the canvas should draw from `light` by default.
@@ -833,6 +925,8 @@ export class Game {
       visits: this.visits,
       trail: this.trail,
       explored_pct: this.exploredPct(),
+      // Several explorers only: each one's public state (the top-level pos/health/... stay the primary's).
+      ...(this.explorers.length > 1 ? { explorers: this.explorers.map((e) => ({ id: e.id, pos: [...e.pos], steps: e.steps, health: e.health, max_health: e.maxHealth, coins: e.coins, facing: e.facing, status: e.status, trail: e.trail })) } : {}),
     };
   }
 }

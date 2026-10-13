@@ -1,12 +1,14 @@
 // One world tick: the explorer moves (Jev decides), then the adversaries move (each brain-on
 // adversary's Jev brain decides, in parallel). A Run owns one game plus its explorer memory and
 // builds the browser view. The server uses only this module.
+import { mkdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Game, generateDungeon } from './dungeon.js';
 import { spawnCoins } from './coins.js';
 import { spawnHearts } from './hearts.js';
 import { brainView, graceLeft, seesExplorer, spawnAdversaries, stepAdversaries } from './characters/adversary/adversary.js';
 import { saveMemories } from './characters/adversary/memory.js';
-import { buildArena, explorerSkillSetOf } from './testbed.js';
+import { buildArena, explorerSkillSetOf, explorerStartsOf } from './testbed.js';
 import { saveMemory } from './characters/explorer/memory.js';
 import { ExplorerBrain } from './characters/explorer/brain.js';
 import { KnownWorld } from './characters/explorer/known-world.js';
@@ -37,11 +39,22 @@ export class Run {
   #lastInjectAt = -Infinity; // wall-clock ms of the last accepted directive (the cooldown)
   #tracker = null; // spectator navigation (src/route.js): null without a portal; only view() reads it, never the explorer
 
-  constructor(dungeon, adversaries, { ask = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
-    this.game = new Game(dungeon);
+  // `explorers` ([{ id, start }], default one 'explorer' at the start): several explorers share the game; `askFor(id)`
+  // (optional) gives an explorer its own `ask` stub, else all share `ask`. run.explorer is the primary's brain,
+  // run.explorers every explorer as { id, brain }. Extra explorers keep their memory in <memoryDir>/<id>/.
+  constructor(dungeon, adversaries, { ask = null, askFor = null, explorers = null, decide = null, dir = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
+    this.game = new Game(dungeon, explorers ? { explorers } : {});
     this.game.adversaries = adversaries;
     this.#decide = decide;
-    this.explorer = new ExplorerBrain(new KnownWorld(this.game), { ask, memoryDir, skills, hold, confidence, progress });
+    this.explorers = this.game.explorers.map((e, i) => {
+      let dirOf = memoryDir;
+      if (i > 0) {
+        dirOf = new URL(`${e.id}/`, memoryDir ?? DIR);
+        mkdirSync(fileURLToPath(dirOf), { recursive: true });
+      }
+      return { id: e.id, brain: new ExplorerBrain(new KnownWorld(this.game, e.id), { ask: askFor?.(e.id) ?? ask, memoryDir: dirOf, skills, hold, confidence, progress }) };
+    });
+    this.explorer = this.explorers[0].brain;
     this.#dir = dir ?? DIR;
     this.#memoryDir = memoryDir ?? DIR;
     const route = buildRoute(dungeon);
@@ -57,7 +70,7 @@ export class Run {
   // previous game's files lying around until its first paid step. The server calls this; the checks
   // do not (unless they pass temp dirs).
   async persist() {
-    await saveMemory(this.explorer.memory, this.#memoryDir);
+    for (const { brain, id } of this.explorers) await saveMemory(brain.memory, id === this.explorers[0].id ? this.#memoryDir : new URL(`${id}/`, this.#memoryDir));
     await saveMemories(this.game.adversaries.map((a) => a.memory), this.game.steps, this.#dir);
   }
 
@@ -120,31 +133,49 @@ export class Run {
 
   async #playTurn() {
     const { game } = this;
-    const wasLost = game.lost;
+    const multi = this.explorers.length > 1;
+    const statusBefore = new Map(game.explorers.map((e) => [e.id, e.status]));
     game.clearTickState(); // strikes are per tick; a lapsed block stance goes
-    const coinsBefore = game.coins;
-    const stepsBefore = game.steps;
-    const explorer = await this.explorer.takeTurn();
-    // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
-    // read from game.strikes (struck / dispelled need the brain's list).
-    const skillEvents = explorer.skill_events ?? game.strikes.filter((s) => s.by === 'explorer').map((s) => ({ id: s.by, type: 'strike', cells: s.cells, result: s.result }));
+    const before = new Map(game.explorers.map((e) => [e.id, { coins: e.coins, steps: e.steps }]));
+    // Several explorers: played one after another in id order (a dev/test driver; the hosted runtime schedules them apart).
+    const turns = new Map();
+    const skillEvents = [];
+    for (const { id, brain } of this.explorers) {
+      if (game.explorer(id).status !== 'active' && multi) continue;
+      const t = await brain.takeTurn();
+      turns.set(id, t);
+      // The explorer's skill events: the brain's own list when it hands one back, else the strike flash
+      // read from game.strikes (struck / dispelled need the brain's list).
+      skillEvents.push(...(t.skill_events ?? game.strikes.filter((s) => s.by === id).map((s) => ({ id: s.by, type: 'strike', cells: s.cells, result: s.result }))));
+    }
+    const explorer = turns.get(this.explorers[0].id) ?? {};
     // stepAdversaries first bumps an adversary the explorer stepped onto (knockback only), and does
     // nothing once the game is won or lost.
-    const { events: adversaryEvents, turns } = await stepAdversaries(game, { decide: this.#decide });
-    const coinEvents = game.coins > coinsBefore ? [{ id: 'explorer', type: 'coin', at: [...game.pos], gained: game.coins - coinsBefore, total: game.coins }] : [];
-    // A heart pickup this step (Game.heartAt), not a count of heartPiles: a heart respawning the same step would hide it.
-    const heartEvents = game.steps > stepsBefore && game.heartAt === game.steps ? [{ id: 'explorer', type: 'heart', at: [...game.pos], health: game.health }] : [];
-    // Natural healing (Game.regenerate): the step's regen, logged apart from a heart pickup.
-    const regenEvents = game.steps > stepsBefore && game.regenAt === game.steps ? [{ id: 'explorer', type: 'regen', at: [...game.pos], health: game.health }] : [];
+    const { events: adversaryEvents, turns: monsterTurns } = await stepAdversaries(game, { decide: this.#decide });
+    const coinEvents = [], heartEvents = [], regenEvents = [];
+    for (const e of game.explorers) {
+      const was = before.get(e.id);
+      if (e.coins > was.coins) coinEvents.push({ id: e.id, type: 'coin', at: [...e.pos], gained: e.coins - was.coins, total: e.coins });
+      // A heart pickup this step (heartAt), not a count of heartPiles: a heart respawning the same step would hide it.
+      if (e.steps > was.steps && e.heartAt === e.steps) heartEvents.push({ id: e.id, type: 'heart', at: [...e.pos], health: e.health });
+      // Natural healing (Game.regenerate): the step's regen, logged apart from a heart pickup.
+      if (e.steps > was.steps && e.regenAt === e.steps) regenEvents.push({ id: e.id, type: 'regen', at: [...e.pos], health: e.health });
+    }
     const events = [...skillEvents, ...coinEvents, ...heartEvents, ...regenEvents, ...adversaryEvents];
     await saveMemories(game.adversaries.map((a) => a.memory), game.steps, this.#dir);
-    const hit = events.find((e) => e.type === 'hit');
-    if (game.lost && !wasLost) await this.explorer.noteCaught(game.caughtBy);
-    else if (hit) await this.explorer.noteHit(hit.id);
-    // The explorer's own shield stopped a claw (the confidence model's +3). Its own cell, its own shield: fog-safe.
-    if (!(game.lost && !wasLost)) for (const e of events) if (e.type === 'blocked') await this.explorer.noteBlocked();
+    const primaryId = this.explorers[0].id;
+    for (const { id, brain } of this.explorers) {
+      const ex = game.explorer(id);
+      const diedNow = statusBefore.get(id) === 'active' && ex.status === 'dead';
+      const mine = (e) => (e.explorer ?? primaryId) === id;
+      const hit = events.find((e) => e.type === 'hit' && mine(e));
+      if (diedNow) await brain.noteCaught(hit?.id ?? game.caughtBy);
+      else if (hit) await brain.noteHit(hit.id);
+      // The explorer's own shield stopped a claw (the confidence model's +3). Its own cell, its own shield: fog-safe.
+      if (!diedNow) for (const e of events) if (e.type === 'blocked' && mine(e)) await brain.noteBlocked();
+    }
     this.#tracker?.update(game, { events, approach: this.explorer.memory?.approach?.id ?? null, directive: this.directive }); // spectator side reads explorer state; nothing flows back
-    return { ...explorer, directive: this.directive, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: turns };
+    return { ...explorer, directive: this.directive, events, lost: game.lost, caughtBy: game.caughtBy, adversaryTurns: monsterTurns, ...(multi ? { explorers: Object.fromEntries(turns) } : {}) };
   }
 
   view() {
@@ -182,5 +213,6 @@ export function newGame(seed, opts = {}) {
 // on a bad config. Costs no Jev calls.
 export function newTestGame(config, opts = {}) {
   const { dungeon, adversaries, config: cfg } = buildArena(config);
-  return new Run(dungeon, adversaries, { skills: explorerSkillSetOf(cfg), ...opts });
+  const starts = explorerStartsOf(dungeon, cfg);
+  return new Run(dungeon, adversaries, { skills: explorerSkillSetOf(cfg), ...(starts.length > 1 ? { explorers: starts } : {}), ...opts });
 }
