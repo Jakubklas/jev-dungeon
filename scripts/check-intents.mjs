@@ -3,14 +3,16 @@
 // tick split (beginAdversaryTick / decideAdversary / applyAdversaryResult) composes to stepAdversaries; the
 // single-monster pair validates against the current state. All Jev calls are stubs; any network call fails the check.
 // Run: JEV_CONFIG=none node scripts/check-intents.mjs
-globalThis.fetch = () => { throw new Error('network call in a check script'); };
+import { installTripwire } from './lib/tripwire.mjs';
+installTripwire();
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { newTestGame } from '../src/turn.js';
 import { stepAdversaries, beginAdversaryTick, decideAdversary, applyAdversaryResult, monsterTurnStart, monsterTurnApply, CallAborted as AdvAborted } from '../src/characters/adversary/adversary.js';
-import { CallAborted } from '../src/characters/explorer/brain.js';
+import { CallAborted } from '../src/gateway/errors.js';
+import { CallAborted as BrainAborted } from '../src/characters/explorer/brain.js';
 
 const root = mkdtempSync(join(tmpdir(), 'jev-intents-check-'));
 let n = 0;
@@ -174,9 +176,10 @@ async function swordCase(moveGhost) {
   const hit = await swordCase(false);
   ok(!hit.noSkill && hit.intent.skill.startsWith('sword_strike') && hit.hpLost === 1 && !hit.turn.stale, `a fresh sword lands (skill ${hit.intent?.skill}, hp lost ${hit.hpLost}, stale ${JSON.stringify(hit.turn?.stale)})`);
   const miss = await swordCase(true);
-  ok(!miss.noSkill && miss.hpLost === 0 && miss.strikes === 0, `a stale sword does not strike (hp lost ${miss.hpLost}, strikes ${miss.strikes})`);
-  ok(miss.turn?.stale?.some(([k]) => k === 'skill'), `stale skill reported (${JSON.stringify(miss.turn?.stale)})`);
-  ok(miss.turn?.skill_decision?.used === null, 'the skill decision says it was not used');
+  ok(!miss.noSkill && miss.hpLost === 0 && miss.strikes === 1, `a stale sword swings at the old cells and misses (hp lost ${miss.hpLost}, strikes ${miss.strikes})`);
+  ok(miss.turn?.stale?.some(([k, r]) => k === 'skill' && r === 'swung at the old cells'), `the swing is reported stale (${JSON.stringify(miss.turn?.stale)})`);
+  ok(miss.turn?.skill_decision?.used === miss.intent.skill, 'the skill decision says the sword was used');
+  ok(BrainAborted === CallAborted && AdvAborted === CallAborted, 'one CallAborted class across gateway, explorer and adversary');
 }
 
 // ---- 4. abort: before and during a call; the next decide starts clean ----

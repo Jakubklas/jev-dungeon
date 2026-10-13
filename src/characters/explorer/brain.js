@@ -17,6 +17,7 @@
 //              move question per tactic (`move_if_<tactic>`, judged with that tactic's move facts).
 //              The move taken is the answer for the tactic Jev chose, so this tick's move already
 //              follows the new tactic. With a single feasible tactic code takes it (no Choice).
+import { CallAborted } from '../../call-aborted.js';
 import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
@@ -77,9 +78,7 @@ const RETREATS = ['run_away', 'hide'];
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
 // An aborted decide(): thrown before any further Jev call, or when the signal fires while one is in flight.
-export class CallAborted extends Error {
-  constructor(message = 'The call was aborted.') { super(message); this.name = 'CallAborted'; }
-}
+export { CallAborted }; // src/call-aborted.js: one CallAborted class for the whole program
 
 function sameCells(a, b) {
   return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((c, i) => c[0] === b[i][0] && c[1] === b[i][1]);
@@ -1198,7 +1197,9 @@ export class ExplorerBrain {
       seq: ++this.#seq,
       step,
       skill: skillKey === 'none' ? null : skillKey,
-      skill_cells: chosen?.target?.cells ? chosen.target.cells.map((c) => [...c]) : null, // the aim apply() re-checks
+      skill_cells: chosen?.target?.cells ? chosen.target.cells.map((c) => [...c]) : null, // the aim apply() swings at, even if the target moved
+      skill_id: chosen?.skill?.id ?? null, // the skill behind the key, for a swing whose option is gone by apply time
+      skill_dir: chosen?.target?.dir ?? null,
       move: dir,
       distance: dashes ? chosen.skill.distance : 1,
       held,
@@ -1231,9 +1232,22 @@ export class ExplorerBrain {
     if (skillKey !== 'none') {
       const offered = skillKey in this.#skillOptions(); // fresh options also refresh the targets useSkill reads
       const picked = this.#skills.get(skillKey);
-      if (!offered) stale.push(['skill', 'no longer offered']);
-      else if (intent.skill_cells && !sameCells(intent.skill_cells, picked?.target?.cells)) stale.push(['skill', 'its aimed cells changed']);
+      const aimed = intent.skill_cells ? this.#skills.skills.find((k) => k.id === intent.skill_id && (k.kind === 'attack' || k.kind === 'area')) : null;
+      if (aimed && (!offered || !sameCells(intent.skill_cells, picked?.target?.cells))) {
+        // A stale aimed attack still swings (PLAN-multiplayer "Continuous time"): it keeps the direction and shape
+        // chosen from the old observation and hits only whoever stands in those cells now, a miss when the target
+        // moved. It never retargets. Only a skill that is not ready by now is skipped.
+        if (!aimed.ready) stale.push(['skill', 'not ready']);
+        else {
+          const target = { dir: intent.skill_dir ?? undefined, cells: intent.skill_cells.map((c) => [...c]) };
+          skillDecision.used = this.#useSkill(skillKey, step, { skill: aimed, target });
+          if (skillDecision.used) stale.push(['skill', 'swung at the old cells']);
+        }
+      }
+      else if (!offered) stale.push(['skill', 'no longer offered']);
       else if (picked?.skill.kind !== 'dash' || (moveOk && dir !== STAY)) {
+        // Dash: the move is checked against the current legal moves above, and the world stops the dash early at a
+        // wall or a newly occupied cell (a teammate), so a blocked path shortens or becomes the plain step.
         skillDecision.used = this.#useSkill(skillKey, step);
         if (skillDecision.used && picked.skill.kind === 'dash') distance = picked.skill.distance;
       }
@@ -1299,11 +1313,11 @@ export class ExplorerBrain {
 
   // Uses the picked skill through the world, notes what it did. Returns the key used, or null when the
   // world refused (not ready / unknown). Fog-safe: only ids the explorer saw can be struck.
-  #useSkill(key, step) {
+  #useSkill(key, step, forced = null) {
     const world = this.#world;
     const memory = this.#memory;
-    const picked = this.#skills.get(key);
-    const res = world.useSkill(this.#skills, key);
+    const picked = forced ?? this.#skills.get(key);
+    const res = world.useSkill(this.#skills, key, forced);
     const events = Array.isArray(res) ? res : res?.events;
     if (!events) return null;
     this.#skillEvents.push(...events); // handed to Run.playTurn through the turn shape
@@ -1328,6 +1342,12 @@ export class ExplorerBrain {
       }
     }
     return key;
+  }
+
+  // Hands the game's clock to the skills that run on real seconds (Dash), so a pause freezes their cooldown. The hosted
+  // runtime calls it once per explorer; Run never does (Dash keeps its own wall clock there).
+  attachClock(now) {
+    for (const k of this.#skills.skills) if (typeof k.attachClock === 'function') k.attachClock(now);
   }
 
   // Mirrors the live skills into memory (sync: apply() does it under the lock).

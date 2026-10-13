@@ -8,6 +8,9 @@ import { NoKey } from './errors.js';
 import { DEFAULT_RETRY_STATUS, JEV_ENDPOINT, postWithRetry } from './jev-client.js';
 import { NullRecorder } from './recorder.js';
 
+// The asker's own signal (pause, forfeit) and the per-request one the brain forwards (a decision aborted mid-flight).
+const joinSignals = (a, b) => (a && b ? AbortSignal.any([a, b]) : a ?? b ?? null);
+
 export class Gateway {
   #fetchImpl;
   #serverKey;
@@ -50,7 +53,7 @@ export class Gateway {
     return async (req) => {
       const key = getKey();
       if (!key) throw new NoKey(actorId);
-      return this.#call(key, { game: gameId, actor: actorId, kind: req.kind, signal, body: this.#body(req) });
+      return this.#call(key, { game: gameId, actor: actorId, kind: req.kind, signal: joinSignals(signal, req.signal), body: this.#body(req) });
     };
   }
 
@@ -59,7 +62,7 @@ export class Gateway {
     return async (req) => {
       const key = typeof this.#serverKey === 'function' ? this.#serverKey() : this.#serverKey;
       if (!key) throw new NoKey('the server');
-      return this.#call(key, { game: gameId, actor: req.id, kind: 'monster', signal, body: this.#body(req) });
+      return this.#call(key, { game: gameId, actor: req.id, kind: 'monster', signal: joinSignals(signal, req.signal), body: this.#body(req) });
     };
   }
 

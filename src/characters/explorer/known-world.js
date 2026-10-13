@@ -84,8 +84,9 @@ export class KnownWorld {
   // Uses the skill behind `key` of `skillSet`'s latest options() call, before the step: an attack turns to
   // its aim and strikes its cells, a block raises the stance until the next step. Returns the events
   // (strike, struck, dispelled), or null when the key is unknown or the skill is not ready.
-  useSkill(skillSet, key) {
-    const picked = skillSet.get(key);
+  // `forced` ({ skill, target }) swings a stale aimed attack at its old cells (the runtime): no target lookup.
+  useSkill(skillSet, key, forced = null) {
+    const picked = forced ?? skillSet.get(key);
     const me = this.#me;
     if (!picked || !picked.skill.ready || this.#game.won || this.#game.lost || me.status !== 'active') return null;
     const { skill, target } = picked;

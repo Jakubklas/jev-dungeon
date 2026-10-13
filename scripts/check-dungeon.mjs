@@ -48,6 +48,8 @@ const ALLOWED_IMPORTS = {
   // progress.js (DUNGEON_DIRECTION_PLAN section 4): known-path progress and retreat detection. Pure, imports nothing (check-progress asserts it).
   './progress.js': null,
   '../../jev.js': null, 'node:fs/promises': null,
+  // The one CallAborted class (src/call-aborted.js: a pure error class, no game state; the gateway re-exports it) so the runtime can tell an aborted decision from a failed one by class.
+  '../../call-aborted.js': ['CallAborted'],
   // SIGHT_RANGE is a constant, not hidden state: brain.js uses it to expire a remembered sighting once
   // the explorer stands within sight range of the frozen cell with a known line of sight to it.
   '../../dungeon.js': ['DIRS', 'LIGHT_RADIUS', 'STAY', 'EXPLORER_LIVES', 'SIGHT_RANGE'],

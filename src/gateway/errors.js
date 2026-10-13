@@ -28,13 +28,8 @@ export class CallTimeout extends Error {
   }
 }
 
-// The caller's own signal fired (pause, forfeit, new game).
-export class CallAborted extends Error {
-  constructor() {
-    super('Jev call aborted');
-    this.name = 'CallAborted';
-  }
-}
+// The caller's own signal fired (pause, forfeit, new game). One class for the whole program: see ../call-aborted.js.
+export { CallAborted } from '../call-aborted.js';
 
 // A final failure: a status that is not retried, retries used up, a network error or an unreadable 200.
 // `status` is 0 when nothing came back.

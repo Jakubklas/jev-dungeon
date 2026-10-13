@@ -7,6 +7,7 @@
 // Damage model (PLAN-skills.md S4): a touch is only a BUMP (knockback, event 'bump', no life lost, no grace).
 // Only attacks take lives: a hunting ghost may use its claw strike (the `skill` question, brain.js); a patrolling
 // ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
+import { CallAborted } from '../../call-aborted.js';
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng, startSight } from '../../dungeon.js';
 import {
   KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, tabuReport, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
@@ -784,9 +785,7 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
 }
 
 // An aborted decideAdversary(): the signal fired before or while its Jev call was in flight.
-export class CallAborted extends Error {
-  constructor(message = 'The call was aborted.') { super(message); this.name = 'CallAborted'; }
-}
+export { CallAborted }; // src/call-aborted.js: one CallAborted class for the whole program
 
 const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
 // How long a monster takes per step, in ms of world time: stepMs / speed. The hosted runtime schedules a monster's
@@ -828,7 +827,7 @@ export function beginAdversaryTick(game) {
 // on a failed call (-> { error }); an aborted `signal` rejects with CallAborted. Does not touch the Game.
 export function decideAdversary(game, a, ctx, { decide: ask = null, signal = null } = {}) {
   if (signal?.aborted) return Promise.reject(new CallAborted());
-  const p = decide(viewOf(game, a), a, ctx.tick, ctx.cfgOf(a), ask);
+  const p = decide(viewOf(game, a), a, ctx.tick, ctx.cfgOf(a), ask, signal);
   if (!signal) return p;
   return new Promise((resolve, reject) => {
     const onAbort = () => reject(new CallAborted());

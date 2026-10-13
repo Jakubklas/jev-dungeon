@@ -785,6 +785,16 @@ export class Game {
     return { health: e.health, lost: this.lost };
   }
 
+  // An explorer leaves the game (a player forfeits or is removed): it is no longer active, so it stops occupying a cell and
+  // monsters stop targeting it. The game is lost when nobody active is left (and nobody has won). No-op once over.
+  forfeit(explorerId) {
+    const e = this.explorer(explorerId);
+    if (this.won || this.lost || e.status !== 'active') return { lost: this.lost };
+    e.status = 'forfeited';
+    if (!this.activeExplorers().length) this.lost = true;
+    return { lost: this.lost };
+  }
+
   // Next number of the per-game skill RNG (block rolls). Its own stream, created on the first call, so
   // it never touches generateDungeon / spawnAdversaries rng order.
   skillRandom() {

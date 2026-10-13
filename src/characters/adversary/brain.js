@@ -560,7 +560,7 @@ export function buildRequest(view, a, tick, cfg) {
 // One step's decision. Never throws: a failed call returns { error } and the caller falls back
 // to the code move. -> { dir|null, decision, keep_hunting, approach, forced, apiMs, error }
 // `ask` replaces the Jev call (the checks inject stubs); required: build it with the gateway.
-export async function decide(view, a, tick, cfg, ask = null) {
+export async function decide(view, a, tick, cfg, ask = null, signal = null) {
   const h = a.hunt;
   const req = buildRequest(view, a, tick, cfg);
   if (!req.body) return { dir: req.forced, decision: null, keep_hunting: null, approach: null, forced: true, apiMs: 0, error: null, skill: 'none', skill_decision: null };
@@ -569,9 +569,9 @@ export async function decide(view, a, tick, cfg, ask = null) {
   const started = performance.now();
   let answers;
   try {
-    answers = await ask({ id: a.id, state: req.state, questions: req.questions, body: req.body });
+    answers = await ask({ id: a.id, state: req.state, questions: req.questions, body: req.body, signal });
   } catch (err) {
-    return { dir: null, decision: null, keep_hunting: null, approach: null, forced: false, apiMs: Math.round(performance.now() - started), error: err.message ?? String(err), skill: 'none', skill_decision: null };
+    return { dir: null, decision: null, keep_hunting: null, approach: null, forced: false, apiMs: Math.round(performance.now() - started), error: err.message ?? String(err), errorName: err.name ?? null, skill: 'none', skill_decision: null };
   }
   const apiMs = Math.round(performance.now() - started);
   let dir = req.legal.length === 1 ? req.legal[0] : null;
