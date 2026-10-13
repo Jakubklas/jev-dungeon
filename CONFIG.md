@@ -59,6 +59,12 @@ Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.
 | `monsters.characters.lonerHearing` | 10 | 1..60 | next | no | A loner answers a call only when the explorer is this close, steps |
 | `monsters.brain.pingpongs` | 3 | 2..10 | live | no | Back-and-forth steps while searching before a monster re-picks its search approach |
 | `monsters.brain.skillNear` | 10 | 1..30 | live | no | A monster asks about a skill when the explorer is within this many cells |
+| `monsters.tabu.enabled` | true | on/off | live | no | Tabu: bounce cells and ping-ponged search approaches are left off a monster's request |
+| `monsters.tabu.bounceTenure` | 6 | 1..60 | live | no | Ticks the cell a monster's bounce returned to stays ruled out |
+| `monsters.tabu.loopWindow` | 12 | 4..40 | live | no | Steps a monster's loop rule looks back over |
+| `monsters.tabu.loopVisits` | 3 | 2..10 | live | no | Entries of one cell within the loop window that rule it out for a monster |
+| `monsters.tabu.loopTenure` | 8 | 1..60 | live | no | Ticks a looped-through cell stays ruled out for a monster |
+| `monsters.tabu.minMoves` | 2 | 1..4 | live | no | Fewest moves a monster's request lists after tabu alone |
 | `monsters.perception.sweepRadius` | 10 | 1..40 | live | no | Default sweep radius around the last sighting, steps (a character may override) |
 | `monsters.perception.cutMin` | 3 | 1..20 | live | no | Nearest cut-off candidate from the last sighting, steps |
 | `monsters.perception.cutMax` | 24 | 1..100 | live | no | Farthest cut-off candidate from the last sighting, steps (a character may override) |

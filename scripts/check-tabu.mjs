@@ -12,6 +12,10 @@ import { newTestGame } from '../src/turn.js';
 import { DIRS, REGEN_STEPS, configureWorld, rng } from '../src/dungeon.js';
 import { configureConfidence, confidenceSnapshot } from '../src/characters/explorer/confidence.js';
 import { configureExplorerBrain, explorerBrainSnapshot } from '../src/characters/explorer/brain.js';
+import { adversaryBrainSnapshot, buildRequest, setMemoryOn, configureAdversaryBrain, decide as adversaryDecide, switchOnAlerted } from '../src/characters/adversary/brain.js';
+import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
+import { stepAdversaries } from '../src/characters/adversary/adversary.js';
+import { saveMemories } from '../src/characters/adversary/memory.js';
 
 let failures = 0;
 const ok = (cond, msg) => { if (!cond) { failures++; console.error('FAIL:', msg); } };
@@ -700,6 +704,154 @@ const ppPlay = async (on, ticks = 24) => {
   const tb = await play(b, 24);
   ok(sig(a) === sig({ turns: tb }), '5c: tabuMoves off sends exactly the requests of tabuEnabled off through a ping-pong');
 }
+
+// ---- 6. Phase 5: monsters (every kind: moves M1/M2 and the search approach) -------------------------------------------
+// One implementation in adversary/brain.js serves ghost, troll, tree_giant and wolf. State is the monster's private hunt state.
+const MON_DEFAULTS = adversaryBrainSnapshot();
+const monKnobs = (o = {}) => configureAdversaryBrain({ ...MON_DEFAULTS, ...o });
+const KINDS_ALL = ['ghost', 'troll', 'tree_giant', 'wolf'];
+const FIELD = ['##############################', '#............................#', '#............................#', '#............................#', '#............................#', '#............................#', '##############################'];
+const FIELD_ROWS = FIELD.map((r, i) => (i === 3 ? '#@...........................#' : r));
+// A hunting monster far from the explorer (out of sight), put into search mode the way a pack call does. `pick(ids, a)`
+// answers next_move; the log keeps every request body and question set per tick.
+async function monsterRun(kind, pick, ticks, { arenaExtra = {}, tweak = null } = {}) {
+  Math.random = rng(77);
+  const run = newTestGame({ map: FIELD_ROWS, numAdversaries: 1, adversaries: [[22, 4]], ghostSkills: 'none', explorerSkills: 'none', treasure: null, seed: 5, kinds: kind, ...arenaExtra }, { ask: async () => ({}), decide: async () => ({}), memoryDir: pathToFileURL(mkdtempSync(join(root, 'm')) + '/'), dir: pathToFileURL(mkdtempSync(join(root, 'd')) + '/') });
+  const game = run.game;
+  const a = game.adversaries[0];
+  a.mode = 'search';
+  a.lastSeen = [20, 4];
+  switchOnAlerted(a, 0, [20, 4], 'right', 'a0');
+  if (tweak) tweak(game, a);
+  const log = [];
+  const decide = async ({ id, questions, body }) => {
+    const ids = questions.next_move ? Object.keys(questions.next_move.criteria) : [];
+    log.push({ tick: game.adversaryTicks, questions, body, ids });
+    const out = {};
+    if (questions.next_move) { const c = pick(ids, a); out.next_move = { choice: c, probabilities: { [c]: 1 }, confidence: 1 }; }
+    if (questions.search_approach) out.search_approach = { choice: 'sweep_last_seen', probabilities: { sweep_last_seen: 1 }, confidence: 1 };
+    if (questions.keep_hunting) out.keep_hunting = { noul: 0.95 };
+    return out;
+  };
+  const turns = [], evs = [];
+  for (let i = 0; i < ticks && a.hunt.on; i++) {
+    turns.push((await stepAdversaries(game, { decide })).turns.find((t) => t.id === a.id));
+    evs.push(a.memory.events.map((e) => e.text));
+  }
+  return { run, game, a, log, turns, evs };
+}
+const reverse = () => { let last = null; return (ids) => { const c = last && ids.includes(OPP[last]) ? OPP[last] : ids[0]; last = c; return c; }; };
+const MOVE_DIRS = ['up', 'down', 'left', 'right'];
+
+// 6a. For each kind: a searching monster whose stub always undoes its move ping-pongs; the ping-ponged approach becomes tabu,
+// the next request has no search_approach question and the approach is the other one.
+for (const kind of KINDS_ALL) {
+  monKnobs();
+  const r = await monsterRun(kind, reverse(), 40);
+  const fi = r.turns.findIndex((t) => t.tabu?.forced_approach);
+  ok(fi >= 0, `6a ${kind}: the search ping-pong forces an approach (tick ${fi})`);
+  if (fi < 0) continue;
+  ok(r.turns[fi].tabu.forced_approach === 'cut_off' && r.turns[fi].tabu.approach?.[0]?.attr === 'sweep_last_seen', `6a ${kind}: sweep_last_seen is tabu and cut_off taken (${JSON.stringify(r.turns[fi].tabu)})`);
+  ok(r.a.memory.approach.id === 'cut_off' || r.turns.slice(fi + 1).length === 0 || r.a.memory.approach.id !== 'sweep_last_seen', `6a ${kind}: the approach is the other one (${r.a.memory.approach.id})`);
+  const asked = r.log.map((l, i) => [i, 'search_approach' in l.questions]);
+  const firstAsk = asked.findIndex(([, q]) => q);
+  ok(firstAsk === 0, `6a ${kind}: (setup) the first request asks search_approach`);
+  ok(asked.slice(1).every(([, q]) => !q), `6a ${kind}: no later request asks search_approach (the tabu lasts maxSearchTicks)`);
+  ok(r.evs[fi].some((e) => /^Ruled out sweep_last_seen for \d+ ticks: kept stepping back and forth\. Taking cut_off\.$/.test(e)), `6a ${kind}: one memory event when it fires (${r.evs[fi].join(' | ')})`);
+  // 6b. Bounced-to cells are absent from next_move; never fewer than 2 options.
+  ok(r.log.every((l) => !l.questions.next_move || l.ids.length >= 2), `6b ${kind}: no next_move question lists fewer than 2 moves`);
+  const dropped = r.turns.filter((t) => t.tabu?.removed_moves.length);
+  ok(dropped.length > 0, `6b ${kind}: (setup) a move was removed at some tick`);
+  ok(r.turns.every((t, i) => !t.tabu || t.tabu.removed_moves.every((d) => { const l = r.log.find((x) => x.tick === i + 1); return !l || !l.ids.includes(d); })), `6b ${kind}: a removed direction is absent from that tick's next_move criteria`);
+  ok(r.turns.every((t) => t.dir === null || MOVE_DIRS.includes(t.dir)), `6b ${kind}: moves stay plain directions`);
+}
+
+// 6a'. With smart memory (adversaryCharacters) on the memory's own ring and the 3-ping-pong rule run as before; the tabu still forces.
+{
+  setMemoryOn(true);
+  monKnobs();
+  const r = await monsterRun('ghost', reverse(), 40);
+  const fi = r.turns.findIndex((t) => t.tabu?.forced_approach);
+  ok(fi >= 0 && r.log.slice(1).every((l) => !('search_approach' in l.questions)), `6a': memory on: forced approach and no search_approach question after the first (tick ${fi})`);
+  ok(fi >= 0 && !r.evs[fi].some((e) => /choosing a search approach again/.test(e)), "6a': memory on: no 'choosing again' event when the approach was forced");
+  setMemoryOn(false);
+}
+
+// 6b'. M1: the removed move leads to the cell the monster bounced to (ghost), and the move onto the explorer is never removed.
+{
+  monKnobs({ advPingpongs: 10 }); // keep the search approach out of it: moves only
+  const r = await monsterRun('ghost', reverse(), 14);
+  const t = r.turns.find((x) => x.tabu?.removed_moves.length);
+  ok(Boolean(t) && r.a.memory.events.some((e) => /^Ruled out the cell to the (north|south|east|west) for \d steps: kept (stepping back and forth|coming back to it)\.$/.test(e.text)), `6b': one lazy event names the cell (${r.a.memory.events.map((e) => e.text).join(' | ')})`);
+  monKnobs();
+  // Aspiration: the explorer in sight on a ruled-out cell: that step stays (the bump/strike line), the others may go.
+  const { game, a } = await monsterRun('ghost', reverse(), 0, { tweak: (g, m) => { m.pos = [4, 3]; g.pos = [5, 3]; m.hunt.inSight = true; } });
+  const view = new AdversaryView(game, a);
+  view.update(1);
+  a.hunt.inSight = true;
+  const cfg = { speed: 0.6, maxSearchTicks: 18, graceTicks: 4, hitDamage: 1 };
+  const base = Object.keys(buildRequest(view, a, 1, cfg).questions.next_move.criteria);
+  for (const d of ['right', 'up', 'down']) T.add(a.hunt.tabu, 'cell', `${a.pos[0] + DIRS[d][0]},${a.pos[1] + DIRS[d][1]}`, { step: 1, tenure: 9, reason: 'x' });
+  const after = Object.keys(buildRequest(view, a, 2, cfg).questions.next_move.criteria);
+  ok(base.length === 4 && after.includes('right') && after.length >= 2, `6b': the step onto the explorer is kept and two moves remain (${after})`);
+  ok(!after.includes('up') || !after.includes('down'), `6b': at least one ruled-out cell is dropped (${after})`);
+  // minMoves 1 with all but the explorer's cell ruled out: one move left, no next_move question (today's single-move path)
+  monKnobs({ advTabuMinMoves: 1 });
+  for (const d of ['left']) T.add(a.hunt.tabu, 'cell', `${a.pos[0] + DIRS[d][0]},${a.pos[1] + DIRS[d][1]}`, { step: 1, tenure: 9, reason: 'x' });
+  const one = buildRequest(view, a, 3, cfg);
+  ok(one.legal.join() === 'right' && !one.questions?.next_move, `6b': one move left: no next_move question (${one.legal})`);
+  monKnobs();
+}
+
+// 6c. Answer validation never returns a removed direction (the stub names one anyway).
+{
+  monKnobs();
+  const { game, a } = await monsterRun('ghost', reverse(), 0);
+  const view = new AdversaryView(game, a);
+  view.update(1);
+  const cfg = { speed: 0.6, maxSearchTicks: 18, graceTicks: 4, hitDamage: 1 };
+  const gone = ['up', 'right'];
+  for (const d of gone) T.add(a.hunt.tabu, 'cell', `${a.pos[0] + DIRS[d][0]},${a.pos[1] + DIRS[d][1]}`, { step: 1, tenure: 9, reason: 'x' });
+  const req = buildRequest(view, a, 2, cfg);
+  ok(gone.every((d) => !req.legal.includes(d)) && req.legal.length === 2, `6c: (setup) two moves are removed (${req.legal})`);
+  for (const d of gone) {
+    const res = await adversaryDecide(view, a, 2, cfg, async () => ({ next_move: { choice: d, probabilities: { [d]: 1 }, confidence: 1 }, keep_hunting: { noul: 0.9 } }));
+    ok(req.legal.includes(res.dir) && res.dir !== d, `6c: a removed answer (${d}) falls back to a listed move (${res.dir})`);
+  }
+}
+
+// 6d. State is private: six public keys, no tabu in memory / adversaries.json, nothing sent to Jev beyond the options.
+{
+  monKnobs();
+  const r = await monsterRun('ghost', reverse(), 10);
+  ok(Object.keys(r.a).join() === 'id,pos,mode,budget,lastSeen,goal', `6d: six public keys (${Object.keys(r.a)})`);
+  ok(r.a.hunt.tabu.entries.length > 0 || r.a.hunt.told.size > 0, '6d: (setup) the hunt state holds tabu entries');
+  const mem = JSON.stringify(r.a.memory);
+  ok(!/tabu|ring|"told"/.test(mem), '6d: the monster memory has no tabu field');
+  const out = pathToFileURL(mkdtempSync(join(root, 's')) + '/');
+  await saveMemories(r.game.adversaries.map((x) => x.memory), 1, out);
+  ok(!/tabu|ring/.test(readFileSync(new URL('adversaries.json', out), 'utf8')), '6d: adversaries.json has no tabu field');
+}
+
+// 6e. Off arm and no-stall equality; determinism. The walker steps along the hall toward the explorer (never undoes a move).
+{
+  const march = () => (ids) => (ids.includes('left') ? 'left' : ids[0]);
+  const sig = (r) => JSON.stringify([r.log.map((l) => l.body), r.turns.map((t) => t.dir)]);
+  monKnobs();
+  const on = await monsterRun('ghost', march(), 30);
+  monKnobs({ advTabuEnabled: false });
+  const off = await monsterRun('ghost', march(), 30);
+  ok(sig(on) === sig(off), '6e: a monster that never stalls sends identical requests with the level on and off');
+  ok(off.turns.every((t) => t.tabu === null), '6e: off: the turn report has tabu null (so is a tick the monster did not act)');
+  ok(on.turns.some((t) => t.tabu) && on.turns.every((t) => !t.tabu || (t.tabu.removed_moves.length === 0 && t.tabu.forced_approach === null)), '6e: on, no stall: nothing removed or forced');
+  const offStall = await monsterRun('ghost', reverse(), 40);
+  ok(offStall.log.every((l) => !l.questions.next_move || l.ids.length >= 2) && offStall.turns.every((t) => t.tabu === null), '6e: off, a stall: every legal move stays listed');
+  monKnobs();
+  const d1 = await monsterRun('wolf', reverse(), 40), d2 = await monsterRun('wolf', reverse(), 40);
+  ok(sig(d1) === sig(d2) && JSON.stringify(d1.turns.map((t) => t.tabu)) === JSON.stringify(d2.turns.map((t) => t.tabu)), '6e: two runs give identical requests and reports');
+}
+monKnobs();
+
 
 conf({});
 configureExplorerBrain(DEFAULTS);

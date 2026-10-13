@@ -13,7 +13,7 @@ import {
 import { addEvent, createMemory, validateMemory } from '../src/characters/adversary/memory.js';
 import { configureWorld } from '../src/dungeon.js';
 import { configureAdversaries } from '../src/characters/adversary/adversary.js';
-import { brainView, buildRequest } from '../src/characters/adversary/brain.js';
+import { brainView, buildRequest, configureAdversaryBrain } from '../src/characters/adversary/brain.js';
 import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
 import { EXPLORER, resolveAttack } from '../src/skills/resolve.js';
 import { skillConfig, configureSkills } from '../src/skills/config.js';
@@ -694,6 +694,9 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
 // 5f. Memory shape: re-sighting does not flood `tried`, the tally counts, events stay few, and the
 //     request carries surroundings and team. No probabilities reach Jev; the UI view keeps them.
 {
+  // This block's stub teleports and shuttles on purpose to count re-sightings; monster tabu (PLAN-tabu phase 5) would
+  // rightly rule that stall out and add events, so it is off here (check-tabu section 6 covers the tabu behaviour).
+  configureAdversaryBrain({ advTabuEnabled: false });
   const game = twoRooms();
   const a = adversary('a1', [2, 1]);
   game.adversaries = [a];
@@ -720,6 +723,7 @@ const stayNearLastSeen = (s) => s.last_seen?.cell ?? s.explorer.position;
   m = validateMemory(a.memory);
   check(m.approach.tried.length === 1 && m.approach.tried[0].id === 'sweep_last_seen', `memory: tried after giving up ${JSON.stringify(m.approach.tried)}`);
   check(m.events.at(-1).text.startsWith('Gave up') && m.events.length === 2, `memory: events after giving up ${JSON.stringify(m.events)}`);
+  configureAdversaryBrain({ advTabuEnabled: true });
   // The events cap and the no-duplicate-tick rule.
   for (let i = 0; i < 12; i++) addEvent(m, `moment ${i}`, i + 100);
   check(m.events.length === 5 && m.events[0].text === 'moment 7', `memory: events cap ${m.events.length}`);

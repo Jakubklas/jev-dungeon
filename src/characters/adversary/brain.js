@@ -21,6 +21,7 @@ import { askJev, shuffle, jevModel } from '../../jev.js';
 import { PRESETS, profileOf, strikeLineFor, traitsOf } from './character.js';
 import { DEFAULT_MOOD, apply as applyMoraleEvent, band as moraleBand, capability, combine, moodFor, moodKnobs, moraleOf, routNext, startHunt, tierOf, MOODS } from './morale.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
+import { add as tabuAdd, age as tabuAge, createTabu, filterOptions, snapshot as tabuSnapshot } from '../shared/tabu.js';
 
 export let KEEP_HUNTING_MIN = 0.5; // keep_hunting.noul below this switches the brain off (live: src/settings.js)
 export const setKeepHuntingMin = (v) => { KEEP_HUNTING_MIN = v; };
@@ -34,6 +35,14 @@ export let MORALE_ON = false;
 export const setMoraleOn = (v) => { MORALE_ON = Boolean(v); };
 const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
 let PINGPONGS = 3; // back-and-forth steps while searching before the search approach is chosen again
+// Tabu for monsters (PLAN-tabu phase 5, shared/tabu.js): a cell the hunt kept bouncing to or looping through, and a search
+// approach that ping-ponged, are taken off the request. Defaults are the explorer's (live: src/settings.js -> configureAdversaryBrain).
+let TABU_ON = true;
+let TABU_BOUNCE_TENURE = 6;
+let TABU_LOOP_WINDOW = 12;
+let TABU_LOOP_VISITS = 3;
+let TABU_LOOP_TENURE = 8;
+let TABU_MIN_MOVES = 2;
 
 const PRESET_STYLE = (id) => PRESETS[id].style;
 const key = ([x, y]) => `${x},${y}`;
@@ -88,9 +97,15 @@ export function newHunt(id, profile = profileOf(traitsOf('standard')), character
     // mood. It is never reset by a hunt (startHunt only clears the per-hunt slip budget), so a monster
     // remembers that it was nearly killed. `knobs` is null while the toggle is off: then nothing changes.
     morale: moraleOf(profile), moraleQueue: [], mood: DEFAULT_MOOD, tier: 'mid', rout: false, knobs: null,
+    // Tabu (PLAN-tabu phase 5): private, never in memory, never sent. `ring` is the cells of the current hunt's steps (the
+    // memory's own `recent.cells` is empty with adversaryCharacters off), `told` the entries already written as an event.
+    tabu: createTabu(), ring: [], told: new Set(), tabuTurn: null, searchTicks: 18,
     memory: createMemory(id, character),
   };
 }
+
+// A hunt starts and ends clean: no cell or approach carries over.
+const resetTabu = (h) => { h.tabu = createTabu(); h.ring = []; h.told = new Set(); };
 
 // Default Jev call, in the shape of an injected `ask`.
 const jevAsk = ({ state, questions, body }) => askJev(state, questions, body);
@@ -114,6 +129,7 @@ export function seen(view, a, tick, { startOfTick, own = true }) {
   h.swept.clear();
   h.cutOff = null;
   h.pickApproach = false;
+  if (resighted) h.tabu.entries = h.tabu.entries.filter((e) => e.level !== 'approach'); // sight regained: a new search starts clean
   if (startOfTick) {
     const d = view.distancesFrom(a.pos).get(key(view.explorer()));
     if (d !== undefined) h.dists = [...h.dists, d].slice(-4);
@@ -140,6 +156,7 @@ export function switchOn(view, a, tick) {
   const h = a.hunt;
   h.on = true;
   h.dists = [];
+  resetTabu(h);
   brainOn(h.memory, tick, 'spotted the explorer', { keepEvents: MEMORY_ON });
   h.morale = startHunt(h.morale); // a new hunt, a fresh slip budget; the score itself carries over
   if (MEMORY_ON) addHome(a, tick);
@@ -158,6 +175,7 @@ export function switchOnAlerted(a, tick, at, heading, by) {
   h.on = true;
   h.inSight = false;
   h.dists = [];
+  resetTabu(h);
   h.heading = heading;
   h.ticksSinceSeen = 0;
   h.swept.clear();
@@ -246,6 +264,7 @@ export function switchOff(a, tick, reason) {
   h.dists = [];
   h.pickApproach = false;
   h.ticksSinceSeen = 0;
+  resetTabu(h);
   brainOff(h.memory, tick, reason);
   addEvent(h.memory, `Gave up: ${reason}`, tick);
   if (!reason.startsWith('routed')) queueMorale(a, 'gave_up'); // a rout already paid for itself
@@ -261,21 +280,106 @@ export function noteHit(a, tick) {
 
 // This ghost stepped `dir` from `from` (a brain-on step). Smart memory records its own path and, while
 // searching, forces a new search_approach choice after PINGPONGS steps that returned to the cell it left.
+// Tabu (monsters, phase 5) keeps its own ring of cells so it works with smart memory off too, rules out the cell a
+// bounce or loop keeps returning to (M1, M2) and, when the search ping-pong fires, the approach that ping-ponged.
 export function noteStep(a, from, dir, tick) {
-  if (!MEMORY_ON) return;
   const h = a.hunt;
+  const tabuPing = TABU_ON ? scoreTabu(a, from, tick) : false;
+  if (!MEMORY_ON && !TABU_ON) return;
   const p = h.profile;
   const m = h.memory;
-  if (!m.recent.cells.length) m.recent.cells = [[...from]];
-  const ping = recordStep(m, a.pos, dir, { moves: p.recentMoves, cells: p.recentCells });
+  let ping = tabuPing;
+  if (MEMORY_ON) {
+    if (!m.recent.cells.length) m.recent.cells = [[...from]];
+    ping = recordStep(m, a.pos, dir, { moves: p.recentMoves, cells: p.recentCells });
+  }
   if (!h.on || h.inSight) { h.pingpongs = 0; return; }
   if (ping) h.pingpongs += 1;
   if (h.pingpongs >= PINGPONGS) {
     h.pingpongs = 0;
     h.pickApproach = true;
+    if (TABU_ON && forceApproach(a, tick)) return;
     addEvent(m, 'Kept stepping back and forth while searching: choosing a search approach again.', tick);
   }
 }
+
+// The search ping-pong fired: the approach in force becomes tabu for the character's search time, and when that leaves
+// one search approach code takes it (no `search_approach` question next). Returns true when it did.
+function forceApproach(a, tick) {
+  const h = a.hunt;
+  const m = h.memory;
+  const was = m.approach.id;
+  if (!SEARCH_APPROACHES.includes(was)) return false;
+  tabuAdd(h.tabu, 'approach', was, { step: tick, tenure: h.searchTicks, reason: 'kept stepping back and forth' });
+  const { allowed } = filterOptions(SEARCH_APPROACHES, h.tabu, 'approach', tick, { min: 1 });
+  if (allowed.length !== 1) return false;
+  const id = allowed[0];
+  if (id !== was) setApproach(m, { id, text: APPROACHES[id].text }, `kept stepping back and forth under ${was}`, tick);
+  h.pickApproach = false;
+  h.tabuTurn = { ...(h.tabuTurn ?? {}), forced_approach: id };
+  addEvent(m, `Ruled out ${was} for ${h.searchTicks} ticks: kept stepping back and forth. Taking ${id}.`, tick);
+  return true;
+}
+
+// Scores one step for the move level; returns whether the last move returned to the cell two back (the ring's ping).
+function scoreTabu(a, from, tick) {
+  const h = a.hunt;
+  if (!h.on) return false;
+  const c = h.ring;
+  if (!c.length) c.push([...from]);
+  c.push([...a.pos]);
+  if (c.length > TABU_LOOP_WINDOW + 1) c.shift();
+  tabuAge(h.tabu, tick);
+  const n = c.length;
+  let bounces = 0; // backAndForth over the last 6 moves, as the explorer's memory counts it
+  for (let t = 0; t < 6; t++) {
+    const i = n - 1 - t;
+    if (i < 2) break;
+    if (same(c[i], c[i - 2]) && !same(c[i], c[i - 1])) bounces++;
+  }
+  const ping = n >= 3 && same(c[n - 1], c[n - 3]) && !same(c[n - 1], c[n - 2]);
+  if (ping && bounces >= 2) tabuAdd(h.tabu, 'cell', key(c[n - 2]), { step: tick, tenure: TABU_BOUNCE_TENURE, reason: 'kept stepping back and forth' });
+  const seen = new Map();
+  for (const e of c) seen.set(key(e), (seen.get(key(e)) ?? 0) + 1);
+  for (const [k, v] of seen) if (v >= TABU_LOOP_VISITS) tabuAdd(h.tabu, 'cell', k, { step: tick, tenure: TABU_LOOP_TENURE, reason: 'kept coming back to it' });
+  return ping;
+}
+
+// The legal moves minus the cells ruled out (by destination, so M1 and M2 hold whichever way the cell is reached).
+// Aspiration: the step onto the explorer (in sight) is never removed, and the list keeps `TABU_MIN_MOVES`.
+// One memory event per entry, the first time a request really drops its move. -> { moves, removed, lifted }
+function moveMenu(view, a, h, legal, tick) {
+  const none = { moves: legal, removed: [], lifted: [] };
+  if (!TABU_ON || !h.on || legal.length < 2) return none;
+  const entries = [];
+  for (const e of h.tabu.entries) {
+    if (e.level !== 'cell' || e.until <= tick) continue;
+    for (const d of legal) if (key(stepCell(a.pos, d)) === e.attr) entries.push({ level: 'm', attr: d, since: e.since, until: e.until, encounter: false, reason: e.reason });
+  }
+  if (!entries.length) return none;
+  const x = h.inSight ? view.explorer() : null;
+  const keep = x ? legal.filter((d) => same(stepCell(a.pos, d), x)) : [];
+  const f = filterOptions(legal, { entries }, 'm', tick, { keep, min: TABU_MIN_MOVES });
+  for (const d of f.removed) {
+    const e = entries.find((o) => o.attr === d);
+    const id = `cell:${e.since}:${d}`;
+    if (h.told.has(id)) continue;
+    h.told.add(id);
+    addEvent(h.memory, `Ruled out the cell to the ${compassWord(d)} for ${e.until - tick} steps: ${e.reason}.`, tick);
+  }
+  return { moves: f.allowed, removed: f.removed, lifted: f.lifted };
+}
+// The tabu part of the adversary turn report (adversary.js, once per acting monster): the live entries by level
+// (`cell`, `approach`: { attr, steps_left, reason }), what this tick's request dropped or put back, and the search approach
+// code took. null with the level off. For the UI and checks, never for Jev.
+export function tabuReport(a, tick) {
+  if (!TABU_ON) return null;
+  const h = a.hunt;
+  const t = h.tabuTurn;
+  h.tabuTurn = null;
+  return { ...tabuSnapshot(h.tabu, tick), removed_moves: t?.removed_moves ?? [], lifted_moves: t?.lifted_moves ?? [], forced_approach: t?.forced_approach ?? null };
+}
+const compassWord = (d) => ({ up: 'north', down: 'south', left: 'west', right: 'east' }[d]);
 
 // Start of a world tick: drops what has outlived this ghost's character-sized memory.
 export function ageHunt(a, tick) {
@@ -369,8 +473,12 @@ export function buildRequest(view, a, tick, cfg) {
   const h = a.hunt;
   const special = a.character !== 'standard'; // a standard ghost's request text stays exactly today's
   const withCharacter = special || Boolean(cfg.characters);
-  const legal = view.legalMoves();
-  if (!legal.length) return { legal, forced: null };
+  const all = view.legalMoves();
+  if (!all.length) return { legal: all, forced: null };
+  h.searchTicks = maxSearchTicks; // noteStep (tabu on the search approach) has no cfg
+  const menu = moveMenu(view, a, h, all, tick);
+  const legal = menu.moves; // the filtered list feeds the options AND the answer validation in decide()
+  h.tabuTurn = menu.removed.length || menu.lifted.length ? { removed_moves: menu.removed, lifted_moves: menu.lifted } : null;
   const skillOptions = h.inSight ? skillOptionsOf(view, a) : {};
   const hasSkill = Object.keys(skillOptions).length > 0;
   const searching = !h.inSight;
@@ -520,6 +628,12 @@ export function brainView(a) {
 export function configureAdversaryBrain(o) {
   if (o.advPingpongs !== undefined) PINGPONGS = o.advPingpongs;
   if (o.advSkillNear !== undefined) SKILL_NEAR = o.advSkillNear;
+  if (o.advTabuEnabled !== undefined) TABU_ON = o.advTabuEnabled;
+  if (o.advTabuBounceTenure !== undefined) TABU_BOUNCE_TENURE = o.advTabuBounceTenure;
+  if (o.advTabuLoopWindow !== undefined) TABU_LOOP_WINDOW = o.advTabuLoopWindow;
+  if (o.advTabuLoopVisits !== undefined) TABU_LOOP_VISITS = o.advTabuLoopVisits;
+  if (o.advTabuLoopTenure !== undefined) TABU_LOOP_TENURE = o.advTabuLoopTenure;
+  if (o.advTabuMinMoves !== undefined) TABU_MIN_MOVES = o.advTabuMinMoves;
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const adversaryBrainSnapshot = () => ({ advPingpongs: PINGPONGS, advSkillNear: SKILL_NEAR });
+export const adversaryBrainSnapshot = () => ({ advPingpongs: PINGPONGS, advSkillNear: SKILL_NEAR, advTabuEnabled: TABU_ON, advTabuBounceTenure: TABU_BOUNCE_TENURE, advTabuLoopWindow: TABU_LOOP_WINDOW, advTabuLoopVisits: TABU_LOOP_VISITS, advTabuLoopTenure: TABU_LOOP_TENURE, advTabuMinMoves: TABU_MIN_MOVES });
