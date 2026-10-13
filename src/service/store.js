@@ -202,12 +202,13 @@ export class FileStore {
   }
 }
 
-// The gateway's recorder interface (src/gateway/recorder.js) over calls.jsonl. A pending entry lives in memory and the
-// line is appended when it finishes (outcome other than 'pending'), so every line is complete. Only the gateway's field
+// The gateway's recorder interface over calls.jsonl. Append the pending attempt before fetch, then its completion;
+// read() folds both records into one attempt, including unfinished posts after a crash. Only the gateway's field
 // allowlist is written; a key-like or body-like field is a programming error and throws.
 export class CallsRecorder {
   #store;
   #id;
+  #handles = new WeakMap();
   constructor(store, gameId) {
     this.#store = store;
     this.#id = gameId;
@@ -219,15 +220,17 @@ export class CallsRecorder {
     for (const k of Object.keys(obj)) if (FORBIDDEN_CALL_FIELDS.test(k)) throw new StoreError(`calls.jsonl never holds "${k}"`);
   }
 
-  #append(e) {
+  #append(e, attemptId) {
     const fd = openSync(join(this.#store.root, 'games', this.#id, 'calls.jsonl'), 'a');
-    try { writeSync(fd, JSON.stringify(e) + '\n'); } finally { closeSync(fd); }
+    try { writeSync(fd, JSON.stringify({ attempt_id: attemptId, entry: e }) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
   }
 
   record(entry) {
     this.#assertClean(entry);
     const handle = cleanEntry(entry);
-    if (handle.outcome !== undefined && handle.outcome !== 'pending') this.#append(handle);
+    const attemptId = randomBytes(12).toString('hex');
+    this.#handles.set(handle, attemptId);
+    this.#append(handle, attemptId); // retain a trace even if the process dies while fetch is pending
     return handle;
   }
 
@@ -235,7 +238,7 @@ export class CallsRecorder {
     this.#assertClean(patch);
     const was = handle.outcome;
     Object.assign(handle, cleanEntry(patch));
-    if (handle.outcome !== undefined && handle.outcome !== 'pending' && (was === undefined || was === 'pending')) this.#append(handle);
+    if (handle.outcome !== undefined && handle.outcome !== 'pending' && (was === undefined || was === 'pending')) this.#append(handle, this.#handles.get(handle));
   }
 
   // The finished lines, for the host's call log.
@@ -243,10 +246,15 @@ export class CallsRecorder {
     const path = join(this.#store.root, 'games', this.#id, 'calls.jsonl');
     if (!existsSync(path)) return [];
     const out = [];
+    const attempts = new Map();
     for (const line of readFileSync(path, 'utf8').split('\n')) {
       if (!line) continue;
-      try { out.push(JSON.parse(line)); } catch { /* a crash may tear the final append */ }
+      try {
+        const record = JSON.parse(line);
+        if (record.attempt_id && record.entry) attempts.set(record.attempt_id, record.entry);
+        else out.push(record); // older stores wrote one flat completed entry per attempt
+      } catch { /* a crash may tear the final append */ }
     }
-    return out;
+    return [...out, ...attempts.values()];
   }
 }

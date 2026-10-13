@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newId } from './ids.js';
-import { HostAuth, checkOrigin, clearCookie, isLoopback, participantCookieName, participantCookies, participantToken, sanitiseName } from './auth.js';
+import { HostAuth, checkOrigin, clearCookie, isLoopback, participantCookieName, participantCookies, participantToken, sanitiseName, safeEqual } from './auth.js';
 import { FileStore, CallsRecorder } from './store.js';
 import { SettingsService } from './settings-service.js';
 import { Lobby } from './lobby.js';
@@ -154,7 +154,8 @@ export class HostedService {
   #summary(g, viewer = null) { return gameSummary({ id: g.id, mode: g.mode, lobby: g.lobby, rulesRevision: g.rulesRevision }, viewer); }
   #saveMeta(g) {
     this.#store.writeJson(g.id, 'meta.json', { v: 1, id: g.id, mode: g.mode,
-      rulesRevision: g.rulesRevision, seed: g.seed, lobby: g.lobby.serialize(), ranking: g.ranking ?? null });
+      rulesRevision: g.rulesRevision, seed: g.seed, lobby: g.lobby.serialize(),
+      authTokens: g.authTokens, ranking: g.ranking ?? null });
   }
 
   async #worker(revision) {
@@ -184,7 +185,7 @@ export class HostedService {
       const meta = saved.meta;
       const lobby = Lobby.restore(meta.lobby);
       const g = { id, mode: meta.mode, rulesRevision: meta.rulesRevision, seed: meta.seed,
-        lobby, rules: saved.rules?.rules ?? this.#store.readRevision(meta.rulesRevision)?.values,
+        lobby, authTokens: meta.authTokens ?? {}, rules: saved.rules?.rules ?? this.#store.readRevision(meta.rulesRevision)?.values,
         ranking: meta.ranking, directiveAt: new Map() };
       this.#games.set(id, g);
       if (saved.state) {
@@ -227,6 +228,7 @@ export class HostedService {
       this.#broadcastLobby(g);
     } else if (e.type === 'finished') {
       g.lobby.finish({ outcome: e.outcome.result });
+      g.lobby.result = { outcome: e.outcome.result };
       this.#clearKeyTimers(g);
       g.ranking = rankParticipants(g.lobby.participants.map((p) => {
         const x = e.outcome.explorers.find((r) => r.id === p.participantId) ?? {};
@@ -241,7 +243,7 @@ export class HostedService {
   }
 
   #publicEvent(record) {
-    if (record.type.startsWith('monster') || record.type === 'decision_failed') return { seq: record.seq, type: 'world' };
+    if (record.type.startsWith('monster') || record.type === 'decision_failed' || record.type === 'decision_dropped') return { seq: record.seq, type: 'world' };
     return { seq: record.seq, type: record.type, actor: record.actor,
       ...(record.type === 'help_called' ? { who: record.who, recipients: record.recipients } : {}),
       ...(record.type === 'explorer_turn' ? { dir: record.dir, skill: record.skill } : {}) };
@@ -296,7 +298,12 @@ export class HostedService {
     return true;
   }
 
-  #member(req, g) { return g.lobby.participant(participantToken(req, g.id)); }
+  #member(req, g) {
+    const token = participantToken(req, g.id);
+    if (!token) return null;
+    const id = Object.entries(g.authTokens).find(([, secret]) => safeEqual(secret, token))?.[0];
+    return id ? g.lobby.participant(id) : null;
+  }
   #requireMember(req, g) {
     const p = this.#member(req, g);
     if (!p) throw asError(403, 'not_participant');
@@ -361,11 +368,18 @@ export class HostedService {
     for (const op of ['pause', 'resume', 'end', 'reveal']) r.add('POST', `/v1/host/games/:id/${op}`, async (req, res, { id }) => {
       this.#requireHost(req);
       const g = this.#getGame(id);
+      if (op === 'pause' && g.lobby.status !== 'running') throw asError(409, 'not_running');
+      if (op === 'resume' && g.lobby.status !== 'paused') throw asError(409, 'not_paused');
+      if (op === 'reveal' && ['waiting', 'abandoned'].includes(g.lobby.status)) throw asError(409, 'not_started');
       if (op === 'reveal') return { view: await this.#call(g, 'view', { participantId: null,
         lobby: g.lobby.serialize(), mode: g.mode, reveal: true, ranking: g.ranking }) };
       if (op === 'pause') { await this.#call(g, 'pause'); this.#ok(g.lobby.pause('host')); }
       if (op === 'resume') { this.#ok(g.lobby.hostResume()); await this.#call(g, 'resume'); this.#armKeyTimers(g); }
-      if (op === 'end') { await this.#call(g, 'stop'); this.#ok(g.lobby.finish({ outcome: 'host_ended' })); }
+      if (op === 'end') {
+        if (!['running', 'paused'].includes(g.lobby.status)) throw asError(409, 'not_running');
+        const result = await this.#call(g, 'stop');
+        this.#workerEvent({ id, type: 'finished', outcome: result.outcome });
+      }
       this.#saveMeta(g);
       this.#broadcastLobby(g);
       return { game: this.#summary(g) };
@@ -378,6 +392,7 @@ export class HostedService {
       if (name.error || typeof body.key !== 'string' || !body.key.trim() || !['private', 'shared'].includes(body.mode))
         throw asError(400, 'invalid');
       const id = newId('gm_'), participantId = newId('par_');
+      const authToken = newId('par_');
       const { rules_revision: rulesRevision, rules } = this.#settings.rulesForNewGame();
       this.#store.createGameDir(id);
       this.#store.writeJson(id, 'rules.json', { rules_revision: rulesRevision, rules });
@@ -385,25 +400,27 @@ export class HostedService {
         keyRetryMs: rules.keyRetryMs ?? 120000 });
       this.#ok(lobby.join({ participantId, name: name.name, keyPresent: true }));
       const g = { id, mode: body.mode, rulesRevision, rules, seed: Math.floor(Math.random() * 2 ** 32),
-        lobby, ranking: null, directiveAt: new Map() };
+        lobby, authTokens: { [participantId]: authToken }, ranking: null, directiveAt: new Map() };
       this.#games.set(id, g);
       this.#saveMeta(g);
       await this.#call(g, 'set_key', { participantId, key: body.key });
       if (lobby.status === 'running') await this.#call(g, 'create', { participants: lobby.participants, seed: g.seed });
       return { status: 201, body: { game: this.#summary(g, participantId), participant_id: participantId },
-        headers: { 'set-cookie': participantCookies(id, participantId, { pagePath: `/g/${id}` }) } };
+        headers: { 'set-cookie': participantCookies(id, authToken, { pagePath: `/g/${id}` }) } };
     });
     r.add('POST', '/v1/games/:id/join', async (req, res, { id }) => {
       this.#take(req, 'join');
       const g = this.#getGame(id), body = await readJson(req), name = sanitiseName(body.name);
       if (name.error || typeof body.key !== 'string' || !body.key.trim()) throw asError(400, 'invalid');
       const participantId = newId('par_');
+      const authToken = newId('par_');
       this.#ok(g.lobby.join({ participantId, name: name.name, keyPresent: true }));
+      g.authTokens[participantId] = authToken;
       this.#saveMeta(g);
       await this.#call(g, 'set_key', { participantId, key: body.key });
       this.#broadcastLobby(g);
       return { body: { game: this.#summary(g, participantId), participant_id: participantId },
-        headers: { 'set-cookie': participantCookies(id, participantId, { pagePath: `/g/${id}` }) } };
+        headers: { 'set-cookie': participantCookies(id, authToken, { pagePath: `/g/${id}` }) } };
     });
     r.add('GET', '/v1/games/:id', async (req, res, { id }) => {
       const g = this.#getGame(id), p = this.#member(req, g);
@@ -417,15 +434,17 @@ export class HostedService {
     });
     r.add('POST', '/v1/games/:id/leave', async (req, res, { id }) => {
       const g = this.#getGame(id), p = this.#requireMember(req, g);
-      if (g.lobby.status === 'waiting') this.#ok(g.lobby.leave(p.participantId));
+      const waiting = g.lobby.status === 'waiting';
+      if (waiting) { this.#ok(g.lobby.leave(p.participantId)); delete g.authTokens[p.participantId]; }
       else { this.#ok(g.lobby.forfeit(p.participantId)); await this.#call(g, 'forfeit', { participantId: p.participantId }); }
       this.#saveMeta(g);
       this.#broadcastLobby(g);
-      return { body: { game: this.#summary(g) }, headers: { 'set-cookie': [
-        clearCookie(participantCookieName(id), `/v1/games/${id}`), clearCookie(participantCookieName(id), `/g/${id}`)] } };
+      return { body: { game: this.#summary(g) }, headers: waiting ? { 'set-cookie': [
+        clearCookie(participantCookieName(id), `/v1/games/${id}`), clearCookie(participantCookieName(id), `/g/${id}`)] } : {} };
     });
     r.add('POST', '/v1/games/:id/key', async (req, res, { id }) => {
       const g = this.#getGame(id), p = this.#requireMember(req, g), body = await readJson(req);
+      if (!['waiting', 'running', 'paused'].includes(g.lobby.status)) throw asError(409, 'not_running');
       if (typeof body.key !== 'string' || !body.key.trim()) throw asError(400, 'invalid');
       this.#ok(g.lobby.keyRestored(p.participantId));
       await this.#call(g, 'set_key', { participantId: p.participantId, key: body.key });

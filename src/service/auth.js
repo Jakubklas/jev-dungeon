@@ -1,5 +1,6 @@
 // Identity for the hosted service, with no accounts.
-//  - Participants: a random `par_` token in an HttpOnly, SameSite=Strict cookie `jd_par_<gameId>`. A cookie has one Path,
+//  - Participants: a private random `par_` token (distinct from the public participant id) in an HttpOnly,
+//    SameSite=Strict cookie `jd_par_<gameId>`. The service stores its private mapping in meta.json. A cookie has one Path,
 //    so joining sets two (participantCookies): /v1/games/<id> for the API and the page path for the play page.
 //  - Host: a random token printed once as /host#token=...; the page POSTs it to /v1/host/session (HostAuth.exchange),
 //    which answers with an HttpOnly `jd_host` cookie holding a random session id. requireHost needs that cookie AND a

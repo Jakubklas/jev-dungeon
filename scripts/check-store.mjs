@@ -116,7 +116,7 @@ const root = mkdtempSync(join(tmpdir(), 'jd-store-'));
   s.createGameDir('gm_c');
   const rec = new CallsRecorder(s, 'gm_c');
   const h = rec.record({ at: 1, game: 'gm_c', actor: 'p1', kind: 'tick', attempt: 1, outcome: 'pending' });
-  check(rec.read().length === 0, 'a pending call is not a line yet');
+  check(rec.read().length === 1 && rec.read()[0].outcome === 'pending', 'an in-flight post has a durable trace');
   rec.update(h, { status: 200, bytes_out: 100, bytes_in: 50, ms: 12, outcome: 'ok' });
   rec.update(h, { ms: 13 });
   const lines = rec.read();
@@ -128,7 +128,7 @@ const root = mkdtempSync(join(tmpdir(), 'jd-store-'));
   throws(() => rec.record({ outcome: 'ok', api_key: 'k' }), /never holds/, 'api_key refused');
   rec.record({ at: 2, game: 'gm_c', actor: 'a1', kind: 'adv', outcome: 'ok', extra: 'dropped' });
   const raw = readFileSync(join(s.root, 'games', 'gm_c', 'calls.jsonl'), 'utf8');
-  check(raw.split('\n').filter(Boolean).length === 2 && !raw.includes('extra') && !/bearer|api_key/i.test(raw), 'unknown fields stripped; no key material on disk');
+  check(raw.split('\n').filter(Boolean).length === 3 && !raw.includes('extra') && !/bearer|api_key/i.test(raw), 'pending and final records contain no key material or unknown fields');
   throws(() => new CallsRecorder(s, '../x'), /bad game id/, 'recorder id validated');
 }
 

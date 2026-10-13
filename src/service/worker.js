@@ -127,7 +127,13 @@ export class WorkerHost {
     if (!actor) throw new Error('game is not loaded');
     if (op === 'pause') return { changed: await actor.pause('host') };
     if (op === 'resume') return { changed: await actor.resume() };
-    if (op === 'stop') { await actor.stop(); this.#keys.delete(id); return { changed: true }; }
+    if (op === 'stop') {
+      await actor.stop();
+      this.#keys.delete(id);
+      return { changed: true, outcome: actor.outcome ?? { result: 'host_ended',
+        explorers: actor.game.explorers.map((e) => ({ id: e.id, status: e.status, coins: e.coins,
+          strikes: e.outcome.strikes, dispels: e.outcome.dispels, diedAt: e.outcome.diedAt, portal: e.outcome.portal })) } };
+    }
     if (op === 'forfeit') {
       this.#keys.get(id)?.delete(participantId);
       return { changed: await actor.forfeitExplorer(participantId) };

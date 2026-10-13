@@ -492,9 +492,9 @@ export function buildRequest(view, a, tick, cfg) {
   };
   const approachIds = searching ? (h.pickApproach ? SEARCH_APPROACHES : [h.memory.approach.id]) : ['direct_pursuit'];
   const questions = {};
-  const targetIds = view.hasMultipleExplorers?.() ? view.explorerTargets().filter((e) => e.in_sight).map((e) => e.id) : [];
+  const targetIds = view.hasMultipleExplorers?.() ? view.explorerTargets().filter((e) => !h.inSight || e.in_sight).map((e) => e.id) : [];
   if (targetIds.length > 1) questions.target = {
-    type: 'choice', instructions: 'Which visible explorer should this adversary pursue next?',
+    type: 'choice', instructions: 'Which explorer should this adversary pursue next? Out of sight, follow only its frozen sighting.',
     criteria: Object.fromEntries(targetIds.map((id) => [id, `Pursue explorer ${id}.`])),
   };
   let options = null;
@@ -605,9 +605,10 @@ export async function decide(view, a, tick, cfg, ask = null, signal = null) {
 // Applies the parts of a decision that change memory (approach choice, latest action).
 export function applyDecision(a, tick, res, { fallback = false } = {}) {
   const h = a.hunt;
-  if (res.target && h.visibleTargets?.includes(res.target)) {
+  if (res.target && h.sightings?.has(res.target) && (!h.inSight || h.visibleTargets?.includes(res.target))) {
     h.targetId = res.target;
     a.lastSeen = [...h.sightings.get(res.target).cell];
+    if (!h.inSight) h.ticksSinceSeen = tick - h.sightings.get(res.target).tick;
   }
   if (h.pickApproach && h.on && !h.inSight) {
     const id = res.approach ?? h.profile.preferredSearch ?? 'sweep_last_seen';

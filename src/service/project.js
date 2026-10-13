@@ -43,7 +43,7 @@ export function projectGame({ game, brains, lobby, id, mode, rulesRevision, view
     treasure: base.treasure && lit(...base.treasure) ? base.treasure : null,
     props: base.props.filter((p) => lit(p.x, p.y)), decor: base.decor.filter((d) => lit(d.x, d.y)),
     coin_piles: base.coin_piles.filter(([x, y]) => lit(x, y)), light: base.light,
-    heart_piles: game.heartPiles.filter(([x, y]) => lit(x, y)).map((c) => [...c]),
+    heart_cells: game.heartPiles.filter(([x, y]) => lit(x, y)).map((c) => [...c]),
     pos: self?.pos ?? base.pos, steps: self?.steps ?? base.steps, health: self?.health ?? 0,
     max_health: self?.maxHealth ?? base.max_health, coins: self?.coins ?? 0,
     facing: self?.facing ?? base.facing, won: game.won, lost: game.lost, won_by: game.winBy,
@@ -55,6 +55,6 @@ export function projectGame({ game, brains, lobby, id, mode, rulesRevision, view
     directive: spectator ? null : (brains.get(self.id)?.directive ?? null),
     lobby: gameSummary({ id, mode, lobby, rulesRevision }, viewerId),
   };
-  if (ranking) { out.ranking = ranking; out.result = game.won ? 'won' : 'lost'; }
+  if (ranking) { out.ranking = ranking; out.result = lobby.result?.outcome ?? (game.won ? 'won' : 'lost'); }
   return out;
 }

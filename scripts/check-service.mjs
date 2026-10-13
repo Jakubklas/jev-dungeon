@@ -48,6 +48,9 @@ try {
   const view = await call('GET', `/v1/games/${id}`, null, { cookie: memberCookie });
   assert.equal(view.status, 200);
   assert.equal(view.body.self, created.body.participant_id);
+  assert.notEqual(memberCookie.split('=')[1], created.body.participant_id, 'public actor id must differ from the cookie credential');
+  const forged = `${memberCookie.split('=')[0]}=${created.body.participant_id}`;
+  assert.equal((await call('GET', `/v1/games/${id}`, null, { cookie: forged })).status, 403);
   assert.ok(view.body.tiles.flat().some((c) => c === null));
   assert.equal('seed' in view.body, false);
   assert.equal((await call('GET', '/v1/host/games', null, { cookie: memberCookie })).status, 403);
@@ -89,6 +92,8 @@ try {
   assert.equal(one.lobby.participants.filter((p) => p.is_self).length, 1);
   assert.equal(two.lobby.participants.filter((p) => p.is_self).length, 1);
   assert.notEqual(one.self, two.self);
+  assert.equal((await call('POST', `/v1/games/${roomId}/start`, {},
+    { cookie: `${leaderCookie.split('=')[0]}=${room.body.game.leader}` })).status, 403, 'public leader id is not an authentication token');
   assert.equal((await call('POST', `/v1/games/${roomId}/pause`, {}, { cookie: leaderCookie })).status, 403);
   assert.equal((await call('GET', `/v1/host/games/${roomId}/calls`, null, { cookie: secondCookie })).status, 403);
   assert.equal((await call('POST', `/v1/host/games/${roomId}/pause`, {}, { cookie: hostCookie })).status, 200);
@@ -105,6 +110,12 @@ try {
   assert.equal((await call('POST', `/v1/games/${roomId}/key`, { key: 'ada-new' }, { cookie: leaderCookie })).status, 200);
   assert.equal((await call('POST', `/v1/games/${roomId}/key`, { key: 'bryn-new' }, { cookie: secondCookie })).status, 200);
   assert.equal((await call('GET', `/v1/games/${roomId}`, null, { cookie: leaderCookie })).body.lobby.status, 'running');
+  const restartedSession = await call('POST', '/v1/host/session', { token: service.hostToken });
+  const restartedHostCookie = restartedSession.cookies[0].split(';')[0];
+  assert.equal((await call('POST', `/v1/host/games/${id}/end`, {}, { cookie: restartedHostCookie })).status, 200);
+  const ended = (await call('GET', `/v1/games/${id}`, null, { cookie: memberCookie })).body;
+  assert.equal(ended.result, 'host_ended');
+  assert.equal(ended.ranking.length, 1);
   const files = ['meta.json', 'rules.json', 'dungeon.json', 'state.json', 'events.jsonl'];
   for (const file of files) assert.doesNotMatch(readFileSync(join(root, 'games', id, file), 'utf8'), /private-secret/);
   console.log('hosted service: private/shared games, fog, auth, origin, directives, pause/resume, restart, no key on disk: ok');
