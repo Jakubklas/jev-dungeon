@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as T from '../src/characters/shared/tabu.js';
 import { newTestGame } from '../src/turn.js';
-import { DIRS, rng } from '../src/dungeon.js';
+import { DIRS, REGEN_STEPS, configureWorld, rng } from '../src/dungeon.js';
+import { configureConfidence, confidenceSnapshot } from '../src/characters/explorer/confidence.js';
 import { configureExplorerBrain, explorerBrainSnapshot } from '../src/characters/explorer/brain.js';
 
 let failures = 0;
@@ -73,15 +74,15 @@ function build(config, ctl = {}) {
   const folder = join(root, String(++folderN));
   mkdirSync(folder);
   const dir = pathToFileURL(folder + '/');
-  const c = { tactic: 'run_away', skill: 'none', claw: false, walkIn: false, ...ctl };
+  const c = { tactic: 'run_away', skill: 'none', claw: false, walkIn: false, mood: null, working: 0.9, ...ctl };
   const reqs = [];
   const ask = async ({ kind, questions, body }) => {
     reqs.push({ kind, questions, body });
     return Object.fromEntries(Object.entries(questions).map(([key, q]) => {
-      if (q.type === 'noul') return [key, { noul: key === 'directive_done' ? 0.1 : 0.9 }];
+      if (q.type === 'noul') return [key, { noul: key === 'directive_done' ? 0.1 : key === 'approach_working' ? (typeof c.working === 'function' ? c.working() : c.working) : 0.9 }];
       const ids = Object.keys(q.criteria);
       let choice = ids[0];
-      if (key === 'sentiment') choice = ids.includes('steady') ? 'steady' : ids[0];
+      if (key === 'sentiment') choice = c.mood && ids.includes(c.mood) ? c.mood : ids.includes('steady') ? 'steady' : ids[0];
       else if (key === 'tactic') choice = ids.includes(c.tactic) ? c.tactic : ids[0];
       else if (key === 'skill') choice = c.skill === 'strike' ? ids.find((id) => id !== 'none') ?? 'none' : 'none';
       else if (key === 'next_move' || key.startsWith('move_if_')) {
@@ -256,6 +257,150 @@ for (const [name, extra, re] of [
   ok(!events(b.run).some((e) => /Ruled out/.test(e)), `2k: no rule-out event while the option is still offered (${events(b.run).join(' | ')})`);
 }
 
+// ---- 3. Phase 2: moods (D1, D2) -------------------------------------------------------------------------------------
+// The real confidence model picks the tier. Capability capped at 40 puts the explorer in the middle-low tier (cautious,
+// steady, bold on offer); at 60 in the middle tier. The tactic level is off (a stubborn run_away would be ruled out
+// first) and the re-decision cooldown is 1, so the stalls come quickly.
+const CONF = confidenceSnapshot();
+const conf = (o = {}) => configureConfidence({ ...CONF, ...o });
+const MIDLOW = { confCapabilityMax: 40, confUnhurtFloor: 40 };
+const moodReqs = (b) => b.reqs.filter((r) => r.questions.sentiment);
+const hasMood = (r, id) => id in r.questions.sentiment.criteria;
+const removedAt = (turns, id) => turns.findIndex((t) => (t.tabu?.removed_moods ?? []).includes(id));
+const stubborn = async (kn, ctl = {}, ticks = 100, cfg = MIDLOW, arena = ROOM) => {
+  knobs({ tabuTactics: false, brainRedecideCooldown: 1, brainPingpongFails: 2, ...kn });
+  conf(cfg);
+  const b = build(arena, { mood: 'cautious', opts: { confidence: {} }, ...ctl });
+  ctl.setup?.(b);
+  const turns = await play(b, ticks);
+  return { b, turns };
+};
+
+// 3a. D1: a stub that always answers cautious re-decides with nothing gained: cautious leaves the next sentiment request
+// (its criteria and the mood list in the question text), once, with one memory event.
+{
+  const { b, turns } = await stubborn({});
+  const at = removedAt(turns, 'cautious');
+  ok(at >= 0, `3a: cautious is ruled out (${events(b.run).join(' | ')})`);
+  if (at >= 0) {
+    const t = turns[at];
+    const sent = t.reqs.find((r) => r.questions.sentiment);
+    ok(sent && !hasMood(sent, 'cautious') && !/regrouping \(cautious\)/.test(sent.questions.sentiment.instructions), '3a: the rule-out tick\'s sentiment request has no cautious in criteria or question text');
+    ok(sent && /Only the moods your confidence allows are listed: [^.]*\(steady\)[^.]*\(bold\)/.test(sent.questions.sentiment.instructions), '3a: the question text still lists the other moods');
+    const before = moodReqs(b).filter((r) => r !== sent && b.reqs.indexOf(r) < b.reqs.indexOf(sent));
+    ok(before.length >= 2 && before.every((r) => hasMood(r, 'cautious')), `3a: every earlier sentiment request offered cautious (${before.length})`);
+    const redecisions = turns.slice(0, at + 1).filter((x) => ['tactic_failed', 'hit', 'confidence'].includes(x.decision?.trigger)).length;
+    ok(redecisions >= 2, `3a: it took at least 2 re-decisions (${redecisions})`);
+    ok(t.tabu.mood?.some((e) => e.attr === 'cautious' && e.steps_left === 'encounter'), '3a: turn.tabu.mood lists it for the encounter');
+    ok(moodReqs(b).filter((r) => b.reqs.indexOf(r) > b.reqs.indexOf(sent)).slice(0, 2).every((r) => !hasMood(r, 'cautious')), '3a: later requests stay without cautious');
+  }
+  ok(events(b.run).filter((e) => /^Ruled out cautious: /.test(e)).length === 1, '3a: exactly one memory event for cautious');
+  ok(events(b.run).some((e) => /^Ruled out cautious: picked 2 times with nothing gained\.$/.test(e)), '3a: the event says why');
+}
+
+// 3b. D2: always-failing reviews outside an encounter rule the mood on out for 20 steps; a review that judged it working
+// resets the count.
+{
+  const FIELD = { size: [40, 12], start: [2, 6], numAdversaries: 0, treasure: null, ghostSkills: 'none', seed: 4 };
+  knobs({});
+  conf({ confCapabilityMax: 60, confUnhurtFloor: 40 });
+  const b = build(FIELD, { working: 0.1, opts: { confidence: {} } });
+  const turns = await play(b, 70);
+  const at = turns.findIndex((t) => t.tabu?.mood?.some((e) => e.attr === 'steady'));
+  ok(at >= 0, `3b: steady is ruled out after failing reviews (${events(b.run).join(' | ')})`);
+  if (at >= 0) {
+    ok(turns[at].review?.working < 0.5 && turns.slice(0, at).filter((t) => t.review && t.review.working < 0.5).length === 1, '3b: on the second failing review in a row');
+    ok(turns[at].tabu.mood.find((e) => e.attr === 'steady').steps_left === 20, '3b: for 20 steps');
+    const later = turns.slice(at + 1).find((t) => t.reqs.some((r) => r.questions.sentiment));
+    ok(later && later.reqs.filter((r) => r.questions.sentiment).every((r) => !hasMood(r, 'steady')), '3b: the next sentiment request has no steady');
+    ok(later && /steady ruled out/.test(JSON.stringify(turns.slice(at, turns.indexOf(later) + 1).map((t) => t.policy))), '3b: the silent swap says why');
+    const back = turns.slice(at + 20).find((t) => t.reqs.some((r) => r.questions.sentiment));
+    ok(back && back.reqs.filter((r) => r.questions.sentiment).some((r) => hasMood(r, 'steady')), '3b: after 20 steps steady is on offer again');
+  }
+  ok(events(b.run).filter((e) => /^Ruled out steady: 2 approach reviews in a row/.test(e)).length === 1, '3b: one memory event');
+  // reset: a review that judged the approach working in between
+  let n = 0;
+  knobs({});
+  const b2 = build(FIELD, { working: () => (n++ % 2 ? 0.9 : 0.1), opts: { confidence: {} } });
+  const turns2 = await play(b2, 90);
+  ok(turns2.filter((t) => t.review).length >= 4 && turns2.every((t) => !t.tabu?.mood?.length), '3b: failing reviews that are not in a row rule nothing out');
+  // off
+  knobs({ tabuMoods: false });
+  const b3 = build(FIELD, { working: 0.1, opts: { confidence: {} } });
+  const turns3 = await play(b3, 70);
+  ok(turns3.every((t) => !t.tabu?.mood?.length) && moodReqs(b3).every((r) => hasMood(r, 'steady') || !hasMood(r, 'bold')), '3b: tabuMoods off rules no mood out');
+}
+
+// 3c. Last life: wary and guarded are never both off the menu (the never-empty rule lifts the older entry).
+{
+  const regen = REGEN_STEPS;
+  configureWorld({ regenSteps: 0 }); // the half life it would heal after 30 steps would end the last-life case
+  const { b, turns } = await stubborn({}, { mood: 'wary', setup: (x) => { x.run.game.health = 1; } }, 160, { confPanicEnter: 0 });
+  const sents = turns.filter((t) => t.decision?.sentiment);
+  ok(sents.length >= 3 && sents.every((t) => t.decision.sentiment.options.some((o) => o === 'wary' || o === 'guarded')), `3c: every sentiment decision offers wary or guarded (${sents.map((t) => t.decision.sentiment.options.join('/')).join(' ')})`);
+  ok(moodReqs(b).every((r) => hasMood(r, 'wary') || hasMood(r, 'guarded')), '3c: so does every sentiment request');
+  ok(turns.some((t) => (t.tabu?.removed_moods ?? []).length) && turns.some((t) => (t.tabu?.lifted_moods ?? []).length), `3c: the rule-out and the lift both happened (${events(b.run).join(' | ')})`);
+  ok(turns.every((t) => (t.tabu?.removed_moods ?? []).length < 2), '3c: never both removed');
+  configureWorld({ regenSteps: regen });
+}
+
+// 3d. Aspirations. panic is code's: nothing is ruled out under it. The fixedMood arm is never filtered. A directive suspends it.
+{
+  const { b, turns } = await stubborn({}, { mood: 'wary', setup: (x) => { x.run.game.health = 1; } }, 60, { confCapabilityMax: 5, confUnhurtFloor: 0 });
+  ok(turns.some((t) => t.confidence?.panic) && turns.every((t) => !t.tabu?.mood?.length && !(t.tabu?.removed_moods ?? []).length), '3d: panic is never ruled out or filtered');
+  const p0 = turns.findIndex((t) => t.confidence?.panic);
+  ok(p0 >= 0 && turns.filter((t) => t.confidence?.panic).every((t) => !t.decision?.sentiment || t.decision.sentiment.automatic), '3d: panic asks no sentiment question');
+
+  const fx = await stubborn({}, { mood: 'wary', opts: { confidence: { fixedMood: true } } }, 100, MIDLOW);
+  ok(moodReqs(fx.b).length >= 3 && moodReqs(fx.b).every((r) => hasMood(r, 'wary') && hasMood(r, 'bold')), '3d: the fixedMood arm offers all four classic moods every time');
+  ok(fx.turns.every((t) => !t.tabu?.mood?.length && !(t.tabu?.removed_moods ?? []).length), '3d: the fixedMood arm rules nothing out');
+
+  const d = await stubborn({}, {}, 100);
+  const at = removedAt(d.turns, 'cautious');
+  ok(at >= 0, '3d: (setup) cautious is ruled out');
+  if (at >= 0) {
+    d.b.run.explorer.setDirective('wait here', { steps: 10 });
+    const n = d.b.reqs.length;
+    await play(d.b, 8);
+    const sent = d.b.reqs.slice(n).filter((r) => r.questions.sentiment);
+    ok(sent.length > 0 && sent.every((r) => hasMood(r, 'cautious')), `3d: with a directive cautious is on offer again (${sent.length} requests)`);
+  }
+}
+
+// 3e. Off: tabuMoods off (tactic level off too) sends byte-for-byte the requests of tabuEnabled off in the stubborn scenario;
+// with no stall the requests are the same on and off.
+{
+  const bodiesOf = async (kn, ticks, cfg) => {
+    const { b } = await stubborn(kn, {}, ticks, cfg);
+    return b.reqs.map((r) => JSON.stringify(sortDeep(JSON.parse(r.body)))).join('\n');
+  };
+  const a = await bodiesOf({ tabuEnabled: false }, 100);
+  const m = await bodiesOf({ tabuMoods: false, tabuTactics: false }, 100);
+  const on = await bodiesOf({}, 100);
+  ok(a === m, '3e: tabuMoods + tabuTactics off = tabuEnabled off, byte for byte');
+  ok(a !== on, '3e: (control) the stubborn scenario differs with the mood level on');
+  const quiet = [];
+  for (const kn of [{ tabuEnabled: false }, {}]) {
+    knobs({ ...kn });
+    conf(MIDLOW);
+    const q = build({ ...ROOM, size: [15, 9], start: [2, 5], adversaries: [[14, 5]] }, { opts: { confidence: {} } });
+    await play(q, 6);
+    quiet.push(q.reqs.map((r) => JSON.stringify(sortDeep(JSON.parse(r.body)))).join('\n'));
+  }
+  ok(quiet[0] === quiet[1] && quiet[0].length > 0, '3e: no stall = identical requests on and off');
+}
+
+// 3f. Determinism.
+{
+  const runs = [];
+  for (let i = 0; i < 2; i++) {
+    const { b, turns } = await stubborn({}, {}, 80);
+    runs.push(JSON.stringify([turns.map((t) => [t.step, t.dir, t.tabu]), b.reqs.map((r) => r.body)]));
+  }
+  ok(runs[0] === runs[1], '3f: two runs give identical turns and requests');
+}
+
+conf({});
 knobs({});
 rmSync(root, { recursive: true, force: true });
 if (failures) { console.error(`${failures} check(s) failed`); process.exit(1); }

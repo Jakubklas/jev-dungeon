@@ -1,6 +1,6 @@
 # PLAN-tabu: hard exclusion of options that keep failing
 
-A plan, not documentation of the code. **Phases 0 and 1 are built** (see Status at the end and AGENTS.md "Tabu"); phases 2-6 are open. Phases need the user's approval
+A plan, not documentation of the code. **Phases 0, 1 and 2 are built** (see Status at the end and AGENTS.md "Tabu"); phases 3-6 are open. Phases need the user's approval
 (AGENTS.md rule 9: `explorer/brain.js` and `adversary/brain.js` belong to other agents).
 
 ## Goal
@@ -320,7 +320,7 @@ stub that already varies never stalls. A live comparison (`--live`, paid) only w
 
 ## Status
 
-**Built: phases 0 and 1** (branch `feat/tabu-search`).
+**Built: phases 0, 1 and 2** (branch `feat/tabu-search`).
 
 - Phase 0: `src/characters/shared/tabu.js` (also exports `entryOf`), `scripts/check-tabu.mjs` section 1, both fog-guard
   allowlists, six registry rows (`explorer.tabu.enabled`, `.tactics`, `.tacticStrikes`, `.retreatTicks`, `.engageHits`,
@@ -339,3 +339,17 @@ stub that already varies never stalls. A live comparison (`--live`, paid) only w
     shuttling, then runs past the ghost.
   - Request-hash fixture: re-recorded only the 6 scenarios tabu changed. With tabu off, each one matches the old fixture
     byte for byte. `dungeon:1-4,6` were already stale before this work.
+- Phase 2 (moods): D1 and D2 in `explorer/brain.js` (`#moodMenu`, `#chargeMood`, `#trackMood`, `#reviewVerdict`, `#endTabuEncounter`), four knobs
+  (`explorer.tabu.moods`, `.moodStrikes`, `.moodTenure`, `.moodReviewTenure`), `scripts/check-tabu.mjs` section 3.
+  - **The mood is charged against its own gain baseline** (`#moodTrack`, set when a mood is picked and kept on a re-pick), so a
+    gain between two decisions clears its strikes exactly as for tactics.
+  - **"For at least 10 steps"**: the D1 entry is an encounter entry; when the encounter ends `#endTabuEncounter` turns it into a
+    timed entry of `since + moodTenure`.
+  - **Aspiration is `min = 1`**: with the tier's moods all ruled out the entry with the least tenure left comes back, which is
+    also the "older entry" rule for `wary` / `guarded` on a last life. No `keep` list is needed.
+  - **Tier-swap**: a mood ruled out while the tier still allows it swaps silently (policy reason `<mood> ruled out`) or, with an
+    enemy in sight, fires `confidence` once per encounter under its own latch key `tabu`.
+  - **`turn.tabu`** keeps `removed` / `lifted` for tactics and adds `removed_moods` / `lifted_moods` and a `mood` entry list.
+  - Request hashes: four scenarios change (`fixture:{corridor,duel,skills}:first`, `no-explorer-skills`); the first differing
+    request of each is the first mood rule-out, and each matches the old fixture with `tabuMoods` off. Re-recorded (only those four) in their own commit.
+  - Not tested in isolation: the 10-step tenure after an encounter ends (the check scenarios never leave the encounter).

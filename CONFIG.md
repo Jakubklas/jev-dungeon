@@ -242,6 +242,10 @@ The knight: lives and protection after a hit.
 | `explorer.tabu.retreatTicks` | 12 | 2..60 | live | no | Ticks of run_away or hide with no gain that rule it out |
 | `explorer.tabu.engageHits` | 2 | 1..10 | live | no | Hits taken under engage with no strike landed that rule it out |
 | `explorer.tabu.pingpongTenure` | 8 | 1..60 | live | no | Steps a tactic stays ruled out after it ping-ponged |
+| `explorer.tabu.moods` | true | on/off | live | no | Tabu at the mood level (needs explorer.tabu.enabled) |
+| `explorer.tabu.moodStrikes` | 2 | 1..10 | live | no | No-gain re-decisions (or failed reviews) that rule a mood out |
+| `explorer.tabu.moodTenure` | 10 | 1..60 | live | no | Fewest steps a mood stays ruled out after an encounter rule-out |
+| `explorer.tabu.moodReviewTenure` | 20 | 1..120 | live | no | Steps a mood stays ruled out after failed approach reviews |
 | `explorer.brain.cornerMode` | "off" | off / urgent / ascii / route / full | live | no | Cornered by an enemy: off, urgent (relaxed gaps), ascii (+map), route (+kept breakout), full (both) |
 | `explorer.perception.sightingNear` | 8 | 1..30 | live | no | A move within this many steps of a sighting counts as toward it |
 | `explorer.perception.zoneSteps` | 6 | 1..30 | live | no | Avoid-zone radius around an older sighting, steps |

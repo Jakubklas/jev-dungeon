@@ -58,6 +58,10 @@ let TABU_TACTIC_STRIKES = 2; // T2: re-decisions with no gain under the same tac
 let TABU_RETREAT_TICKS = 12; // T3: ticks of run_away / hide with no gain that rule it out for the encounter
 let TABU_ENGAGE_HITS = 2; // T4: hits taken under engage with no strike landed that rule it out for the encounter
 let TABU_PINGPONG_TENURE = 8; // T1: steps a tactic stays ruled out after it ping-ponged
+let TABU_MOODS = true; // the mood level (explorer.tabu.moods)
+let TABU_MOOD_STRIKES = 2; // D1: no-gain re-decisions under the same mood (D2: failed reviews in a row) that rule it out
+let TABU_MOOD_TENURE = 10; // D1: fewest steps a mood stays ruled out (it also lasts to the end of the encounter)
+let TABU_MOOD_REVIEW_TENURE = 20; // D2: steps a mood stays ruled out after failed approach reviews
 const TABU_GAP_GAIN = 2; // the nearest enemy this many steps further off than at the baseline is a gain
 const TABU_C_GAIN = 5; // ... and so is confidence this much higher
 const NEVER_TABU = ['race_to_exit']; // the win is never ruled out
@@ -309,6 +313,9 @@ export class ExplorerBrain {
   #wins = 0;
   #gapNow = null;
   #tabuTick = null;
+  #moodTrack = null; // the mood picked last and its gain baseline { id, since, base } (D1)
+  #moodTick = null; // this tick's mood filter { removed, lifted } for the turn report
+  #reviewMood = null; // the mood whose approach reviews are being counted (D2)
   #told = new Set(); // `${id}@${since}`: rule-outs already logged (once, on the first menu that really dropped them)
   // id -> { id, cell, step, chasing, hp, maxHp }: adversaries this explorer SAW (health bar included), frozen at the last sighting.
   // Built only from visibleAdversaries(); expired by age or by seeing the empty cell.
@@ -843,6 +850,7 @@ export class ExplorerBrain {
     this.#watchCorner(sit);
     this.#gapNow = sit.threats.encounter?.gap_now ?? null;
     this.#tabuTick = null;
+    this.#moodTick = null;
     const enc = this.#encounterPolicy(sit, prev);
     policy = enc.policy ?? policy;
 
@@ -862,7 +870,8 @@ export class ExplorerBrain {
     {
       const cap = this.#capState();
       const cur = memory.sentiment.id;
-      const list = this.#allowed(cap);
+      const tierList = this.#allowed(cap);
+      const list = this.#moodMenu(tierList, step, false);
       const wasPanic = cur === 'panic';
       if (!this.#fixedMood && panicNext(cap.C, wasPanic, this.#world.health) !== wasPanic) { // PLAN-moods: panic starts below C 20 at 1 life or less and ends at 25 (or a heal), by code, no sentiment call
         const to = wasPanic ? defaultMood(list) : 'panic';
@@ -870,13 +879,13 @@ export class ExplorerBrain {
         policy = { from: cur, to, reason: `confidence ${Math.floor(cap.C)}` };
         if (to === 'panic' && inSight) trigger ??= 'confidence'; // the tactic question follows (run away, or the portal), no mood call
       } else if (!wasPanic && !list.includes(cur)) {
-        const dir = TIER_RANK[tierOfMood(cur)] < TIER_RANK[tierOf(cap.C, tierOfMood(cur))] ? 'up' : 'down';
+        const dir = !tierList.includes(cur) ? (TIER_RANK[tierOfMood(cur)] < TIER_RANK[tierOf(cap.C, tierOfMood(cur))] ? 'up' : 'down') : 'tabu'; // 'tabu': the tier still allows it, the mood list ruled it out
         if (inSight) {
           if (!this.#capFired.has(dir) && (trigger || step - info.lastDecision >= REDECIDE_COOLDOWN)) { this.#capFired.add(dir); trigger ??= 'confidence'; }
         } else {
           const to = defaultMood(list);
           setSentiment(memory, { id: to }, step);
-          policy = { from: cur, to, reason: `confidence ${Math.floor(cap.C)}` };
+          policy = { from: cur, to, reason: tierList.includes(cur) ? `${cur} ruled out` : `confidence ${Math.floor(cap.C)}` };
         }
       }
     }
@@ -896,10 +905,11 @@ export class ExplorerBrain {
     let decisionTargets = {}; // tactic id -> observed target at decision time
     let apiMs = 0;
     if (trigger) {
-      if (inSight) this.#charge(trigger, step);
+      if (inSight) { this.#charge(trigger, step); this.#chargeMood(trigger, step); }
       info.lastDecision = step;
       const sentiment = await this.#askSentiment(sit, trigger);
       apiMs += sentiment.ms;
+      if (this.#moodTabuRecord() && this.#moodTrack?.id !== sentiment.choice) this.#moodTrack = sentiment.choice === 'panic' ? null : { id: sentiment.choice, since: step, base: this.#baseline() }; // a re-pick keeps its baseline
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities, options: sentiment.options, automatic: sentiment.automatic }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
@@ -1084,6 +1094,7 @@ export class ExplorerBrain {
         this.#review = { step, targetSteps: this.#target(approachId)?.steps ?? null };
         const working = answers.approach_working.noul;
         review = { working, switched: false, from: approachId, to: approachId, reason: null };
+        this.#reviewVerdict(working, step);
         if (working < APPROACH_FAILING && answers.next_approach && APPROACHES[answers.next_approach.choice] && !isTactic(answers.next_approach.choice)) {
           const p = memory.progress;
           const reason =
@@ -1151,7 +1162,7 @@ export class ExplorerBrain {
       directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
       confidence: this.#confidenceReport(),
-      tabu: TABU_ON ? { ...tabuSnapshot(this.#tabu, world.steps), removed: this.#tabuTick?.removed ?? [], lifted: this.#tabuTick?.lifted ?? [] } : null,
+      tabu: TABU_ON ? { ...tabuSnapshot(this.#tabu, world.steps), removed: this.#tabuTick?.removed ?? [], lifted: this.#tabuTick?.lifted ?? [], removed_moods: this.#moodTick?.removed ?? [], lifted_moods: this.#moodTick?.lifted ?? [] } : null,
     };
   }
 
@@ -1283,7 +1294,7 @@ export class ExplorerBrain {
     const memory = this.#memory;
     if (memory.sentiment.id === 'panic') return { choice: 'panic', probabilities: { panic: 1 }, options: ['panic'], automatic: true, ms: 0 }; // panic is code's, not Jev's, until C is back at PANIC_EXIT
     const caps = this.#capState();
-    const ids = this.#allowed(caps);
+    const ids = this.#moodMenu(this.#allowed(caps), world.steps + 1);
     if (ids.length === 1) { // only one mood left: code takes it, no one-option Choice
       setSentiment(memory, { id: ids[0] }, world.steps + 1);
       return { choice: ids[0], probabilities: { [ids[0]]: 1 }, options: ids, automatic: true, ms: 0 };
@@ -1510,8 +1521,9 @@ export class ExplorerBrain {
     if (visible.length && !info.active) {
       info.active = true;
       this.#exclude = null;
-      tabuEndEncounter(this.#tabu); // a fresh encounter starts with a clean slate
+      this.#endTabuEncounter(); // a fresh encounter starts with a clean slate
       this.#track = null;
+      this.#moodTrack = null;
       this.#capFired = new Set();
       countEncounter(memory, 'count', at);
     }
@@ -1525,6 +1537,7 @@ export class ExplorerBrain {
     const inEncounter = isTactic(a.id);
     if (visible.length) {
       this.#trackGain(a.id, step);
+      this.#trackMood(step);
       const newcomer = visible.some((v) => !info.encIds.has(v.id));
       const turned = visible.some((v) => v.mode === 'chase' && info.modes.get(v.id) === 'patrol');
       // (Without a tactic on, e.g. no tactic was feasible last time, retry only after the cooldown.)
@@ -1564,8 +1577,9 @@ export class ExplorerBrain {
       }
       info.active = false;
       this.#exclude = null;
-      tabuEndEncounter(this.#tabu);
+      this.#endTabuEncounter();
       this.#track = null;
+      this.#moodTrack = null;
       this.#capFired = new Set();
       info.encIds = new Set();
       info.modes = new Map();
@@ -1652,6 +1666,76 @@ export class ExplorerBrain {
       }
     }
     return removed.length ? Object.fromEntries(allowed.map((id) => [id, feasible[id]])) : feasible;
+  }
+
+  // ---- PLAN-tabu, mood level (D1, D2). A mood is ruled out by what happened under it; panic is code's and never is.
+  #moodTabuRecord() {
+    return TABU_ON && TABU_MOODS && !this.#fixedMood;
+  }
+
+  #moodTabuOn() {
+    return this.#moodTabuRecord() && this.#memory.sentiment?.id !== 'panic' && !this.directive;
+  }
+
+  // The encounter is over: its tabu entries go, except a mood's, which lasts TABU_MOOD_TENURE steps from when it was ruled out.
+  #endTabuEncounter() {
+    for (const e of this.#tabu.entries) if (e.level === 'mood' && e.encounter) { e.encounter = false; e.until = e.since + TABU_MOOD_TENURE; }
+    tabuEndEncounter(this.#tabu);
+  }
+
+  // D1, once per tick with an enemy in sight: a gain since the mood was picked moves its baseline to now and clears its strikes.
+  #trackMood(step) {
+    const t = this.#moodTrack;
+    if (!t || t.id !== this.#memory.sentiment.id) return;
+    if (t.base.gap === null && this.#gapNow !== null) t.base = { ...t.base, gap: this.#gapNow };
+    if (this.#gained(t.base)) {
+      this.#moodTrack = { id: t.id, since: step, base: this.#baseline() };
+      clearStrikes(this.#tabu, 'mood', t.id);
+    }
+  }
+
+  // D1: a re-decision (tactic failed, a hit, confidence) with the mood picked last still on and nothing gained since the last
+  // decision charges it; TABU_MOOD_STRIKES charges rule it out for the encounter (at least TABU_MOOD_TENURE steps).
+  #chargeMood(trigger, step) {
+    const t = this.#moodTrack;
+    const id = this.#memory.sentiment.id;
+    if (!this.#moodTabuRecord() || id === 'panic' || !t || t.id !== id || !['tactic_failed', 'hit', 'confidence'].includes(trigger)) return;
+    if (t.since > this.#encounter.lastDecision) return; // it gained since the last decision
+    if (tabuStrike(this.#tabu, 'mood', id) >= TABU_MOOD_STRIKES) {
+      tabuAdd(this.#tabu, 'mood', id, { step, encounter: true, reason: `picked ${TABU_MOOD_STRIKES} times with nothing gained` });
+    }
+  }
+
+  // D2: a review that judged the approach failing counts against the mood on; TABU_MOOD_STRIKES in a row rule it out for
+  // TABU_MOOD_REVIEW_TENURE steps. One that judged it working resets the count.
+  #reviewVerdict(working, step) {
+    const id = this.#memory.sentiment?.id;
+    if (!this.#moodTabuRecord() || !id || id === 'panic') return;
+    if (this.#reviewMood !== id) clearStrikes(this.#tabu, 'moodReview');
+    this.#reviewMood = id;
+    if (working >= APPROACH_FAILING) { clearStrikes(this.#tabu, 'moodReview'); return; }
+    if (tabuStrike(this.#tabu, 'moodReview', id) >= TABU_MOOD_STRIKES) {
+      clearStrikes(this.#tabu, 'moodReview');
+      tabuAdd(this.#tabu, 'mood', id, { step, tenure: TABU_MOOD_REVIEW_TENURE, reason: `${TABU_MOOD_STRIKES} approach reviews in a row judged the approach failing` });
+    }
+  }
+
+  // The moods the question may list: the tier's list minus the ruled-out ones. The tier's moods are never all removed (the
+  // never-empty rule lifts the one with the least tenure left, so a last life never loses both wary and guarded). record:
+  // false for the tier-swap check, which only needs the list; the memory event is written when a request really drops a mood.
+  #moodMenu(list, step, record = true) {
+    if (!this.#moodTabuOn()) return list;
+    const { allowed, removed, lifted } = filterOptions(list, this.#tabu, 'mood', step, { min: 1 });
+    if (record) {
+      this.#moodTick = { removed, lifted };
+      for (const id of removed) {
+        const e = entryOf(this.#tabu, 'mood', id, step);
+        if (!e || this.#told.has(`mood:${id}@${e.since}`)) continue;
+        this.#told.add(`mood:${id}@${e.since}`);
+        addEvent(this.#memory, Math.max(step - 1, 1), `Ruled out ${id}: ${e.reason}.`);
+      }
+    }
+    return removed.length ? allowed : list;
   }
 
   // Going back and forth under a tactic: PINGPONG_FAILS moves in the recent window returned to the
@@ -1862,13 +1946,17 @@ export function configureExplorerBrain(o) {
   if (o.tabuRetreatTicks !== undefined) TABU_RETREAT_TICKS = o.tabuRetreatTicks;
   if (o.tabuEngageHits !== undefined) TABU_ENGAGE_HITS = o.tabuEngageHits;
   if (o.tabuPingpongTenure !== undefined) TABU_PINGPONG_TENURE = o.tabuPingpongTenure;
+  if (o.tabuMoods !== undefined) TABU_MOODS = o.tabuMoods;
+  if (o.tabuMoodStrikes !== undefined) TABU_MOOD_STRIKES = o.tabuMoodStrikes;
+  if (o.tabuMoodTenure !== undefined) TABU_MOOD_TENURE = o.tabuMoodTenure;
+  if (o.tabuMoodReviewTenure !== undefined) TABU_MOOD_REVIEW_TENURE = o.tabuMoodReviewTenure;
   for (const id of Object.keys(SENTIMENTS)) {
     if (o[`mood_${id}_minGap`] !== undefined) SENTIMENTS[id].min_gap = o[`mood_${id}_minGap`];
     if (o[`mood_${id}_endTicks`] !== undefined) SENTIMENTS[id].end_ticks = o[`mood_${id}_endTicks`];
   }
 }
 // The values in force, keyed like the registry (the config check compares them with the registry defaults).
-export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, tabuEnabled: TABU_ON, tabuTactics: TABU_TACTICS, tabuTacticStrikes: TABU_TACTIC_STRIKES, tabuRetreatTicks: TABU_RETREAT_TICKS, tabuEngageHits: TABU_ENGAGE_HITS, tabuPingpongTenure: TABU_PINGPONG_TENURE, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
+export const explorerBrainSnapshot = () => ({ brainReviewEvery: REVIEW_EVERY, brainApproachFailing: APPROACH_FAILING, brainRedecideCooldown: REDECIDE_COOLDOWN, brainRememberSteps: REMEMBER_STEPS, brainSkillNear: SKILL_NEAR, brainSkillRememberSteps: SKILL_REMEMBER_STEPS, brainThreatSteps: THREAT_STEPS, brainGhostsCanAttack: GHOSTS_CAN_ATTACK, cornerMode: CORNER_MODE, brainHoldMax: HOLD_MAX, brainHoldAdjacentMax: HOLD_ADJACENT_MAX, brainPingpongFails: PINGPONG_FAILS, brainHealNear: HEAL_NEAR, brainCoinNear: COIN_NEAR, brainCoinEvery: COIN_EVERY, brainCoinSwitch: COIN_SWITCH, brainDirectiveDone: DIRECTIVE_DONE, brainDirectiveAskEvery: DIRECTIVE_ASK_EVERY, brainLeaveNow: LEAVE_NOW, tabuEnabled: TABU_ON, tabuTactics: TABU_TACTICS, tabuTacticStrikes: TABU_TACTIC_STRIKES, tabuRetreatTicks: TABU_RETREAT_TICKS, tabuEngageHits: TABU_ENGAGE_HITS, tabuPingpongTenure: TABU_PINGPONG_TENURE, tabuMoods: TABU_MOODS, tabuMoodStrikes: TABU_MOOD_STRIKES, tabuMoodTenure: TABU_MOOD_TENURE, tabuMoodReviewTenure: TABU_MOOD_REVIEW_TENURE, ...Object.fromEntries(Object.entries(SENTIMENTS).flatMap(([id, m]) => [[`mood_${id}_minGap`, m.min_gap], [`mood_${id}_endTicks`, m.end_ticks]])) });
 
 // ---- Prompt wording from the central config (src/config/runtime.js). A key set to null (or absent) means the built-in text,
 // which is copied here at load, before any configure call. Static text only: nothing in it can pull in game data.
