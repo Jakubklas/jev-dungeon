@@ -54,8 +54,12 @@ export class KnownWorld {
   teammates() {
     return this.#game.explorers.filter((e) => e.status === 'active' && e.id !== this.#id).map((e) => ({ id: e.id, pos: [...e.pos] }));
   }
-  // Help calls from teammates (a frozen sighting each; filled by the multiplayer runtime). Empty for now.
-  helpReports() { return []; }
+  // Frozen teammate reports. They carry only what the sender directly saw at call time.
+  helpReports() {
+    return (this.#game.helpReports[this.#id] ?? [])
+      .filter((r) => this.steps - r.step <= 30)
+      .map((r) => ({ ...r, cell: [...r.cell] }));
+  }
   // Each adversary in sight with its health bar ({ hp, maxHp }): a bar the explorer can see, so fog-safe
   // while in sight (user-approved amendment of rule 1). Out of sight nothing is read, hp included.
   visibleAdversaries() {

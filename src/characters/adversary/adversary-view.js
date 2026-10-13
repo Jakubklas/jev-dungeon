@@ -48,6 +48,12 @@ export class AdversaryView {
   }
 
   optionRandom() { return this.#optionRand(); }
+  hasMultipleExplorers() { return this.#game.explorers.length > 1; }
+  explorerTargets() {
+    const h = this.#a.hunt;
+    return [...(h.sightings ?? new Map())].filter(([, s]) => this.tick - s.tick <= 30)
+      .map(([id, s]) => ({ id, cell: [...s.cell], in_sight: (h.visibleTargets ?? []).includes(id), ticks_ago: this.tick - s.tick }));
+  }
   optionRandomState() { return this.#optionRand.state(); }
   restoreOptionRandom(state) { this.#optionRand.restore(state); }
 
@@ -92,13 +98,17 @@ export class AdversaryView {
 
   // The explorer's cell while this ghost has it in sight, else null.
   explorer() {
-    return this.#a.hunt.inSight ? [...this.#game.targetExplorer(this.#a.pos).pos] : null;
+    if (!this.#a.hunt.inSight) return null;
+    const target = this.#game.explorers.find((e) => e.id === this.#a.hunt.targetId && e.status === 'active') ??
+      (this.#game.explorers.length === 1 ? this.#game.explorers[0] : null);
+    return target ? [...target.pos] : null;
   }
 
   // Direction of the explorer's latest move, read only while it is in sight.
   heading() {
     if (!this.#a.hunt.inSight) return null;
-    const t = this.#game.targetExplorer(this.#a.pos).trail ?? [];
+    const t = (this.#game.explorers.find((e) => e.id === this.#a.hunt.targetId) ??
+      (this.#game.explorers.length === 1 ? this.#game.explorers[0] : null))?.trail ?? [];
     if (t.length < 2) return null;
     const [p, q] = t.slice(-2);
     const dx = q[0] - p[0], dy = q[1] - p[1];

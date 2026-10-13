@@ -18,6 +18,9 @@ import { Game } from '../dungeon.js';
 import { Adversary, adversaryView } from '../characters/adversary/adversary.js';
 import { KnownWorld } from '../characters/explorer/known-world.js';
 import { ExplorerBrain } from '../characters/explorer/brain.js';
+import { visibleAdversaries } from '../characters/adversary/adversary.js';
+import { HELP_REACH_STEPS } from '../dungeon.js';
+import { knownDistances } from '../characters/explorer/known-map.js';
 
 export class GameActor {
   #game;
@@ -69,6 +72,32 @@ export class GameActor {
   get inLock() { return this.#inLock; }
   get seq() { return this.#seq; }
   get outcome() { return this.#outcome; }
+
+  // A direct sighting starts one call per encounter. Recipients are reached over shared known
+  // floor, and the report is copied now; later monster movement cannot update it.
+  noteHelp(id) {
+    if (!this.#inLock || this.#game.explorers.length < 2) return;
+    const game = this.#game;
+    const sender = game.explorer(id);
+    const seen = visibleAdversaries(game, id);
+    if (!seen.length) { game.helpActive[id] = false; return; }
+    if (game.helpActive[id]) return;
+    game.helpActive[id] = true;
+    const world = new KnownWorld(game, id);
+    const map = { width: world.width, height: world.height,
+      knownTile: (cell) => world.knownTile(cell), isKnown: (cell) => world.isKnown(cell),
+      seenTreasure: () => null, teammates: () => [] };
+    const distances = knownDistances(map, sender.pos);
+    const recipients = [];
+    for (const other of game.activeExplorers()) {
+      if (other.id === id || (distances.get(other.pos) ?? Infinity) > HELP_REACH_STEPS) continue;
+      const reports = game.helpReports[other.id] ?? [];
+      game.helpReports[other.id] = [...reports.filter((r) => other.steps - r.step <= 30 && !seen.some((s) => s.id === r.id)),
+        ...seen.map((s) => ({ id: s.id, by: id, cell: [...s.pos], step: other.steps }))];
+      recipients.push(other.id);
+    }
+    this.record('help_called', { actor: id, who: id, recipients, sightings: seen.map((s) => s.id) });
+  }
 
   serialize() {
     return { v: 1, event_seq: this.#seq, status: this.#state, outcome: this.#outcome,

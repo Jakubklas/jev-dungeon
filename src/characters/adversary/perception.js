@@ -296,6 +296,10 @@ export function situation(view, a, hunt, { smart = false, tick = 0 } = {}) {
         }
       : null,
     team: smart ? teamMemory(view, a, fromMe, tick) : team(view, a, fromMe),
+    ...(view.hasMultipleExplorers?.() ? { explorers: view.explorerTargets().map((e) => ({
+      id: e.id, in_sight: e.in_sight, direction: compass8(a.pos, e.cell),
+      path_steps: fromMe.get(key(e.cell)) ?? null, ticks_ago: e.ticks_ago,
+    })), target: hunt.targetId } : {}),
   };
   if (smart) {
     s.surroundings.landmarks = landmarksFacts(a, fromMe, tick);

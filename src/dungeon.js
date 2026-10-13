@@ -701,6 +701,8 @@ export class Game {
     this.heartsTaken = []; // picked-up hearts waiting to respawn: { cell: [x, y], due: ms on the picker's time } (HEART_RESPAWN * stepMs); replaced, never spliced
     this.winBy = null; // how the game was won: 'chest' (applyMove) or 'cleared' (the last adversary dispelled, resolve.js)
     this.coinRand = null; // seeded coin-drop stream, created on the first roll (coinRandom)
+    this.helpActive = {}; // explorer id -> whether its direct encounter already called for help
+    this.helpReports = {}; // recipient id -> frozen reports received from a teammate
     for (const e of this.explorers) lightAround(this, e.pos); // shared, max-only light
   }
 
@@ -708,7 +710,7 @@ export class Game {
     const fields = [
       'light', 'knownCount', 'knownFloor', 'floorCount', 'won', 'lost', 'caughtBy', 'adversaryTicks',
       'clock', 'rules', 'managed', 'frozen', 'inTick', 'tickAt', 'strikes', 'dispelled',
-      'coinPiles', 'heartPiles', 'heartsTaken', 'winBy',
+      'coinPiles', 'heartPiles', 'heartsTaken', 'winBy', 'helpActive', 'helpReports',
     ];
     const state = Object.fromEntries(fields.map((name) => [name, structuredClone(this[name])]));
     return { v: 1, dungeon: structuredClone(this.dungeon), explorers: this.explorers.map((e) => e.serialize()),
@@ -723,6 +725,8 @@ export class Game {
     const game = new Game(structuredClone(saved.dungeon), { explorers: saved.explorers.map((e) => ({ id: e.id, start: e.pos })) });
     game.explorers = saved.explorers.map((e) => ExplorerState.restore(e));
     for (const [name, value] of Object.entries(saved.state)) game[name] = structuredClone(value);
+    game.helpActive ??= {};
+    game.helpReports ??= {};
     game.litOutside = new Set(saved.litOutside);
     if (saved.adversaries.length && !restoreAdversary) throw new TypeError('restoreAdversary is required');
     game.adversaries = saved.adversaries.map((a) => restoreAdversary(a));

@@ -92,6 +92,7 @@ function rules({ speed, maxSearchTicks, hitDamage = 1, graceTicks = 4, limited =
 export function newHunt(id, profile = profileOf(traitsOf('standard')), character = 'standard') {
   return {
     on: false, inSight: false, heading: null, ticksSinceSeen: 0, swept: new Set(), cutOff: null, dists: [], trend: null,
+    targetId: null, visibleTargets: [], sightings: new Map(),
     pickApproach: false, probabilities: null, profile, restUntil: 0, pingpongs: 0, lostNear: false, hidLogged: false, areaLogged: false,
     // Morale (morale.js): the score itself, the events waiting for the next morale phase, and the derived
     // mood. It is never reset by a hunt (startHunt only clears the per-hunt slip budget), so a monster
@@ -432,7 +433,7 @@ export const moodKnobsOf = (a) => a.hunt.knobs;
 function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
   const morale = MORALE_ON ? { morale: moraleWord(a) } : {};
   const m = h.memory;
-  const { position, surroundings, explorer, last_seen, team, ...search } = situation(view, a, h, { smart, tick });
+  const { position, surroundings, explorer, last_seen, team, explorers, target, ...search } = situation(view, a, h, { smart, tick });
   return {
     game: rulesText,
     tick,
@@ -444,6 +445,7 @@ function jevState(view, a, h, tick, rulesText, withCharacter, smart) {
     },
     surroundings,
     explorer,
+    ...(view.hasMultipleExplorers?.() ? { explorers, target } : {}),
     last_seen,
     ...search,
     team,
@@ -490,6 +492,11 @@ export function buildRequest(view, a, tick, cfg) {
   };
   const approachIds = searching ? (h.pickApproach ? SEARCH_APPROACHES : [h.memory.approach.id]) : ['direct_pursuit'];
   const questions = {};
+  const targetIds = view.hasMultipleExplorers?.() ? view.explorerTargets().filter((e) => e.in_sight).map((e) => e.id) : [];
+  if (targetIds.length > 1) questions.target = {
+    type: 'choice', instructions: 'Which visible explorer should this adversary pursue next?',
+    criteria: Object.fromEntries(targetIds.map((id) => [id, `Pursue explorer ${id}.`])),
+  };
   let options = null;
   if (legal.length > 1) {
     const moves = describeMoves(view, a, h, approachIds, speed);
@@ -554,7 +561,7 @@ export function buildRequest(view, a, tick, cfg) {
   if (!Object.keys(questions).length) return { legal, forced: legal[0] };
   const state = jevState(view, a, h, tick, rules(cfg, Boolean(cfg.characters), MORALE_ON), withCharacter, Boolean(cfg.characters));
   const body = JSON.stringify({ model: jevModel(), state, questions });
-  return { legal, state, questions, body, options, skillOptions };
+  return { legal, state, questions, body, options, skillOptions, targetIds };
 }
 
 // One step's decision. Never throws: a failed call returns { error } and the caller falls back
@@ -591,12 +598,17 @@ export async function decide(view, a, tick, cfg, ask = null, signal = null) {
     skill = pickSkill(answers?.skill, req.skillOptions);
     skill_decision = { choice: answers?.skill?.choice ?? null, probabilities: answers?.skill?.probabilities ?? null, used: null };
   }
-  return { dir, decision, keep_hunting: keep, approach, forced: !decision, apiMs, error: null, answers, skill, skill_decision };
+  const target = req.targetIds?.includes(answers?.target?.choice) ? answers.target.choice : null;
+  return { dir, decision, keep_hunting: keep, approach, target, forced: !decision, apiMs, error: null, answers, skill, skill_decision };
 }
 
 // Applies the parts of a decision that change memory (approach choice, latest action).
 export function applyDecision(a, tick, res, { fallback = false } = {}) {
   const h = a.hunt;
+  if (res.target && h.visibleTargets?.includes(res.target)) {
+    h.targetId = res.target;
+    a.lastSeen = [...h.sightings.get(res.target).cell];
+  }
   if (h.pickApproach && h.on && !h.inSight) {
     const id = res.approach ?? h.profile.preferredSearch ?? 'sweep_last_seen';
     const why = res.approach ? `lost sight of the explorer; Jev chose ${id}` : (id === 'sweep_last_seen' ? 'lost sight of the explorer; no Jev answer, sweeping by default' : `lost sight of the explorer; no Jev answer, ${id} by its nature`);

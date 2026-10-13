@@ -439,9 +439,24 @@ function plainKnobsOf(a) {
 // `explorer` (an id or ExplorerState) tests that one explorer; without it, whichever active explorer the monster
 // would react to (the nearest it sees), so with one explorer nothing changes.
 export function seesExplorer(game, adversary, explorer = null) {
-  const e = explorer === null ? game.targetExplorer(adversary.pos) : game.explorer(explorer);
-  return euclid(e.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
+  if (explorer === null) return seenExplorers(game, adversary).length > 0;
+  const e = game.explorer(explorer);
+  return e.status === 'active' && euclid(e.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
     hasLineOfSight(game.dungeon, e.pos, adversary.pos);
+}
+
+function seenExplorers(game, adversary) {
+  return game.activeExplorers().filter((e) => seesExplorer(game, adversary, e))
+    .sort((x, y) => euclid(x.pos, adversary.pos) - euclid(y.pos, adversary.pos) || x.id.localeCompare(y.id));
+}
+
+function chosenExplorer(game, adversary) {
+  const id = adversary.hunt.targetId;
+  if (id) {
+    const e = game.explorers.find((x) => x.id === id && x.status === 'active');
+    if (e) return e;
+  }
+  return seenExplorers(game, adversary)[0] ?? game.targetExplorer(adversary.pos);
 }
 
 // Trigger for patrol/search -> chase. The user wrote "has a direct line of sight ... and is at
@@ -449,7 +464,7 @@ export function seesExplorer(game, adversary, explorer = null) {
 // change `<= CHASE_RANGE` to `>= CHASE_RANGE` on the line below. Note: seesExplorer already caps
 // distance at SIGHT_RANGE (7), so the flipped trigger only fires when SIGHT_RANGE is raised too.
 export function startsChase(game, adversary) {
-  return seesExplorer(game, adversary) && euclid(game.targetExplorer(adversary.pos).pos, adversary.pos) <= knobsOf(adversary).chaseRange;
+  return seenExplorers(game, adversary).some((e) => euclid(e.pos, adversary.pos) <= knobsOf(adversary).chaseRange);
 }
 
 // The adversaries one explorer (default: the primary) sees right now.
@@ -515,7 +530,11 @@ function pickPatrolGoal(game, a) {
 
 function turnOn(game, a, events, tick) {
   a.mode = 'chase';
-  a.lastSeen = [...game.targetExplorer(a.pos).pos];
+  const targets = seenExplorers(game, a);
+  a.hunt.targetId = targets[0]?.id ?? null;
+  a.hunt.visibleTargets = targets.map((e) => e.id);
+  a.hunt.sightings = new Map(targets.map((e) => [e.id, { cell: [...e.pos], tick }]));
+  a.lastSeen = [...chosenExplorer(game, a).pos];
   a.goal = null;
   a.route = null;
   events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
@@ -529,7 +548,7 @@ function turnOn(game, a, events, tick) {
 function alertNearby(game, spotter, events, tick) {
   if (!knobsOf(spotter).makesCalls) return; // a loner does not call (a shaken monster calls anyway: morale)
   const near = floorDistances(game.dungeon, spotter.pos);
-  const target = game.targetExplorer(spotter.pos).pos;
+  const target = chosenExplorer(game, spotter).pos;
   let answered = false;
   for (const o of game.adversaries) {
     if (o === spotter || o.hunt.on) continue;
@@ -542,6 +561,9 @@ function alertNearby(game, spotter, events, tick) {
       if (toExplorer === undefined || toExplorer > hear.answersWithin) continue;
     }
     o.mode = 'search';
+    o.hunt.targetId = spotter.hunt.targetId;
+    o.hunt.visibleTargets = [];
+    o.hunt.sightings = new Map([[spotter.hunt.targetId, { cell: [...target], tick }]]);
     o.lastSeen = [...target];
     o.goal = null;
     o.route = null;
@@ -559,6 +581,9 @@ function turnOff(a, events, tick, reason) {
   // A routed monster keeps away for ROUT_REST ticks whatever its character; a calm one rests its own time.
   a.hunt.restUntil = tick + (reason.startsWith('routed') ? Math.max(ROUT_REST, knobsOf(a).restTicks) : knobsOf(a).restTicks);
   a.mode = 'patrol';
+  a.hunt.targetId = null;
+  a.hunt.visibleTargets = [];
+  a.hunt.sightings = new Map();
   a.lastSeen = null;
   a.goal = null;
   a.route = null;
@@ -569,28 +594,41 @@ function turnOff(a, events, tick, reason) {
 // Team sight: a hunting adversary tracks the explorer while it sees it itself or any other hunting
 // adversary does (they call out its position), so the pack closes in together instead of one
 // ghost losing it behind a corner.
-function tracksExplorer(game, a) {
-  return seesExplorer(game, a) || (knobsOf(a).teamSight && game.adversaries.some((o) => o !== a && o.hunt.on && seesExplorer(game, o)));
+function trackedExplorers(game, a) {
+  const seen = seenExplorers(game, a);
+  if (!knobsOf(a).teamSight) return seen;
+  const byId = new Map(seen.map((e) => [e.id, e]));
+  for (const o of game.adversaries) if (o !== a && o.hunt.on)
+    for (const e of seenExplorers(game, o)) byId.set(e.id, e);
+  return [...byId.values()].sort((x, y) => euclid(x.pos, a.pos) - euclid(y.pos, a.pos) || x.id.localeCompare(y.id));
 }
 
 // Sight while the brain is on: chase while it (or a packmate) sees the explorer, search otherwise.
 function senseHunting(game, a, events, tick, startOfTick) {
-  if (tracksExplorer(game, a)) {
+  const tracked = trackedExplorers(game, a);
+  if (tracked.length) {
     if (a.mode !== 'chase') {
       a.mode = 'chase';
       events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
     }
-    const where = game.targetExplorer(a.pos).pos;
+    const h = a.hunt;
+    h.visibleTargets = tracked.map((e) => e.id);
+    h.sightings ??= new Map();
+    for (const e of tracked) h.sightings.set(e.id, { cell: [...e.pos], tick });
+    for (const [id, sighting] of h.sightings) if (tick - sighting.tick > 30) h.sightings.delete(id);
+    if (!tracked.some((e) => e.id === h.targetId)) h.targetId = tracked[0].id;
+    const where = chosenExplorer(game, a).pos;
     a.lastSeen = [...where];
-    const own = seesExplorer(game, a);
+    const own = seesExplorer(game, a, h.targetId);
     // Team sight: a packmate that sees the explorer calls out where it is, and its nearby known cells come with the call.
     if (!own && limitedActive()) {
-      const caller = [...game.adversaries].sort(byId).find((o) => o !== a && o.hunt.on && seesExplorer(game, o));
+      const caller = [...game.adversaries].sort(byId).find((o) => o !== a && o.hunt.on && seesExplorer(game, o, h.targetId));
       if (caller) viewOf(game, a).hear(viewOf(game, caller), where, tick);
     }
     seen(viewOf(game, a), a, tick, { startOfTick, own });
     return true;
   }
+  a.hunt.visibleTargets = [];
   if (a.mode === 'chase') {
     a.mode = 'search';
     lostSight(viewOf(game, a), a, tick);
@@ -641,7 +679,7 @@ function supportFor(game, a) {
 // Is the explorer boxed in right next to this monster? Only ever asked while it is in sight, so it is
 // something the monster can actually see.
 function corneredNow(game, a) {
-  const at = game.targetExplorer(a.pos).pos;
+  const at = chosenExplorer(game, a).pos;
   if (!a.hunt.inSight || euclid(a.pos, at) > 2) return false;
   const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [at[0] + dx, at[1] + dy])).length;
   return ways <= 2;
@@ -701,7 +739,7 @@ function patrolStep(game, a) {
 // to the last-seen cell, else to the nearest unchecked cell around it. Returns a direction or null.
 function codeHuntDir(game, a) {
   const h = a.hunt;
-  let target = h.inSight ? game.targetExplorer(a.pos).pos : a.lastSeen;
+  let target = h.inSight ? chosenExplorer(game, a).pos : a.lastSeen;
   if (target && same(target, a.pos)) target = approachTarget(viewOf(game, a), a, h, 'sweep_last_seen')?.cell ?? null;
   if (!target) return null;
   if (limitedActive()) {

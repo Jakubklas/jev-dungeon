@@ -540,6 +540,10 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
         ...levelFields(world, th),
       })),
       remembered: rememberedView(world, dist, remembered),
+      ...(world.helpReports().length ? { reported: world.helpReports().map((r) => ({
+        id: r.id, by: r.by, direction: compass8(world.pos, r.cell),
+        path_steps: dist.get(r.cell) ?? null, steps_ago: world.steps - r.step,
+      })) } : {}),
       encounter: encounterFacts(world, threats)?.facts ?? null,
     },
   };

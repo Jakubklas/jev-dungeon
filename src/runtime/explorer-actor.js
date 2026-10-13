@@ -54,6 +54,7 @@ export class ExplorerActor {
     const ex = game.explorer(this.id);
     if (game.won || game.lost || ex.status !== 'active') return;
     const token = { generation: this.generation, observedAt: game.clock, controller: new AbortController() };
+    host.noteHelp(this.id);
     this.inFlight = token;
     let thinking;
     try {
