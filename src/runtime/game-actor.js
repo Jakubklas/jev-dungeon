@@ -268,7 +268,8 @@ export class GameActor {
     const winner = game.explorers.find((e) => e.status === 'won')?.id ?? null;
     this.#outcome = {
       result: game.won ? 'won' : 'lost', won: game.won, lost: game.lost, winner, win_by: game.winBy, caught_by: game.caughtBy,
-      explorers: game.explorers.map((e) => ({ id: e.id, status: e.status, coins: e.coins, health: e.health })),
+      explorers: game.explorers.map((e) => ({ id: e.id, status: e.status, coins: e.coins, health: e.health,
+        strikes: e.outcome.strikes, dispels: e.outcome.dispels, diedAt: e.outcome.diedAt, portal: e.outcome.portal })),
     };
     this.record('game_over', { lifecycle: true, ...this.#outcome });
     try {

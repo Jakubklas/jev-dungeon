@@ -5,8 +5,8 @@
 | Package | Status | Evidence / next step |
 | --- | --- | --- |
 | WP-A–E, WP-I foundations | Complete before this pass | Existing gateway, intent, shared world, clock, runtime, lobby, ranking and mock UI checks. |
-| WP-F | Implemented; final suite running | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. Request hashes intentionally regenerated. |
-| WP-G | In progress | Revision worker and player projection started. HTTP service, routes, worker registry and service checks remain. |
+| WP-F | Complete (`7f95df7`, `4a3b9b1`) | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. The full suite passed 46/46; request hashes intentionally regenerated. |
+| WP-G | In progress | Real `/v1` service, rules-revision workers, player projection, key handling, SSE and restart wiring built. `check-service.mjs` covers private/shared creation, join/start access, fog, host auth, Origin, directives, pause/resume, restart and key-free files. Full suite 47/47. Host/failure-path matrix and operations counters remain. |
 | WP-H | Pending | Monster target choice, help calls, multiplayer fog checks. |
 | WP-J / final review | Pending | Health and counters, kill tests, operations docs, contract and full branch review. |
 

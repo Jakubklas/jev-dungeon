@@ -59,6 +59,13 @@ function instanceNames() {
 
 export const appliedValue = (key) => applied[key];
 
+// Hosted workers each own one immutable settings revision. They apply its flat registry values once;
+// the standalone development server continues using the file refresh path below.
+export function applyRulesSnapshot(values) {
+  applied = { ...defaults(), ...values };
+  push();
+}
+
 let file = null; // this server's settings.json
 let saved = defaults(); // the effective settings (all layers)
 let applied = defaults(); // what the game modules run with right now

@@ -147,6 +147,8 @@ export class FileStore {
     return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
   }
 
+  readState(id) { return this.#readJson(id, 'state.json'); }
+
   // Events carry a numeric `seq`. One JSON line, fsynced.
   appendEvent(id, event) {
     if (!Number.isInteger(event?.seq)) throw new StoreError('an event needs an integer seq');
