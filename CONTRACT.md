@@ -135,6 +135,29 @@ moveIntervalMs(game, a)     // stepMs / speed, for the runtime (adversary.js)
 ```
 Summaries and Jev requests keep step counts (`cooldown_left = ceil(ms left / stepMs)`). See AGENTS.md "World clock".
 
+## Runtime (WP-E)
+
+```js
+import { GameActor } from './src/runtime/game-actor.js';
+import { MonotonicClock, FakeClock, settle } from './src/runtime/clock.js';
+
+const actor = new GameActor({ game, clock = new MonotonicClock(), rules?: { stepMs, cadenceMs },
+  explorers: [{ id, brain }], decideMonster, autoplay = false, startSeq = 0, store?,
+  onEvent(record), onKeyRejected(actorId), onServerKeyRejected(), onFinished(outcome), onError(err) });
+actor.start() / pause(reason?) / resume() / stop()        // promises; nothing runs before start() unless autoplay
+actor.enqueue(fn) -> Promise                              // synchronous critical section, one at a time
+actor.resumeExplorer(id) / forfeitExplorer(id)            // awaiting_key -> active; forfeit = leave for good
+actor.state ('idle'|'running'|'paused'|'finished'|'stopped'), seq, outcome, inLock, clockNow(), syncClock()
+actor.actorStatus(id), generation(id), inFlight(id), whenIdle()
+// record: { seq, type, actor, generation, observed_at, completed_at, applied_at, ... } (world ms); types:
+// explorer_turn, monster_turn, decision_failed, decision_dropped | game_started, game_paused, game_resumed,
+// game_stopped, game_over, explorer_resumed, explorer_forfeited (lifecycle: true)
+Game.forfeit(explorerId)                                  // status 'forfeited'; no active explorer left = lost
+ExplorerBrain.attachClock(now)                            // Dash follows the game clock
+// intent gains skill_id, skill_dir; apply() swings a stale aimed attack at skill_cells (a miss if they moved)
+```
+See AGENTS.md "Runtime (hosted)".
+
 ## `src/characters/adversary/adversary.js` (adversary agent)
 
 ```js

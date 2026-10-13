@@ -334,6 +334,15 @@ WP-A ∥ WP-B -> WP-C -> WP-D -> WP-E -> WP-F -> WP-G -> WP-H -> WP-I ∥ WP-J. 
 7. **`check-portal-objective` is flaky independent of WP-C**: it runs 12-20 `takeTurn`s with `Math.random`-shuffled
    options and, rarely, the explorer wins before the loop ends (`No legal moves`). Seen once in a full `check-all` run
    and not reproduced in 31 reruns; the script is untouched.
+8. **Monster claw cooldowns stay turn-counted (WP-E).** A monster's claw cooldown counts its own runtime turns
+   (`skills.turnPassed()` per turn); its turn interval is `max(cadenceMs, moveIntervalMs)`, so the pace matches the
+   old budget path on average without converting monster skills to deadlines.
+9. **`CallAborted` is one class (WP-E).** The class lives in `src/call-aborted.js` and the gateway, explorer and adversary modules
+   re-export it (`check-paid-paths` forbids character files from referencing `gateway/`); the explorer fog-guard allowlist
+   gained that one import (a pure error class).
+10. **Stale aimed attacks swing (WP-E).** `ExplorerBrain.apply` no longer skips a sword whose option or cells changed:
+    if the skill is ready it strikes the originally aimed cells against current occupants, as the plan says.
+
 
 ## /v1 API contract (shared by WP-G server and WP-I pages)
 
