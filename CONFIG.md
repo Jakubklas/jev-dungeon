@@ -476,10 +476,10 @@ The Jev API client: hedging, retries, timeout, model.
 
 | path | default | range | applies | player UI | what it does |
 | --- | --- | --- | --- | --- | --- |
-| `jev.hedgeCopies` | 2 | 1..4 | live | no | Copies of a request that may be in flight (1 = no hedging) |
+| `jev.hedgeCopies` | 1 | 1..4 | live | no | Copies of a request in flight (1 = no hedging); dev server only, hosted always sends 1 |
 | `jev.hedgeDelayMs` | 800 | 100..10000 | live | no | Wait for an answer before a further copy goes out, ms |
-| `jev.retries` | 3 | 0..8 | live | no | Retries per copy on a retryable status or a network error |
-| `jev.timeoutMs` | 20000 | 1000..120000 | live | no | Timeout per attempt, ms |
+| `jev.retries` | 3 | 0..8 | live | no | Retries per call on a retryable status or network error (inside the call deadline) |
+| `jev.timeoutMs` | 7000 | 1000..120000 | live | no | Timeout per call, ms, retries and backoff included (each call of a tick has its own) |
 | `jev.retryStatus` | [429,502,503,504,529] | list of 408, 425, 429, 500, 502, 503, 504, 529 (max 8) | live | no | HTTP statuses that are retried |
 | `jev.model` | "jev-latest" | /^[a-z0-9][a-z0-9._-]{0,63}$/ | live | no | Model name sent with every request (endpoint and API key stay in code and ../.env) |
 

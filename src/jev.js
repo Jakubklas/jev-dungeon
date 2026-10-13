@@ -1,12 +1,14 @@
-// Talks to hosted Jev, local Laya or OpenAI Decisions. Jev requests are hedged: copy 0 goes at once, each further copy (HEDGE in all) only if no answer has
-// come after HEDGE_DELAY_MS, so a normal call costs one request and only a slow one gets a second; the first answer wins, the rest are aborted and each copy retries rate limits and network errors with backoff.
+// Development providers: hosted Jev, local Laya or OpenAI Decisions, behind `askJev` (reached through
+// `gateway.devAsker()`; nothing in src/characters imports it). One logical call is `postWithRetry` (src/gateway/jev-client.js):
+// one copy, retries with backoff, one deadline for all of it. With `jev.hedgeCopies` > 1 (dev only) a further copy goes
+// out only if no answer has come after HEDGE_DELAY_MS; the first answer wins and the rest are aborted.
 import { askOpenAIDecider } from './openai-decider.js';
-const API = 'https://api.typesafe.ai/v1/systemone';
-let HEDGE = 2; // copies of a request that may be in flight (jev.hedgeCopies)
+import { JEV_ENDPOINT, postWithRetry } from './gateway/jev-client.js';
+let HEDGE = 1; // copies of a request that may be in flight (jev.hedgeCopies); the hosted gateway never hedges
 let HEDGE_DELAY_MS = 800; // measured: a call takes ~250 ms, the slow tail is 1-4 s; a second copy only pays for the tail
 let RETRY_STATUS = new Set([429, 502, 503, 504, 529]); // rate limit, and an upstream that is briefly down (503 'no healthy upstream')
 let RETRIES = 3;
-let TIMEOUT_MS = 20_000;
+let TIMEOUT_MS = 7000; // per call, retries and backoff included (jev.timeoutMs)
 let MODEL = 'jev-latest';
 let PROVIDER = 'jev';
 let OPENAI_MODEL = 'gpt-6-luna';
@@ -30,39 +32,11 @@ export function validateDecisionCredentials() {
   if (PROVIDER === 'openai' && !process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is required for decision.provider=openai');
 }
 
-// Sends one copy, retrying 429/529 and network errors until it succeeds, gives up,
-// or another copy wins (abort).
-async function sendCopy(body, abort, copy, transport) {
-  for (let attempt = 0; ; attempt++) {
-    if (abort.aborted) throw new Error('aborted: another copy answered first');
-    let res;
-    try {
-      res = await fetch(transport.endpoint, {
-        method: 'POST',
-        headers: transport.headers,
-        body,
-        signal: AbortSignal.any([abort, AbortSignal.timeout(transport.timeout)]),
-      });
-    } catch (err) {
-      if (abort.aborted) throw new Error('aborted: another copy answered first');
-      // Dropped connection or timeout: retry with backoff, like a rate limit.
-      if (attempt < transport.retries) {
-        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
-        continue;
-      }
-      throw new Error(`Couldn't reach ${transport.name}: ${err.cause?.code || err.message}`);
-    }
-    if (RETRY_STATUS.has(res.status) && attempt < transport.retries) {
-      await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
-      continue;
-    }
-    if (!res.ok) throw new Error(`${transport.name} ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    return { data: await res.json(), copy };
-  }
-}
-
-// `body` may be passed pre-serialized (the brain does, so it can keep the exact string it sent).
-export async function askJev(state, questions, body = JSON.stringify({ model: jevModel(), state, questions })) {
+// The development asker behind `gateway.devAsker()`: the provider switch (Jev, Laya, OpenAI) for the dev server and
+// the live scripts. The hosted game never comes through here (its askers are `explorerAsker` / `monsterDecider`).
+// `body` may be passed pre-serialized (the brain does, so it can keep the exact string it sent). `opts.onAttempt` and
+// `opts.signal` are the gateway's recording and abort hooks.
+export async function askJev(state, questions, body = JSON.stringify({ model: jevModel(), state, questions }), opts = {}) {
   validateDecisionCredentials();
   if (PROVIDER === 'openai') {
     const request = JSON.parse(body);
@@ -71,31 +45,39 @@ export async function askJev(state, questions, body = JSON.stringify({ model: je
   const local = PROVIDER === 'laya';
   // Local inference controls are added at the transport boundary; hosted bytes stay unchanged.
   if (local) body = JSON.stringify({ ...JSON.parse(body), max_len: LAYA_MAX_LEN, head_max_len: LAYA_HEAD_MAX_LEN });
-  const transport = {
-    endpoint: local ? validateLayaEndpoint(LAYA_ENDPOINT) : API,
-    headers: local ? { 'Content-Type': 'application/json' } : { Authorization: `Bearer ${process.env.JEV_API_KEY}`, 'Content-Type': 'application/json' },
-    timeout: local ? LAYA_TIMEOUT_MS : TIMEOUT_MS,
-    retries: local ? 0 : RETRIES,
+  const send = (signal) => postWithRetry(body, {
+    key: local ? null : process.env.JEV_API_KEY,
+    signal,
+    endpoint: local ? validateLayaEndpoint(LAYA_ENDPOINT) : JEV_ENDPOINT,
     name: local ? 'local Laya API' : 'TypeSafe API',
-  };
-  const controllers = Array.from({ length: local ? 1 : HEDGE }, () => new AbortController());
+    timeoutMs: local ? LAYA_TIMEOUT_MS : TIMEOUT_MS,
+    retries: local ? 0 : RETRIES,
+    retryStatus: [...RETRY_STATUS],
+    onAttempt: opts.onAttempt,
+  });
+  const copies = local ? 1 : HEDGE;
+  if (copies <= 1) return send(opts.signal ?? null);
+  // Hedging (dev server only, `jev.hedgeCopies` > 1): copy i starts after i * HEDGE_DELAY_MS unless some copy has
+  // answered by then; the first answer wins and the others are aborted.
+  const controllers = Array.from({ length: copies }, () => new AbortController());
   let winner;
   try {
-    // Copy i starts after i * HEDGE_DELAY_MS unless some copy has answered by then (an abort cancels the wait).
     winner = await Promise.any(controllers.map(async (c, copy) => {
       if (copy > 0) {
         await new Promise((resolve) => {
           const t = setTimeout(resolve, copy * HEDGE_DELAY_MS);
           c.signal.addEventListener('abort', () => { clearTimeout(t); resolve(); }, { once: true });
         });
+        if (c.signal.aborted) throw new Error('aborted: another copy answered first');
       }
-      return sendCopy(body, c.signal, copy, transport);
+      const signal = opts.signal ? AbortSignal.any([c.signal, opts.signal]) : c.signal;
+      return { answers: await send(signal), copy };
     }));
   } catch (err) {
     throw err.errors?.[0] ?? err; // every copy failed; report the first reason
   }
   controllers.forEach((c, i) => i !== winner.copy && c.abort());
-  return winner.data.answers;
+  return winner.answers;
 }
 
 export function shuffle(items) {
