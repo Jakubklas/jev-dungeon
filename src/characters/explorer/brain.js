@@ -312,6 +312,9 @@ export class ExplorerBrain {
   // bounced between and the target that led there), so the re-decision is a different one. Cleared
   // when the encounter starts or ends.
   #exclude = null;
+  // PLAN-tabu phase 4: with the move level on, a ping-pong's two bounce cells live in the tabu list (cell entries, until the encounter
+  // ends) and here as target exclusions; #exclude then keeps only the old goal. Cleared wherever #exclude is.
+  #bounceCells = null;
   // PLAN-tabu: the explorer's tabu lists (shared/tabu.js), private like #exclude: never in memory.json, never sent to Jev.
   // #track = the tactic on now and its gain baseline { id, since, base: { wins, health, gap, C }, hits }; a gain moves the
   // baseline to now. #wins = strikes and dispels landed this game; #gapNow = this tick's encounter gap_now (or null);
@@ -734,7 +737,7 @@ export class ExplorerBrain {
   #openFrontier() {
     const world = this.#world;
     const all = reachableFrontier(world, knownDistances(world, world.pos));
-    const open = all.filter((f) => !this.#zone.has(key(f.cell)) && !this.#exclude?.has(key(f.cell)));
+    const open = all.filter((f) => !this.#zone.has(key(f.cell)) && !this.#excluded()?.has(key(f.cell)));
     return open.length ? open : all;
   }
 
@@ -793,6 +796,11 @@ export class ExplorerBrain {
     this.#retreatAt = world.steps;
     this.#retreats++;
     this.#samples = [];
+  }
+
+  // The cell keys no target may use (see #excluded), sorted: a read-only view for the checks.
+  get excluded() {
+    return [...(this.#excluded() ?? [])].sort();
   }
 
   // Read-only view of the progress bookkeeping (checks and the UI; nothing here reaches Jev or memory.json).
@@ -927,7 +935,7 @@ export class ExplorerBrain {
       const profile = this.#profile();
       decision = { trigger, sentiment: { choice: sentiment.choice, probabilities: sentiment.probabilities, options: sentiment.options, automatic: sentiment.automatic }, tactic: null, apiMs: sentiment.ms };
       if (inSight) {
-        const feasible = this.#menu(tacticFeasibility(world, profile.min_gap, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() }), step);
+        const feasible = this.#menu(tacticFeasibility(world, profile.min_gap, { exclude: this.#excluded(), armed: this.#armed(), stunned: this.#stunnedIds(), fight: this.#fight(), panic: memory.sentiment.id === 'panic', heartRun: this.#heartRun(memory), retreat: this.#retreatOK(memory.sentiment.id), cornered: this.#cornerOpt() }), step);
         decisionTargets = Object.fromEntries(Object.entries(feasible).map(([id, f]) => [id, f.target]));
         const options = Object.fromEntries(TACTICS.filter((id) => feasible[id]).map((id) => [id, `${APPROACHES[id].brief} ${feasible[id].fact}`]));
         tacticIds = Object.keys(options);
@@ -1328,7 +1336,7 @@ export class ExplorerBrain {
       const g = SENTIMENTS[id].min_gap;
       const retreat = this.#retreatOK(id, caps);
       const k = `${g}|${retreat}`;
-      if (!allowed.has(k)) allowed.set(k, Object.keys(this.#menu(tacticFeasibility(world, g, { exclude: this.#exclude, armed: this.#armed(), stunned: this.#stunnedIds(), retreat }), world.steps + 1, false)).map((t) => t.replace(/_/g, ' ')));
+      if (!allowed.has(k)) allowed.set(k, Object.keys(this.#menu(tacticFeasibility(world, g, { exclude: this.#excluded(), armed: this.#armed(), stunned: this.#stunnedIds(), retreat }), world.steps + 1, false)).map((t) => t.replace(/_/g, ' ')));
       return allowed.get(k);
     };
     const criteria = Object.fromEntries(shuffle(ids).map((id) => {
@@ -1370,7 +1378,7 @@ export class ExplorerBrain {
       goal: speculative ? targetOverride?.cell ?? null : this.#goal(),
       targetOverride,
       avoid: this.#zone,
-      exclude: this.#exclude,
+      exclude: this.#excluded(),
       remembered: this.#remembered,
       prev: cells.length > 1 && !cornered ? cells.at(-2) : null, // cornered: undoing the last move is no sin
       backAndForth: cornered ? 0 : memory.recent.back_and_forth,
@@ -1554,6 +1562,7 @@ export class ExplorerBrain {
     if (visible.length && !info.active) {
       info.active = true;
       this.#exclude = null;
+      this.#bounceCells = null;
       this.#endTabuEncounter(); // a fresh encounter starts with a clean slate
       this.#track = null;
       this.#moodTrack = null;
@@ -1583,7 +1592,7 @@ export class ExplorerBrain {
         const stalled = this.#retreatStalled(step); // T3
         const ruled = this.#tabuMenuOn() && isTabu(this.#tabu, 'tactic', a.id, step); // ruled out (T1-T4): re-decide on a menu without it
         if (failing || bounced || stalled || ruled) trigger = 'tactic_failed';
-        if (bounced) this.#bounce();
+        if (bounced) this.#bounce(step);
       }
       for (const v of visible) {
         info.encIds.add(v.id);
@@ -1610,6 +1619,7 @@ export class ExplorerBrain {
       }
       info.active = false;
       this.#exclude = null;
+      this.#bounceCells = null;
       this.#endTabuEncounter();
       this.#track = null;
       this.#moodTrack = null;
@@ -1841,7 +1851,7 @@ export class ExplorerBrain {
       }
     }
     if (this.#memory.approach.id === 'hide' || tacticIds.includes('hide')) { // A3 for hide: standing still on the hiding spot is the tactic
-      const target = this.#memory.approach.id === 'hide' && this.#goal() ? { cell: this.#goal() } : approachTarget(world, 'hide', { minGap: profile.min_gap, exclude: this.#exclude, remembered: this.#remembered });
+      const target = this.#memory.approach.id === 'hide' && this.#goal() ? { cell: this.#goal() } : approachTarget(world, 'hide', { minGap: profile.min_gap, exclude: this.#excluded(), remembered: this.#remembered });
       if (target && sameCell(target.cell, world.pos)) keep.push(STAY);
     }
     const f = filterOptions(legal, { entries }, 'm', step, { keep, min: TABU_MIN_MOVES });
@@ -1880,12 +1890,22 @@ export class ExplorerBrain {
   // A tactic that bounced the explorer between two cells failed for a reason a re-pick of the same
   // target would not fix (Jev often picks run_away again, it is the only safe tactic): rule out the
   // cells it bounced between and the target that led there, so the re-decision gets a different one.
-  #bounce() {
+  #bounce(step) {
     if (this.#corner) return; // cornered: the pocket cells ARE the way out; do not rule the breakout route out
     const cells = this.#memory.recent.cells.slice(-2).map(key);
     const goal = this.#goal();
-    this.#exclude = new Set([...(this.#exclude ?? []), ...cells, ...(goal ? [key(goal)] : [])]);
+    if (this.#moveTabuRecord()) { // the cells go to the tabu list (the move menu drops the steps onto them) and stay target exclusions; #exclude keeps the goal
+      for (const c of cells) tabuAdd(this.#tabu, 'cell', c, { step, encounter: true, reason: 'kept stepping back and forth under a tactic' });
+      this.#bounceCells = new Set([...(this.#bounceCells ?? []), ...cells]);
+      this.#exclude = new Set([...(this.#exclude ?? []), ...(goal ? [key(goal)] : [])]);
+    } else this.#exclude = new Set([...(this.#exclude ?? []), ...cells, ...(goal ? [key(goal)] : [])]);
     this.#tacticGoal = null;
+  }
+
+  // The cells no tactic or exploration target may use: #exclude, plus (move level on) the ping-pong's bounce cells. The same Set when there are none.
+  #excluded() {
+    if (!this.#bounceCells) return this.#exclude;
+    return new Set([...(this.#exclude ?? []), ...this.#bounceCells]);
   }
 
   // ---- cornerMode (PLAN-corner.md). All of it is inert with CORNER_MODE 'off'.
@@ -1954,7 +1974,7 @@ export class ExplorerBrain {
   // cells as the adversary moves: approachTarget keeps the goal until it is reached or unsafe.
   #keepEscapeGoal(profile) {
     if (this.#memory.approach.id !== 'run_away') return;
-    const t = approachTarget(this.#world, 'run_away', { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#exclude, remembered: this.#remembered });
+    const t = approachTarget(this.#world, 'run_away', { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#excluded(), remembered: this.#remembered });
     this.#tacticGoal = t ? { id: 'run_away', cell: t.cell } : null;
   }
 
@@ -1984,7 +2004,7 @@ export class ExplorerBrain {
     const world = this.#world;
     const memory = this.#memory;
     const id = memory.approach.id;
-    const target = approachTarget(world, id, { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#exclude, remembered: this.#remembered, stunned: this.#stunnedIds(), cornered: Boolean(this.#cornerOpt()) });
+    const target = approachTarget(world, id, { minGap: profile.min_gap, goal: this.#goal(), exclude: this.#excluded(), remembered: this.#remembered, stunned: this.#stunnedIds(), cornered: Boolean(this.#cornerOpt()) });
     if (target) this.#tacticGoal = { id, cell: target.cell };
     if (!target) return true;
     // run_away never fails by gap, and engage closes the gap on purpose.

@@ -649,6 +649,58 @@ const posTrail = (b, turns, start) => { const out = [start]; for (const t of tur
   ok(on.bounces <= off.bounces, '4k: the move level does not make the shuttle worse');
 }
 
+// ---- 5. Phase 4: the ping-pong's bounce cells move into the tabu list --------------------------------------------------
+// #bounce() used to put the two bounce cells (and the old goal) into #exclude, which only tactic targets read. With the move
+// level on the cells are cell entries in the tabu list (the move menu then drops the steps onto them) and still target
+// exclusions; the old goal stays in #exclude. Tactic level off here, so a ping-pong reaches #bounce instead of ruling the tactic out.
+const PP = { size: [12, 5], start: [3, 3], adversaries: [[11, 3]], ghostSkills: 'none', treasure: null, seed: 3 };
+const ppPlay = async (on, ticks = 24) => {
+  knobs({ tabuMoves: on, tabuTactics: false, tabuMoods: false });
+  const b = build(PP, { tactic: 'slip_past', ghostStay: true, move: reverser() });
+  const start = [...b.run.game.pos];
+  const turns = await play(b, ticks);
+  return { b, turns, start };
+};
+{
+  const on = await ppPlay(true), off = await ppPlay(false);
+  const bounce = on.turns.findIndex((t) => t.decision?.trigger === 'tactic_failed');
+  const bounceOff = off.turns.findIndex((t) => t.decision?.trigger === 'tactic_failed');
+  console.log(`5 ping-pong: tactic_failed at tick ${bounce} (on), ${bounceOff} (off)`);
+  ok(bounce >= 0 && bounceOff >= 0, '5a: the reverser under a tactic ping-pongs into tactic_failed');
+  if (bounce >= 0) {
+    const trail = posTrail(on.b, on.turns, on.start).map(posKey);
+    const cells = [trail[bounce], trail[bounce - 1]]; // the two cells it bounced between
+    const mine = on.turns[bounce].tabu.cell.filter((e) => /under a tactic/.test(e.reason));
+    ok(mine.length === 2 && mine.every((e) => cells.includes(e.attr) && e.steps_left === 'encounter'), `5a: the two bounce cells are cell entries until the encounter ends (${JSON.stringify(mine)})`);
+    const later = on.turns.slice(bounce + 1).filter((t, i) => {
+      const from = trail[bounce + 1 + i].split(',').map(Number);
+      return (t.tabu.removed_moves ?? []).some((d) => cells.includes(posKey(stepOf(from, d))));
+    });
+    ok(later.length > 0, '5a: a request after the bounce drops a step onto a bounce cell');
+    ok(on.turns.every(absent), '5a: no removed move ever appears in a question or in surroundings.moves');
+    const told = events(on.b.run).filter((e) => /kept stepping back and forth under a tactic/.test(e));
+    ok(told.length >= 1 && told.length <= 2 && new Set(told).size === told.length, `5a: announced lazily, once per cell (${told.join(' | ')})`);
+    // 5b. Target exclusion still covers the bounce cells (and the old goal, kept in #exclude).
+    const ex = on.b.run.explorer.excluded;
+    ok(cells.every((c) => ex.includes(c)), `5b: the bounce cells stay excluded as targets (${ex.join(' ')})`);
+  }
+  if (bounceOff >= 0) {
+    const trail = posTrail(off.b, off.turns, off.start).map(posKey);
+    const ex = off.b.run.explorer.excluded;
+    ok([trail[bounceOff], trail[bounceOff - 1]].every((c) => ex.includes(c)), `5b: move level off: #exclude holds the cells as before (${ex.join(' ')})`);
+    ok(off.turns.every((t) => !t.tabu || (t.tabu.cell ?? []).every((e) => !/under a tactic/.test(e.reason))), '5b: move level off: no tabu entry from the bounce');
+  }
+}
+// 5c. Move level off: behaviour identical to tabu off (same requests, moves and decisions).
+{
+  const sig = (r) => JSON.stringify(r.turns.map((t) => [t.dir, t.decision?.trigger ?? null, t.reqs.map((q) => q.body)]));
+  const a = await ppPlay(false);
+  knobs({ tabuEnabled: false, tabuMoves: false, tabuTactics: false, tabuMoods: false });
+  const b = build(PP, { tactic: 'slip_past', ghostStay: true, move: reverser() });
+  const tb = await play(b, 24);
+  ok(sig(a) === sig({ turns: tb }), '5c: tabuMoves off sends exactly the requests of tabuEnabled off through a ping-pong');
+}
+
 conf({});
 configureExplorerBrain(DEFAULTS);
 rmSync(root, { recursive: true, force: true });
