@@ -3,6 +3,10 @@
 # Delete a key to fall back to its default. A bad value is skipped with a warning in the server log. Secrets stay in ../.env.
 # Layers, lowest first: defaults, this file, instances.<kind>, instances.<kind/name>, the instance's own settings.json (settings page saves).
 
+# Add 200 ms to the default 90 ms pause between hosted actor decisions.
+rules:
+  cadenceMs: 290
+
 # Dungeon layout, light, coins and hearts. Developer only.
 world:
   sightRange: 20 # How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters)
