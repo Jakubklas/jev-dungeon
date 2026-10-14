@@ -271,7 +271,7 @@ function updateThoughts() {
   const pools = { troll: thoughtsMod.TROLL_THOUGHTS, tree_giant: thoughtsMod.TREE_GIANT_THOUGHTS, wolf: thoughtsMod.WOLF_THOUGHTS };
   const chars = (view.explorers ?? []).map((e) => ({
     id: e.self ? '@' : `e:${e.id}`, approach: e.thought?.id,
-    since: e.thought?.since_step, text: e.thought?.thought, mood: e.thought?.mood, kind: 'explorer',
+    since: e.thought?.since_step, text: e.thought?.thought, remark: e.thought?.remark, mood: e.thought?.mood, kind: 'explorer',
   }));
   for (const a of view.adversaries ?? []) if (a.visible && a.brain?.on) chars.push({
     id: a.id, approach: a.brain.approach, since: a.brain.approach_since,
@@ -283,15 +283,16 @@ function updateThoughts() {
     if (!c.approach) continue;
     const key = `${c.approach}@${c.since}`;
     let t = bubbles.get(c.id);
-    if (t?.key === key) continue;
+    const remark = c.remark && c.remark !== t?.remark ? c.remark : null;
+    if (t?.key === key && !remark) { t.remark = c.remark; continue; }
     const pool = (c.mood && thoughtsMod.MOOD_THOUGHTS[c.mood]) || pools[c.voice]?.[c.approach] || thoughtsMod.THOUGHTS[c.approach];
     const fresh = pool?.filter((line) => line !== lastLines.get(c.id));
     const choices = fresh?.length ? fresh : pool;
-    const text = choices?.length ? choices[Math.floor(Math.random() * choices.length)] : c.text;
+    const text = remark || (choices?.length ? choices[Math.floor(Math.random() * choices.length)] : c.text);
     if (!text) continue;
     lastLines.set(c.id, text);
     if (!t) { t = { node: el('div', { class: `bubble ${c.kind}` }) }; bubbles.set(c.id, t); $('bubbles').append(t.node); }
-    Object.assign(t, { key, t0: performance.now(), ms: Math.min(9000, Math.max(3500, 1200 + text.length * 50)) });
+    Object.assign(t, { key, remark: c.remark, t0: performance.now(), ms: Math.min(9000, Math.max(3500, 1200 + text.length * 50)) });
     t.node.replaceChildren(text);
     if (c.mood) { t.node.dataset.sentiment = c.mood; t.node.append(el('span', { class: 'senti-tag', text: c.mood })); }
     else delete t.node.dataset.sentiment;

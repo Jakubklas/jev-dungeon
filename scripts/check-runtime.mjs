@@ -211,6 +211,7 @@ async function swordCase(moveGhost) {
   const ghost = s.game.adversaries[0];
   if (moveGhost) ghost.pos = [ghost.pos[0] + 1, ghost.pos[1] + 1]; // out of the aimed cells, still in sight
   const hp = ghost.hp;
+  s.game.strikes.push({ by: 'explorer', cells: [[1, 1]], result: 'miss' }); // previous action must not be replayed
   st.release('tick');
   await settle();
   const turn = of(s.records, 'explorer_turn')[0];

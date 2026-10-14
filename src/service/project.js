@@ -23,16 +23,20 @@ export function projectGame({ game, brains, lobby, id, mode, rulesRevision, view
   const tiles = base.tiles.map((row, y) => [...row].map((tile, x) => lit(x, y) ? tile : null));
   const visible = new Set(self && self.status === 'active' ? visibleAdversaries(game, self.id).map((a) => a.id) : []);
   const team = new Set(game.activeExplorers().flatMap((e) => visibleAdversaries(game, e.id).map((a) => a.id)));
-  const adversaries = game.adversaries.filter((a) => reveal || team.has(a.id)).map((a) => ({
-    id: a.id, pos: [...a.pos], mode: a.mode, facing: a.facing, kind: a.kind, hp: a.hp, max_hp: a.maxHp,
-    brain: (() => { const b = brainView(a); return { on: b.on, approach: b.approach, approach_since: b.approach_since, approach_text: b.approach_text }; })(),
-    visible: reveal || visible.has(a.id), team_visible: !reveal && !visible.has(a.id),
-  }));
+  const adversaries = game.adversaries.filter((a) => reveal || team.has(a.id)).map((a) => {
+    const b = brainView(a);
+    return {
+      id: a.id, pos: [...a.pos], mode: a.mode, facing: a.facing, kind: a.kind, hp: a.hp, max_hp: a.maxHp,
+      brain: { on: b.on, approach: b.approach, approach_since: b.approach_since, approach_text: b.approach_text },
+      visible: reveal || visible.has(a.id), team_visible: !reveal && !visible.has(a.id),
+    };
+  });
   const explorers = lobby.participants.filter((p) => p.slot !== null).map((p) => {
     const e = game.explorer(p.participantId);
+    const brain = brains.get(e.id), m = brain?.memory;
     return { id: e.id, participant_id: p.participantId, name: p.name, slot: p.slot,
       pos: [...e.pos], facing: e.facing, status: p.state, self: p.participantId === viewerId,
-      thought: (() => { const m = brains.get(e.id)?.memory; return m?.approach ? { id: m.approach.id, since_step: m.approach.since_step, thought: m.approach.thought, mood: m.sentiment?.id } : null; })(),
+      thought: m?.approach ? { id: m.approach.id, since_step: m.approach.since_step, thought: m.approach.thought, mood: m.sentiment?.id, remark: brain.remark } : null,
       health: e.health, max_health: e.maxHealth, invulnerable: game.graceActive(e), coins: e.coins };
   });
   const spectator = !self || self.status === 'dead' || self.status === 'forfeited';

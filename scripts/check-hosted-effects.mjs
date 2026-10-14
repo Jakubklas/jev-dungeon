@@ -40,5 +40,51 @@ try {
   assert.equal(errors.length, 0, JSON.stringify(errors));
   assert.equal(r.isExplorerStrike(strike), true, 'multiplayer knight got claw art');
   assert.equal(r.isExplorerStrike({ by: 'a1' }), false);
-  console.log('hosted effects: repeated views, sword/fire expiry and multiplayer slash identity: ok');
+  const node = () => ({
+    offsetWidth: 120, offsetHeight: 40, dataset: {}, children: [],
+    style: { setProperty(k, v) { this[k] = v; } },
+    append(...kids) { this.children.push(...kids); },
+    replaceChildren(...kids) { this.children = kids; }, remove() { this.removed = true; },
+  });
+  const layer = node();
+  const play = readFileSync(new URL('../public/play.js', import.meta.url), 'utf8');
+  const bubbleCode = play.slice(play.indexOf('const bubbles = new Map();'), play.indexOf('function myExplorer()'));
+  const bubbleView = {
+    explorers: [
+      { id: 'p1', self: true, thought: { id: 'engage', since_step: 1, mood: 'bold' } },
+      { id: 'p2', self: false, thought: { id: 'collect_coins', since_step: 2, mood: 'greedy' } },
+    ],
+    adversaries: [
+      { id: 'a1', visible: true, kind: 'tree_giant', brain: { on: true, approach: 'direct_pursuit', approach_since: 1 } },
+      { id: 'hidden', visible: false, brain: { on: true, approach: 'direct_pursuit', approach_since: 1 } },
+    ],
+  };
+  const heads = new Map([['@', { x: 100, y: 100, alpha: 1 }], ['e:p2', { x: 200, y: 100, alpha: 1 }], ['a1', { x: 300, y: 100, alpha: 1 }]]);
+  const bubblesScope = vm.createContext({
+    view: bubbleView, thoughtsMod: thoughtText, performance: { now: () => now },
+    el: node, $: () => layer, renderer: { heads, metrics: () => ({ S: 2, dpr: 1, viewW: 800 }) },
+  });
+  vm.runInContext(bubbleCode + '\nglobalThis.testBubbles = { updateThoughts, drawThoughts, bubbles };', bubblesScope);
+  const bt = bubblesScope.testBubbles;
+  bt.updateThoughts();
+  assert.equal(bt.bubbles.size, 3, 'expected both knights and the visible tree giant');
+  assert.equal(bt.bubbles.has('hidden'), false, 'hidden enemy got a thought bubble');
+  const began = bt.bubbles.get('@').t0;
+  now += 500; bt.updateThoughts(); bt.drawThoughts(now);
+  assert.equal(bt.bubbles.get('@').t0, began, 'unchanged approach restarted a bubble');
+  assert.equal(bt.bubbles.get('@').node.style.opacity, '1');
+  const before = bt.bubbles.get('e:p2').node.style.transform;
+  heads.get('e:p2').x += 30; bt.drawThoughts(now);
+  assert.notEqual(bt.bubbles.get('e:p2').node.style.transform, before, 'teammate bubble did not track its knight');
+  bubbleView.explorers[1].thought.remark = 'That is a strong opponent.';
+  bt.updateThoughts();
+  assert.equal(bt.bubbles.get('e:p2').node.children[0], 'That is a strong opponent.', 'a knight remark was not shown overhead');
+  const remarkAt = bt.bubbles.get('e:p2').t0;
+  now += 100; bt.updateThoughts();
+  assert.equal(bt.bubbles.get('e:p2').t0, remarkAt, 'a repeated remark restarted its bubble');
+  now += 10000; bt.drawThoughts(now);
+  assert.equal(bt.bubbles.get('@').node.style.opacity, '0', 'thought bubble never faded');
+  bubbleView.adversaries[0].visible = false; bt.updateThoughts();
+  assert.equal(bt.bubbles.has('a1'), false, 'enemy bubble remained after it left sight');
+  console.log('hosted effects: repeated views, sword/fire expiry and multiplayer slash identity, overhead thoughts and fog: ok');
 } finally { uninstall(); }
