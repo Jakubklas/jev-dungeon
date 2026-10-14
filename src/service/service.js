@@ -77,12 +77,19 @@ export class HostedService {
   #startAt = Date.now();
   #port;
   #host;
+  #publicOrigin;
   #closing = false;
   #expiryTimer;
   #runtimeMetrics = { worker_exits: 0, actor_queue_delay_ms: 0, event_write_delay_ms: 0 };
 
   constructor({ root, port = 3100, host = '127.0.0.1', hostToken = process.env.HOST_TOKEN,
-    logger = createLogger(), settingsPath } = {}) {
+    logger = createLogger(), settingsPath, publicOrigin = process.env.PUBLIC_ORIGIN } = {}) {
+    if (publicOrigin !== undefined) {
+      const url = new URL(publicOrigin);
+      if (!['http:', 'https:'].includes(url.protocol) || url.origin !== publicOrigin)
+        throw new Error('PUBLIC_ORIGIN must be an HTTP(S) origin without a trailing slash or path');
+      this.#publicOrigin = url.origin;
+    }
     this.#store = new FileStore(root);
     this.#store.lock();
     this.#settings = new SettingsService(this.#store, settingsPath === undefined ? {} : { path: settingsPath });
@@ -517,7 +524,9 @@ export class HostedService {
       const path = new URL(req.url, 'http://localhost').pathname;
       if (req.method === 'GET' && !path.startsWith('/v1/') && path !== '/health' && await this.#static(res, path)) return;
       if (req.method !== 'GET' && req.method !== 'HEAD') {
-        const own = `http://${req.headers.host}`;
+        // TLS may terminate at the hosting proxy. Prefer an explicitly configured
+        // public origin rather than trusting client-supplied forwarding headers.
+        const own = this.#publicOrigin ?? `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
         if (!checkOrigin(req, own, { allowMissing: isLoopback(req) && process.env.JEV_TEST_STUB === '1' }))
           throw asError(403, 'bad_origin');
       }

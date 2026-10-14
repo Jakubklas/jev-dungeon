@@ -15,13 +15,14 @@ let service = new HostedService({ root, port: 0, settingsPath: null });
 let address = await service.listen();
 let origin = `http://127.0.0.1:${address.port}`;
 
-function call(method, path, body = null, { cookie = '', host = false, originHeader = origin } = {}) {
+function call(method, path, body = null, { cookie = '', host = false, originHeader = origin, extraHeaders = {} } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === null ? null : JSON.stringify(body);
     const req = httpRequest(`${origin}${path}`, { method, headers: {
       ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}),
       ...(method !== 'GET' && originHeader ? { origin: originHeader } : {}),
       ...(cookie ? { cookie } : {}),
+      ...extraHeaders,
     } }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -40,6 +41,28 @@ try {
   assert.equal((await call('GET', '/health')).body.ok, true);
   assert.equal((await call('POST', '/v1/games', { name: 'Mira', key: 'private-secret', mode: 'private' },
     { originHeader: 'http://evil.invalid' })).status, 403);
+  assert.equal((await call('POST', '/v1/origin-check', null, {
+    originHeader: 'https://evil.invalid',
+    extraHeaders: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'evil.invalid' },
+  })).status, 403, 'forwarding headers cannot authorize an arbitrary origin');
+  const proxyRoot = mkdtempSync(join(tmpdir(), 'jev-service-proxy-'));
+  const proxy = new HostedService({ root: proxyRoot, port: 0, settingsPath: null,
+    publicOrigin: 'https://game.example' });
+  const localOrigin = origin;
+  try {
+    const proxyAddress = await proxy.listen();
+    origin = `http://127.0.0.1:${proxyAddress.port}`;
+    assert.equal((await call('POST', '/v1/origin-check', null,
+      { originHeader: 'https://game.example' })).status, 404, 'public HTTPS origin passes over internal HTTP');
+    for (const rejected of [origin, 'http://game.example', 'https://evil.invalid', 'null'])
+      assert.equal((await call('POST', '/v1/origin-check', null,
+        { originHeader: rejected })).status, 403, 'only the configured public origin is allowed');
+    assert.throws(() => new HostedService({ publicOrigin: 'https://game.example/path' }), /PUBLIC_ORIGIN/);
+  } finally {
+    origin = localOrigin;
+    await proxy.close();
+    rmSync(proxyRoot, { recursive: true, force: true });
+  }
   const created = await call('POST', '/v1/games', { name: 'Mira', key: 'private-secret', mode: 'private' });
   assert.equal(created.status, 201);
   const id = created.body.game.id;

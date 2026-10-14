@@ -49,7 +49,7 @@ docker run -d --name jev-dungeon --init --restart unless-stopped \
 2. Attach a persistent volume mounted at `/data`.
 3. Set `JEV_API_KEY`, `HOST_REMOTE=1`, and `RAILWAY_RUN_UID=0`. Railway volumes are mounted as root; this override permits writing to them. Optionally set `HOST_TOKEN` to a long random value for a stable host URL.
 4. Keep one replica and disable serverless sleeping so game workers stay running. Use the same region for the service and volume.
-5. Generate a public domain, targeting Railway's supplied `PORT` (or 3100 if you explicitly keep that port). The image binds to `0.0.0.0` and honors `PORT`.
+5. Generate a public domain, targeting Railway's supplied `PORT` (or 3100 if you explicitly keep that port). Set `PUBLIC_ORIGIN` to its HTTPS origin, for example `https://jev-dungeon-production.up.railway.app` (no trailing slash). The image binds to `0.0.0.0` and honors `PORT`. `PUBLIC_ORIGIN` lets browser POSTs pass when Railway terminates HTTPS before forwarding internal HTTP; update it if the public hostname changes. Set it for a VPS HTTPS reverse proxy too.
 6. Check `/health` and retrieve the host URL from deployment logs. Enable volume backups.
 
 Railway pulls the published image; GitHub Actions builds it. Set variables and attach storage in Railway itself. Enable Image Auto Updates in Railway and select a maintenance window outside your usual game sessions. Railway periodically checks GHCR and redeploys when the configured tag's digest changes; updates are not immediate on every Git push. A deployment restarts the process and pauses active games.
