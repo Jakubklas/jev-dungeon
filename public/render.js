@@ -254,7 +254,7 @@ export const ready = Promise.all([
   import('./sprites.js')
     .then((m) => {
       const got = m.buildSprites();
-      for (const k of ['knight', 'ghost', 'troll', 'tree_giant', 'wolf', 'chest', 'coin', 'heart', 'fire_strike']) if (got?.[k]?.canvas) sprites[k] = got[k];
+      for (const k of ['knight', 'ghost', 'troll', 'tree_giant', 'wolf', 'chest', 'coin', 'heart', 'fire_strike', 'portal']) if (got?.[k]?.canvas) sprites[k] = got[k];
     })
     .catch((err) => console.warn('sprites.js unavailable, using stand-in shapes:', err)),
   import('./props/index.js')
@@ -668,7 +668,7 @@ function blitSprite(spr, x, y, face, alpha = 1) {
 const FIRE_COLS = ['#6e1409', '#b82d14', '#ff5a1c', '#ff8d1c', '#ffbb2e', '#ffe46a', '#fffbe0'];
 const FLAME_COLS = ['#ffe46a', '#ffbb2e', '#ff8d1c', '#d9401a'];
 const fireHash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-function drawPortal(px, py, now, alpha) {
+function drawFirePortal(px, py, now, alpha) {
   // Hovers like the coins: floats up and down a few px, the floor glow shrinking as it rises.
   const wave = Math.sin(now / 520), lift = Math.round(4 + 3 * wave);
   const rx = 17, ry = 21, cy = py - ry - lift + 2, t = now / 380;   // ring centre sits above the cell
@@ -733,6 +733,23 @@ function drawPortal(px, py, now, alpha) {
     b.fillRect(px + x, cy + y, 1, 1);
   }
   b.globalAlpha = 1;
+}
+
+// The stone arch stands on the goal cell; only its green magic pulses.
+function drawPortal(px, py, now, alpha) {
+  const portal = sprites.portal;
+  if (!portal?.canvas) return drawFirePortal(px, py, now, alpha);
+  const phase = Math.floor(now / 260) % 16;
+  const spr = phase < 12 ? portal.frames[phase % 4] : portal.shimmer[phase - 12];
+  b.save();
+  b.globalCompositeOperation = 'lighter';
+  b.fillStyle = '#39ef52';
+  for (const [rx, ry, strength] of [[23, 8, .05], [17, 6, .08], [11, 4, .1]]) {
+    b.globalAlpha = alpha * strength * (.85 + .15 * Math.sin(now / 210));
+    pixelEllipse(px, py, rx, ry);
+  }
+  b.restore();
+  blitSprite(spr, px, py, 1, alpha);
 }
 
 // A short golden glow around the knight when a coin is picked up: rings that swell and fade,

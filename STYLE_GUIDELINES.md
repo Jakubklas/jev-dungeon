@@ -209,7 +209,7 @@ Build solid props from the `Layer` painter rather than typing big grids:
   - The last 2 frames are drawn at .55 alpha; a miss at .6.
   - Drawn in the `edge` pass, after the entities, and only on lit cells.
 - **Strike diamonds:** a filled diamond in the flats pass plus a 1 px rim in the edge pass. They are held for half of `STRIKE_MS`, pulse twice and then fade.
-- **Portal** (goal cell): a per-pixel ring of fire built from the `FIRE_COLS` ramp `#6e1409` → `#fffbe0`. Flame wisps curl off it, embers rise and a floor glow pools under it. It hovers like the coins.
+- **Portal** (goal cell): a grounded 36×48 stone arch with green magic, converted from `art-src/new-props/portal/portal-sprite-sheet.jpg` by that folder's `build.mjs`. Anchor (18, 40) centres its footprint on the goal cell. Four idle frames repeat three times, followed by four shimmer frames, at 260 ms per frame; opening/closing poses are retained in `ART.portal.opening`. A green floor glow pools beneath it. The procedural fire ring remains the loading fallback.
 
 ## Animation
 
