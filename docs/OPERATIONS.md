@@ -1,5 +1,7 @@
 # Hosted multiplayer operations
 
+For container builds, starting from a pulled repo, and Railway setup, see [Docker and Railway](DOCKER.md).
+
 Run `npm run serve` with Node 20.12 or newer. The service binds to `127.0.0.1:3100` by default; `PORT`, `HOST`, and `DATA_DIR` override the listener and data folder. Set `JEV_API_KEY` for monster decisions. Keep `HOST` loopback unless remote hosting is deliberate; remote host access also requires `HOST_REMOTE=1`.
 
 The default data folder is `runs/server/`. It contains the exclusive `server.lock`, the host token, append-only settings revisions, and one folder per game. Game folders contain metadata, captured rules, the dungeon, the current state, append-only events and call records, and periodic cold snapshots. Participant Jev keys exist only in worker memory. After a restart, every active game opens paused and each living participant must enter their key again.

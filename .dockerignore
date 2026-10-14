@@ -1,0 +1,11 @@
+# Only application files enter the build context; secrets and runtime data stay out.
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!service.js
+!central-config.yaml
+!src/
+!src/**
+!public/
+!public/**

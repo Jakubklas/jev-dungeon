@@ -1,0 +1,23 @@
+services:
+  game:
+    build: .
+    image: jev-dungeon:local
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${DOCKER_BIND_IP:-127.0.0.1}:${DOCKER_PORT:-3100}:3100"
+    environment:
+      JEV_API_KEY: "${JEV_API_KEY:?Set JEV_API_KEY in .env or your shell}"
+      HOST_REMOTE: "1"
+      HOST_TOKEN: "${HOST_TOKEN:-}"
+    volumes:
+      - game-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  game-data:
