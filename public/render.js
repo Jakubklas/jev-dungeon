@@ -360,6 +360,8 @@ const routeDebugOn = () => !!opts.routeDebug?.();
 const landmarkList = () => (opts.landmarks?.() ?? []).filter((l) => Array.isArray(l?.cell));
 let game = null;          // the view (publicView plus the optional fields above)
 let shown = null;         // displayed brightness per cell, eased toward game.light
+const seenStrikes = new Set(); // hosted effect IDs survive SSE/poll repeats
+const explorerStrike = (st) => st.by === 'explorer' || (game?.explorers ?? []).some((e) => e.id === st.by);
 let strikeFx = null;      // this tick's attacks to flash: { t0, strikes }, null when none
 let fireFx = null;        // the fire strike's blast: { t0, cells, centre }, kept past the next views until its 18 frames are done
 let dashFx = null;        // the explorer's dash streak, following its actual start and landing cells
@@ -600,6 +602,8 @@ function resetBoard() {
   computeFog();
   indexProps();
   syncActors(true);
+  seenStrikes.clear();
+  for (const st of game.strikes ?? []) if (st.id) seenStrikes.add(st.id);
   strikeFx = null;
   fireFx = null;
   dashFx = null;
@@ -614,9 +618,12 @@ function boardUpdate(dash) {
   syncActors(false, !!dash);
   // Only a view that arrives from a step flashes its strikes (a page load does not replay them). A view
   // without strikes leaves a running flash alone, so fast steps don't cut it short.
-  if (Array.isArray(game.strikes) && game.strikes.length) strikeFx = { t0: performance.now(), strikes: game.strikes };
+  const fresh = (game.strikes ?? []).filter((st) => !st.id || !seenStrikes.has(st.id));
+  for (const st of fresh) if (st.id) seenStrikes.add(st.id);
+  while (seenStrikes.size > 2048) seenStrikes.delete(seenStrikes.values().next().value);
+  if (fresh.length) strikeFx = { t0: performance.now(), strikes: fresh };
   // The fire strike plays longer than a step can last, so it has its own clock that later views leave running.
-  const fire = Array.isArray(game.strikes) && game.strikes.find((st) => st?.skill === 'fire_strike' && Array.isArray(st.cells) && st.cells.length);
+  const fire = fresh.find((st) => st?.skill === 'fire_strike' && Array.isArray(st.cells) && st.cells.length);
   if (fire) fireFx = { t0: performance.now(), cells: fire.cells, centre: Array.isArray(fire.centre) ? fire.centre : null };
 }
 
@@ -1060,7 +1067,7 @@ function drawSlash(st, t, cx, cy, known, reveal) {
   if (Math.hypot(dx, dy) < 2) { dx = FACE_X[myFacing()] ?? 1; dy = 0; } // no aim known: slash across the cell
   drawCrescent(ox, oy, dx, dy, t, {
     frames: SLASH_FRAMES, sweep: 2.3, reach: Math.min(26, Math.max(13, Math.hypot(dx, dy) * 1.25)),
-    wTail: 1.5, wHead: 6, bow: 1.5, pal: SLASH_COLORS[st.by === 'explorer' ? 'sword' : 'claw'], alpha: st.result === 'miss' ? .6 : 1,
+    wTail: 1.5, wHead: 6, bow: 1.5, pal: SLASH_COLORS[explorerStrike(st) ? 'sword' : 'claw'], alpha: st.result === 'miss' ? .6 : 1,
   });
 }
 
@@ -1189,7 +1196,7 @@ function drawStrikes(cx, cy, now, known, reveal, pass = 'fill') {
   if (pass === 'edge') {
     const t = (now - strikeFx.t0) / SLASH_MS, ts = (now - strikeFx.t0) / SHIELD_SLASH_MS;
     for (const st of strikeFx.strikes) {
-      const blockedClaw = st.result === 'blocked' && st.by !== 'explorer';
+      const blockedClaw = st.result === 'blocked' && !explorerStrike(st);
       if (t < 1 && !blockedClaw && st.skill !== 'fire_strike') drawSlash(st, t, cx, cy, known, reveal); // the fire strike draws its blast instead (drawFire) // a blocked claw shows only the shield's spark
       // A blocked claw: the raised shield parries with a small gold crescent toward the attacker.
       if (blockedClaw && ts < 1 && Array.isArray(st.from) && Array.isArray(myPos())) drawParry(st.from, ts, cx, cy, known, reveal);
@@ -1223,7 +1230,7 @@ const SHIELD_ROWS = [
   '....ooo....',
 ];
 function drawShield(x, y, now) { // x: centre column, y: top row; flashes on alternate parry frames
-  const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && st.by !== 'explorer')
+  const flashing = strikeFx && strikeFx.strikes.some((st) => st.result === 'blocked' && !explorerStrike(st))
     && (now - strikeFx.t0) / SHIELD_SLASH_MS < 1 && Math.floor((now - strikeFx.t0) / SHIELD_SLASH_MS * PARRY_FRAMES) % 2 === 0;
   SHIELD_ROWS.forEach((row, ry) => [...row].forEach((ch, rx) => {
     if (ch === '.') return;

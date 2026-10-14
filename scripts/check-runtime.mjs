@@ -522,6 +522,41 @@ async function swordCase(moveGhost) {
   await new Promise((r) => mono.setTimeout(r, 20));
   ok(mono.now() - t0 >= 15, 'MonotonicClock measures real time and runs timers');
 }
+// Every monster kind can claw in the hosted schedule, including the tree giant.
+for (const kind of ['ghost', 'troll', 'tree_giant', 'wolf']) {
+  const s = setup({ map: CLOSE, treasure: null, numAdversaries: 1, kinds: kind }, { stubs: { explorer: new Stub('hang') } });
+  await kick(s);
+  await s.clock.tick(3000, 25);
+  ok(of(s.records, 'monster_turn').some((r) => r.events.some((e) => e.type === 'hit')), `${kind} can claw and damage a knight in hosted play`);
+  await s.actor.stop();
+}
+
+// Hosted effects are per apply, and sword recovery is measured on the world clock.
+{
+  const s = setup({ map: CLOSE, treasure: null, numAdversaries: 1, ghostHp: 5 }, { stubs: { explorer: new Stub('hang') } });
+  s.game.strikes = [{ by: 'old', cells: [[1, 1]], result: 'miss' }];
+  await kick(s);
+  await s.clock.tick(900, 25);
+  ok(!s.game.strikes.some((st) => st.by === 'old'), 'a monster apply clears old hosted effects');
+  ok(s.game.strikes.length <= 1 && s.game.strikes.every((st) => typeof st.id === 'string'), 'hosted strikes have stable effect IDs and never accumulate');
+  await s.actor.stop();
+  const sword = buildSkillSet(['sword_strike']).skills[0];
+  let now = 0;
+  sword.attachTime(() => now, 350);
+  sword.markUsed();
+  now = 100;
+  ok(!sword.ready, 'the default sword cannot repeat at 100 ms');
+  now = 349;
+  ok(!sword.ready, 'the default sword cannot repeat before 350 ms');
+  now = 350;
+  ok(sword.ready, 'the default sword is ready at 350 ms');
+  sword.cooldown = 0;
+  sword.markUsed();
+  now = 449;
+  ok(!sword.ready, 'even a zero-step sword has a 100 ms recovery floor');
+  now = 450;
+  ok(sword.ready, 'zero-step sword is ready after 100 ms');
+}
 ok(uninstall.wire.hits === 0, `the fetch tripwire was never hit (${uninstall.wire.hits})`);
 
 if (fails) { console.log(`${fails} runtime check(s) failed`); process.exit(1); }

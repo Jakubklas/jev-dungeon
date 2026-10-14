@@ -77,7 +77,7 @@ export function resolveAttack(game, attacker, cells, damage, { canHit = () => tr
   // `from` is where the attacker stood when it struck (the explorer often steps on before the view is drawn): the UI aims the slash from it.
   const from = [...(fromExplorer ? striker.pos : attacker.pos)];
   // `skill` is set only for a skill the UI draws its own way (the fire strike); a plain strike keeps the old shape.
-  game.strikes.push({ by: attacker.id, from, cells: live.map((c) => [...c]), result, ...(skill ? { skill } : {}), ...(centre ? { centre } : {}) });
+  game.strikes.push({ ...(game.managed ? { id: `${attacker.id}:${game.clock}:${game.strikes.length}` } : {}), by: attacker.id, from, cells: live.map((c) => [...c]), result, ...(skill ? { skill } : {}), ...(centre ? { centre } : {}) });
   events.push({ id: attacker.id, type: 'strike', cells: live.map((c) => [...c]), result });
   return events;
 }

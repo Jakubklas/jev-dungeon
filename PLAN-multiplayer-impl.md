@@ -412,3 +412,11 @@ countdown when it is present and just the explanation when it is absent. Partici
 `ready` (waiting room), `active`, `awaiting_key`, `dead`, `forfeited`; the end screen also reads `ranking[]`
 (`{ participant_id, name, slot, coins, strikes, dispels, portal, alive, forfeited, points }`), `result`
 (`'won' | 'lost'`) and `team_score` from `event: end` / `GameView.ranking`.
+
+## Post-merge playtest fixes — 2026-10-14
+
+- Fixed hosted strike accumulation: every applied explorer/monster action starts a fresh effect batch. Stable effect IDs prevent SSE/poll updates from replaying an existing sword or fire animation.
+- Fixed multiplayer knight strikes incorrectly using claw colours; classification now recognises every explorer ID.
+- Restored timed overhead thought bubbles for both knights and visible monsters, using existing thought pools, mood chips, renderer head positions and overlap handling. Projection sends display thoughts without monster objectives or full teammate memories.
+- Confirmed the saved playtest recorded 14 monster claws and 6 hits; shortest same-knight sword interval was about 760 ms. Replaying effects exaggerated apparent attack frequency. The default sword recovery remains 350 ms; timed swords now enforce at least 100 ms even with a zero-step setting.
+- Verified runtime claws for ghost, troll, tree giant and wolf with stubbed decisions. Targeted runtime, persistence, service and fog checks pass. Added renderer regression coverage for repeated updates, sword/fire expiry and multiplayer strike identity. Full suite and final review pending.

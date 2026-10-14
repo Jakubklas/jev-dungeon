@@ -235,7 +235,7 @@ function showGame() {
 }
 function loop(now) {
   requestAnimationFrame(loop);
-  if (!$('view-game').hidden) renderer.frame(now);
+  if (!$('view-game').hidden) { renderer.frame(now); drawThoughts(now); }
 }
 
 const HEART_ROWS = ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...'];
@@ -261,7 +261,58 @@ function heartsSvg(hp, max) {
 
 const MOOD_COLOURS = { wary: '#ff9a6b', guarded: '#ffb86b', cautious: '#d9c26b', steady: '#7ee8ff', greedy: '#ffc633', bold: '#f5a42f', fearless: '#ff6a52', panic: '#ff4a3a' };
 let thoughtsMod = null;
-import('/thoughts.js').then((m) => { thoughtsMod = m; }).catch(() => {});
+import('/thoughts.js').then((m) => { thoughtsMod = m; if (view) updateThoughts(); }).catch(() => {});
+
+// One timed bubble per character, anchored to the renderer's moving head positions.
+const bubbles = new Map();
+const lastLines = new Map();
+function updateThoughts() {
+  if (!thoughtsMod) return;
+  const pools = { troll: thoughtsMod.TROLL_THOUGHTS, tree_giant: thoughtsMod.TREE_GIANT_THOUGHTS, wolf: thoughtsMod.WOLF_THOUGHTS };
+  const chars = (view.explorers ?? []).map((e) => ({
+    id: e.self ? '@' : `e:${e.id}`, approach: e.thought?.id,
+    since: e.thought?.since_step, text: e.thought?.thought, mood: e.thought?.mood, kind: 'explorer',
+  }));
+  for (const a of view.adversaries ?? []) if (a.visible && a.brain?.on) chars.push({
+    id: a.id, approach: a.brain.approach, since: a.brain.approach_since,
+    text: a.brain.approach_text, kind: 'adversary', voice: a.kind,
+  });
+  const present = new Set(chars.map((c) => c.id));
+  for (const [id, t] of bubbles) if (!present.has(id)) { t.node.remove(); bubbles.delete(id); }
+  for (const c of chars) {
+    if (!c.approach) continue;
+    const key = `${c.approach}@${c.since}`;
+    let t = bubbles.get(c.id);
+    if (t?.key === key) continue;
+    const pool = (c.mood && thoughtsMod.MOOD_THOUGHTS[c.mood]) || pools[c.voice]?.[c.approach] || thoughtsMod.THOUGHTS[c.approach];
+    const fresh = pool?.filter((line) => line !== lastLines.get(c.id));
+    const choices = fresh?.length ? fresh : pool;
+    const text = choices?.length ? choices[Math.floor(Math.random() * choices.length)] : c.text;
+    if (!text) continue;
+    lastLines.set(c.id, text);
+    if (!t) { t = { node: el('div', { class: `bubble ${c.kind}` }) }; bubbles.set(c.id, t); $('bubbles').append(t.node); }
+    Object.assign(t, { key, t0: performance.now(), ms: Math.min(9000, Math.max(3500, 1200 + text.length * 50)) });
+    t.node.replaceChildren(text);
+    if (c.mood) { t.node.dataset.sentiment = c.mood; t.node.append(el('span', { class: 'senti-tag', text: c.mood })); }
+    else delete t.node.dataset.sentiment;
+  }
+}
+function drawThoughts(now) {
+  const { S, dpr, viewW } = renderer.metrics(), scale = S / dpr, placed = [];
+  for (const [id, t] of bubbles) {
+    const head = renderer.heads.get(id), age = now - t.t0;
+    const fade = Math.max(0, Math.min(1, age / 150, (t.ms - age) / 400));
+    if (!head || !fade) { t.node.style.opacity = '0'; continue; }
+    const w = t.node.offsetWidth, h = t.node.offsetHeight, hx = head.x * scale;
+    const x = Math.max(6, Math.min(viewW - w - 6, hx - w / 2));
+    let y = head.y * scale - 10 - h;
+    for (const r of placed) if (x < r.x + r.w && r.x < x + w && y < r.y + r.h + 14 && r.y < y + h) y = Math.min(y, r.y - h - 14);
+    y = Math.max(6, y); placed.push({ x, y, w, h });
+    t.node.style.setProperty('--tail', `${Math.max(10, Math.min(w - 10, hx - x))}px`);
+    t.node.style.transform = `translate(${Math.round(x)}px, ${Math.round(y + (1 - fade) * 4)}px)`;
+    t.node.style.opacity = String(fade * head.alpha);
+  }
+}
 
 function myExplorer() { return view?.explorers?.find((e) => e.self) ?? null; }
 function isSpectator() {
@@ -281,6 +332,7 @@ function applyView() {
   $('coins').textContent = me?.coins ?? view.coins ?? 0;
   $('steps').textContent = view.steps ?? 0;
   $('explored').textContent = `${Math.round(view.explored_pct ?? 0)}%`;
+  updateThoughts();
   renderMind();
   renderTeam();
   renderBanners();

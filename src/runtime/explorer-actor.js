@@ -85,6 +85,7 @@ export class ExplorerActor {
       host.record('decision_dropped', { ...base, reason: game.won || game.lost ? 'game over' : ex.status });
       return;
     }
+    game.strikes = []; // effects belong to this applied action, never the whole hosted session
     const coins = ex.coins;
     const turn = this.brain.apply(intent);
     host.record('explorer_turn', {

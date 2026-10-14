@@ -105,6 +105,7 @@ export class MonsterActor {
   finish(a, start, result, token, base) {
     const host = this.host;
     const game = host.game;
+    game.strikes = []; // publish only this action's effects
     const out = monsterTurnApply(game, a, start, result);
     host.afterMonsterTurn(out.events);
     host.record('monster_turn', {

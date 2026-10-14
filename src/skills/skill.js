@@ -41,7 +41,8 @@ export class Skill {
     this.#uses++;
     this.#lastUsedStep = step;
     this.#cooldownLeft = this.cooldown;
-    if (this.#time) this.#readyAt = this.#time() + this.cooldown * this.#stepMs;
+    // A timed sword always has at least 100 ms recovery, even with a zero-step host setting.
+    if (this.#time) this.#readyAt = this.#time() + Math.max(this.id === 'sword_strike' ? 100 : 0, this.cooldown * this.#stepMs);
   }
 
   // Cooldown on a deadline (WP-D): `time()` is the owner's world time in ms, `stepMs` what one 'step' of cooldown lasts.
