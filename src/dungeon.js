@@ -21,7 +21,7 @@ export let LAYOUT = 'linear'; // 'maze': rooms joined by a spanning tree plus lo
 export let HELP_REACH_STEPS = 48; // known-path steps within which a teammate gets a help report (several explorers; read by the multiplayer runtime)
 export let REGEN_STEPS = 30; // the explorer heals REGEN_AMOUNT lives every this many steps (0 = never)
 export let REGEN_AMOUNT = 0.5; // lives healed per regen (health may be fractional: 1.5 of 2)
-export let STEP_MS = 400; // world-time length of one 'step' in ms: converts every step-count duration (rules.stepMs)
+export let STEP_MS = 350; // calibrated Jev decision period (2026-10-14); converts step-count durations (rules.stepMs)
 export let CADENCE_MS = 90; // an actor starts its next decision no sooner than this after the previous one (rules.cadenceMs; runtime)
 export let HEART_RESPAWN = 200; // a picked-up heart comes back on its cell this many steps later (0 = never)
 let ROOM_AREA = 290; // map cells per room when choosing the room count

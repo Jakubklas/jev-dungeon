@@ -122,7 +122,7 @@ Performance: maps are up to 90×90. Per-tick work should stay cheap (no full-gri
 
 ```js
 game.clock                  // ms of world time, starts 0; Run.playTurn adds rules.stepMs once per turn
-game.rules                  // { stepMs: 400, cadenceMs: 90 } from rules.stepMs / rules.cadenceMs at construction
+game.rules                  // { stepMs: 350, cadenceMs: 90 } from rules.stepMs / rules.cadenceMs at construction
 game.managed, game.frozen   // managed: the runtime owns the clock; frozen: advance() / setClock() do nothing
 game.worldTick()            // floor(clock / stepMs); game.monsterTick() = worldTick() when managed else adversaryTicks
 game.now()                  // monster-side time (legacy tick time when unmanaged, clock when managed)

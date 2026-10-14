@@ -274,7 +274,7 @@ async function swordCase(moveGhost) {
   const cdBefore = dash.cooldownLeft;
   const graceBefore = s.game.timersLeft().explorers.explorer.grace;
   const clockBefore = s.game.clock;
-  ok(clockBefore === 1400 && graceBefore === 1200, `pause syncs the clock first (clock ${clockBefore}, grace left ${graceBefore})`);
+  ok(clockBefore === 1400 && graceBefore === 4 * s.game.rules.stepMs - 400, `pause syncs the clock first (clock ${clockBefore}, grace left ${graceBefore})`);
   await s.clock.tick(30_000, 1000);
   ok(s.game.clock === clockBefore, `paused: game.clock stands still (${s.game.clock} vs ${clockBefore})`);
   ok(dash.cooldownLeft === cdBefore && s.game.timersLeft().explorers.explorer.grace === graceBefore, `paused: Dash cooldown (${dash.cooldownLeft}s) and grace (${graceBefore} ms) keep their remaining time`);

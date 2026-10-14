@@ -17,25 +17,26 @@ import { KNOBS } from '../src/config/registry.js';
 
 let fails = 0;
 const ok = (c, m) => { if (!c) { fails++; console.log(`FAIL: ${m}`); } };
-const S = STEP_MS;
+// Legacy deadline examples retain their explicit 400 ms fixture; section 1 checks calibrated defaults.
+const S = 400;
 
 // ---- 1. the knobs and the derived durations
 {
   const k = (key) => KNOBS.find((x) => x.key === key);
-  ok(k('stepMs')?.def === 400 && k('cadenceMs')?.def === 90 && k('stepMs').when === 'next' && k('stepMs').page === false, 'registry: rules.stepMs 400, rules.cadenceMs 90, file-only, next game');
+  ok(k('stepMs')?.def === 350 && k('cadenceMs')?.def === 90 && k('stepMs').when === 'next' && k('stepMs').page === false, 'registry: rules.stepMs 350, rules.cadenceMs 90, file-only, next game');
   ok(k('stepMs').path === 'rules.stepMs' && k('cadenceMs').path === 'rules.cadenceMs', 'registry paths');
-  ok(STEP_MS === 400 && CADENCE_MS === 90, 'dungeon.js defaults');
-  ok(GRACE_TICKS * S === 1600, `grace 4 steps = 1600 ms (${GRACE_TICKS * S})`);
-  ok(HEART_RESPAWN * S === 80000, `heart respawn 200 steps = 80 s (${HEART_RESPAWN * S})`);
-  ok(REGEN_STEPS * S === 12000, `regen every 30 steps = 12 s (${REGEN_STEPS * S})`);
+  ok(STEP_MS === 350 && CADENCE_MS === 90, 'dungeon.js defaults');
+  ok(GRACE_TICKS * STEP_MS === 1400, `grace 4 steps = 1400 ms (${GRACE_TICKS * S})`);
+  ok(HEART_RESPAWN * STEP_MS === 70000, `heart respawn 200 steps = 70 s (${HEART_RESPAWN * S})`);
+  ok(REGEN_STEPS * STEP_MS === 10500, `regen every 30 steps = 10.5 s (${REGEN_STEPS * S})`);
   const doc = readFileSync(new URL('../CONFIG.md', import.meta.url), 'utf8');
-  ok(/grace 4 steps = 1\.6 s/.test(doc) && /heart respawn 200 steps = 80 s/.test(doc), 'CONFIG.md documents the derived durations');
+  ok(/grace 4 steps = 1\.4 s/.test(doc) && /heart respawn 200 steps = 70 s/.test(doc), 'CONFIG.md documents the derived durations');
   const g = new Game(buildArena({ size: [5, 5], numAdversaries: 0 }).dungeon);
-  ok(g.clock === 0 && g.rules.stepMs === 400 && g.rules.cadenceMs === 90 && g.worldTick() === 0, 'a new game: clock 0, rules from the knobs');
+  ok(g.clock === 0 && g.rules.stepMs === 350 && g.rules.cadenceMs === 90 && g.worldTick() === 0, 'a new game: clock 0, rules from the knobs');
   configureWorld({ stepMs: 250, cadenceMs: 30 });
   const g2 = new Game(buildArena({ size: [5, 5], numAdversaries: 0 }).dungeon);
   ok(g2.rules.stepMs === 250 && g2.rules.cadenceMs === 30, 'configureWorld sets the next game\'s rules');
-  ok(g.rules.stepMs === 400, 'a running game keeps the rules it started with');
+  ok(g.rules.stepMs === 350, 'a running game keeps the rules it started with');
   configureWorld({ stepMs: 400, cadenceMs: 90 });
 }
 

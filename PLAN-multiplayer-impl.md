@@ -1,6 +1,6 @@
 # PLAN-multiplayer: implementation design (branch `multiplayer-v1`)
 
-## Progress (2026-10-13)
+## Progress (2026-10-14)
 
 | Package | Status | Evidence / next step |
 | --- | --- | --- |
@@ -8,9 +8,10 @@
 | WP-F | Complete (`7f95df7`, `4a3b9b1`) | Seeded decision and prop shuffles, versioned world/brain/skill/actor snapshots, store event ordering and restart truncation. `check-persistence.mjs` passes a 20 + restore + 20 replay and crash boundary check. The full suite passed 46/46; request hashes intentionally regenerated. |
 | WP-G | Complete (`9cfe77a`, `8bab9c0`, `e5e4153`, `c192e28`, `d0f43e0`) | Real `/v1` service, revision workers, private cookie credentials, SSE, key handling, restart auto-resume, room expiry, roster propagation and metrics. Host/HTTP checks cover access, independent keys and server rejection. Full final suite 51/51. |
 | WP-H | Complete (`5499ce1`, `478871a`) | Monsters track visible/frozen sightings per explorer and choose targets without revealing hidden positions. Help calls use known-path reach and frozen reports, expiring after 30 steps or when seen empty. Player projections include team sight and filter hidden effects. Multiplayer and fog checks pass; final suite 51/51. |
-| WP-J / final review | Complete | Operations guide, contracts, metrics and child crash checks. Review fixed authentication, simultaneous key expiry, durable pending call records, host-ended ranking and heart projection. `node scripts/check-all.mjs` passed 51/51 on the final code; no paid calls were made. |
+| WP-J / final review | Complete | Operations guide, contracts, metrics and child crash checks. Review fixed authentication, simultaneous key expiry, durable pending call records, host-ended ranking and heart projection. The final dry suite passed 51/51; authorized live calibration is recorded below. |
+| Live calibration | Complete | 60 paid explorer decisions, 118 HTTP posts, median decision period 352.3 ms. Set the built-in `rules.stepMs` default to 350 ms; post-calibration full suite 51/51 and request hashes unchanged. |
 
-Live measurement remains unrun because it makes paid Jev calls and needs explicit authorisation.
+Live measurement completed with explicit user authorization on 2026-10-14: 60 explorer decisions, 118 HTTP posts (116 successful, two aborted at shutdown), no decision failures. Median decision period including cadence 352.3 ms, p90 610.6 ms; calibrated `rules.stepMs` to 350 ms. Evidence: [measurement report](docs/measurements/multiplayer-latency-2026-10-14.md) and its sanitized JSON. Post-calibration validation passed 51/51; the branch is ready for the authorized merge to `main`.
 
 This file turns PLAN-multiplayer.md into concrete seams, files and work packages (WP). PLAN-multiplayer.md
 is the product spec; this file is how we build it. If the two disagree on *product* behaviour, PLAN-multiplayer.md
@@ -184,7 +185,7 @@ of `game.pos`), `src/config/registry.js` (`explorer.helpReachSteps` 48, validate
 ### WP-D: world clock and durations (PLAN Phase 1.1 second half)
 
 Files: `src/dungeon.js`, `src/characters/adversary/*.js`, `src/skills/*`, `src/turn.js`, `src/config/registry.js`
-(`rules.stepMs` 400, `rules.cadenceMs` 90; regen CONFIG.md), `scripts/check-clock.mjs`.
+(`rules.stepMs` calibrated to 350, `rules.cadenceMs` 90; derived durations in CONFIG.md), `scripts/check-clock.mjs`.
 
 - `game.clock` (ms, world time) and `game.rules.stepMs`. `Run.playTurn` advances `game.clock += stepMs` once per turn,
   at the start, so every legacy check sees the same pace as before.
