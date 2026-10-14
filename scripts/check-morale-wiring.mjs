@@ -5,7 +5,8 @@
 globalThis.fetch = () => { throw new Error('network call in a check script'); };
 
 import { Game, SIGHT_RANGE, configureWorld } from '../src/dungeon.js';
-import { Adversary, configureAdversaries, stepAdversaries } from '../src/characters/adversary/adversary.js';
+import { Adversary, configureAdversaries, stepAdversaries, monsterTurnStart } from '../src/characters/adversary/adversary.js';
+import { newTestGame } from '../src/turn.js';
 import { MORALE_ON, applyMorale, buildRequest, queueMorale } from '../src/characters/adversary/brain.js';
 import { AdversaryView } from '../src/characters/adversary/adversary-view.js';
 import { validateMemory } from '../src/characters/adversary/memory.js';
@@ -122,6 +123,25 @@ check(moraleOf(near).value < nearBefore && moraleOf(near).counts.lost === 1, `a 
 check(farBefore - moraleOf(far).value >= 0, 'a packmate out of earshot is not raised by it');
 g.clearTickState();
 check(g.dispelled.length === 0, 'the record is cleared with the rest of the tick state');
+
+// Hosted turns are independent: the first watcher must notify every recipient,
+// without re-playing the death on its own later turns or losing a pending recipient on restore.
+const hosted = newTestGame({ size: [11, 11], adversaries: [[7, 5], [8, 5], [9, 5]], props: 'none' },
+  { ask: async () => ({}), decide }).game;
+const dead = hosted.adversaries[0];
+const firstWatcher = hosted.adversaries[1];
+const secondWatcher = hosted.adversaries[2];
+resolveAttack(hosted, EXPLORER, [dead.pos], 99);
+for (let tick = 1; tick <= 4; tick++) monsterTurnStart(hosted, firstWatcher, { now: tick });
+check(firstWatcher.hunt.morale.counts.lost === 1, 'four independent hosted turns count one packmate death once');
+check(hosted.dispelled.length === 0, 'hosted death notifications are consumed without tick cleanup');
+const restoredWatcher = Adversary.restore(secondWatcher.serialize());
+hosted.adversaries[hosted.adversaries.indexOf(secondWatcher)] = restoredWatcher;
+for (let tick = 5; tick <= 8; tick++) monsterTurnStart(hosted, restoredWatcher, { now: tick });
+check(restoredWatcher.hunt.morale.counts.lost === 1, 'another recipient keeps its queued death notification across restore');
+resolveAttack(hosted, EXPLORER, [firstWatcher.pos], 99);
+monsterTurnStart(hosted, restoredWatcher, { now: 9 });
+check(restoredWatcher.hunt.morale.counts.lost === 2, 'a second distinct death applies one additional penalty');
 
 // 5. The mood moves real knobs
 console.log('\n-- 5. the mood moves knobs');

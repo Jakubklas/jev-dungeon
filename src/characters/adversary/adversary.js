@@ -685,10 +685,13 @@ function corneredNow(game, a) {
   return ways <= 2;
 }
 
-// The tick's death cries: every monster that saw or heard a packmate dispelled loses morale for it.
-function deathCries(game, order) {
-  for (const dead of game.dispelled ?? []) {
-    for (const a of order) {
+// Consume each death once, notifying the whole pack even when only one monster is
+// taking its hosted turn. Each recipient's queued penalty is applied on its next turn.
+function deathCries(game) {
+  const deaths = game.dispelled ?? [];
+  game.dispelled = [];
+  for (const dead of deaths) {
+    for (const a of game.adversaries) {
       const reach = knobsOf(a).alertSteps;
       const near = floorDistances(game.dungeon, a.pos);
       const steps = near.get(key(dead.at));
@@ -700,8 +703,8 @@ function deathCries(game, order) {
 }
 
 function moralePhase(game, order, stunned, events, tick) {
-  if (!MORALE_ON) return;
-  deathCries(game, order);
+  if (!MORALE_ON) { game.dispelled = []; return; }
+  deathCries(game);
   const swordDamage = skillConfig().swordDamage || 1;
   for (const a of order) {
     const view = viewOf(game, a);
