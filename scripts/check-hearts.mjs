@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { clawDecide } from './lib/duel-harness.mjs'; // installs the fetch tripwire
 import { newGame, newTestGame } from '../src/turn.js';
-import { generateDungeon } from '../src/dungeon.js';
+import { generateDungeon, STEP_MS } from '../src/dungeon.js';
 import { spawnCoins } from '../src/coins.js';
 import { spawnHearts, configureHearts, MAX_HEARTS } from '../src/hearts.js';
 
@@ -168,9 +168,9 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
       const r = g.applyMove('right'); // step 2 -> (3,2): picks the heart up
       ok(r.healed === 1 && g.health === 2, `respawn 5.1: the pickup heals (${r.healed}, ${g.health})`);
       ok(!has(g, [3, 2]) && g.heartPiles.length === 0, 'respawn 5.1: the heart left heartPiles');
-      ok(JSON.stringify(g.heartsTaken) === JSON.stringify([{ cell: [3, 2], due: 7 }]), `respawn 5.1: heartsTaken = [{ cell: [3,2], due: 2 + 5 }] (${JSON.stringify(g.heartsTaken)})`);
+      ok(JSON.stringify(g.heartsTaken) === JSON.stringify([{ cell: [3, 2], due: 7 * STEP_MS }]), `respawn 5.1: heartsTaken = [{ cell: [3,2], due: 2 + 5 }] (${JSON.stringify(g.heartsTaken)})`);
       configureWorld({ heartRespawn: 50 });
-      ok(g.heartsTaken[0].due === 7, 'respawn 5.1: changing HEART_RESPAWN after the pickup leaves the due alone');
+      ok(g.heartsTaken[0].due === 7 * STEP_MS, 'respawn 5.1: changing HEART_RESPAWN after the pickup leaves the due alone');
       configureWorld({ heartRespawn: 5 });
 
       // 5.2 it comes back exactly at due (not one step earlier), same cell, `respawned` reported; it heals again
@@ -186,7 +186,7 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
       ok(g.heartsTaken.length === 0, `respawn 5.2: the respawned entry left heartsTaken (${JSON.stringify(g.heartsTaken)})`);
       const again = g.applyMove('left'); // step 8 -> (3,2): picks it up again
       ok(again.healed === 1 && g.health === 3 && !has(g, [3, 2]), `respawn 5.2: the respawned heart heals again (${again.healed}, ${g.health})`);
-      ok(JSON.stringify(g.heartsTaken) === JSON.stringify([{ cell: [3, 2], due: 13 }]), `respawn 5.2: the second pickup is scheduled again (${JSON.stringify(g.heartsTaken)})`);
+      ok(JSON.stringify(g.heartsTaken) === JSON.stringify([{ cell: [3, 2], due: 13 * STEP_MS }]), `respawn 5.2: the second pickup is scheduled again (${JSON.stringify(g.heartsTaken)})`);
       ok(g.skillRand === null && g.coinRand === null, 'respawn 5.2: no rng stream was created');
     }
 
@@ -215,7 +215,7 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
       const g = hall([[3, 2]]).game;
       g.health = 1;
       g.applyMove('right'); g.applyMove('right'); // step 2 on (3,2): due 5
-      ok(g.heartsTaken[0]?.due === 5, `respawn 5.5: due 5 (${JSON.stringify(g.heartsTaken)})`);
+      ok(g.heartsTaken[0]?.due === 5 * STEP_MS, `respawn 5.5: due 5 (${JSON.stringify(g.heartsTaken)})`);
       let n = 0;
       for (let i = 0; i < 4; i++) { const m = g.applyMove(STAY); n += m.respawned ?? 0; } // steps 3..6, standing on it
       ok(g.steps === 6 && !has(g, [3, 2]) && n === 0, `respawn 5.5: deferred while the explorer stands on the cell (piles ${JSON.stringify(g.heartPiles)}, respawned ${n})`);
@@ -277,9 +277,9 @@ const config = { map: MAP, numAdversaries: 0, adversaries: [], hearts: [[6, 2], 
       const base = await bodiesOf([[6, 2]]);
       ok(base.bodies.length > 0, `respawn 5.7: the stub was asked (${base.bodies.length})`);
       ok(base.bodies.some((b) => /heart/i.test(b)), 'respawn 5.7: hearts do reach the hurt explorer (sanity)');
-      const dark = await bodiesOf([[6, 2]], (g) => { ok(!g.isKnown([19, 2]), 'respawn 5.7: (19,2) is dark'); g.heartsTaken = [{ cell: [19, 2], due: 1000 }]; });
+      const dark = await bodiesOf([[6, 2]], (g) => { ok(!g.isKnown([19, 2]), 'respawn 5.7: (19,2) is dark'); g.heartsTaken = [{ cell: [19, 2], due: 1000 * STEP_MS }]; });
       ok(dark.bodies.length === base.bodies.length && dark.bodies.every((b, i) => b === base.bodies[i]), 'respawn 5.7: a pending respawn on a dark cell leaves every request byte-identical');
-      const lit = await bodiesOf([[6, 2]], (g) => { ok(g.isKnown([3, 2]), 'respawn 5.7: (3,2) is lit'); g.heartsTaken = [{ cell: [3, 2], due: 1000 }]; });
+      const lit = await bodiesOf([[6, 2]], (g) => { ok(g.isKnown([3, 2]), 'respawn 5.7: (3,2) is lit'); g.heartsTaken = [{ cell: [3, 2], due: 1000 * STEP_MS }]; });
       ok(lit.bodies.length === base.bodies.length && lit.bodies.every((b, i) => b === base.bodies[i]), 'respawn 5.7: a pending respawn on a lit cell is invisible before due (byte-identical requests)');
       ok(lit.seen.every((s) => !s.lit.some((c) => c[0] === 3 && c[1] === 2)), 'respawn 5.7: seenHearts() never lists the pending lit cell before due');
     }

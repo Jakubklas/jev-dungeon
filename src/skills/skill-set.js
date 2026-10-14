@@ -1,5 +1,9 @@
 // A character's skills: at most MAX_SKILLS, unique ids. Builds the ordered option map for the
 // `skill` question and turns an answered key back into { skill, target }.
+import { AttackSkill } from './attack.js';
+import { AreaSkill } from './area.js';
+import { BlockSkill } from './block.js';
+import { DashSkill } from './dash.js';
 
 export const MAX_SKILLS = 4;
 
@@ -38,5 +42,23 @@ export class SkillSet {
 
   summaries() { return this.#skills.map((s) => s.summary()); }
 
+  // Put every cooldown on a deadline timeline (see Skill.attachTime). Dash keeps its own real-time clock.
+  attachTime(time, stepMs) { for (const s of this.#skills) s.attachTime(time, stepMs); }
   turnPassed() { for (const s of this.#skills) s.turnPassed(); }
+
+  serialize() { return { v: 1, skills: this.#skills.map((s) => s.serialize()) }; }
+
+  static restore(saved) {
+    if (saved?.v !== 1 || !Array.isArray(saved.skills)) throw new TypeError('invalid skill set snapshot');
+    const classes = { attack: AttackSkill, area: AreaSkill, block: BlockSkill, dash: DashSkill };
+    return new SkillSet(saved.skills.map((entry) => {
+      const Type = classes[entry.kind];
+      if (!Type) throw new TypeError(`unknown skill kind ${entry.kind}`);
+      const spec = { ...entry.spec };
+      if (entry.kind === 'dash') spec.text = spec.text.replace(` Ready again after ${spec.cooldown} seconds.`, '');
+      const skill = new Type(spec);
+      skill.restoreState(entry);
+      return skill;
+    }));
+  }
 }

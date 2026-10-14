@@ -9,7 +9,10 @@
 
 // A category is a YAML path prefix. The longest matching prefix decides the default for its knobs.
 export const CATEGORIES = {
+  rooms: { userSetting: false, doc: 'Hosted waiting-room capacity.' },
+  service: { userSetting: false, doc: 'Hosted participant key retry window.' },
   world: { userSetting: false, doc: 'Dungeon layout, light, coins and hearts. Developer only.' },
+  rules: { userSetting: false, doc: 'World time: one step is rules.stepMs (350 ms), calibrated from a 352 ms median hosted Jev decision period on 2026-10-14. At the default: grace 4 steps = 1.4 s, heart respawn 200 steps = 70 s, regen every 30 steps = 10.5 s, sword cooldown 1 step = 0.35 s, shield 2 = 0.7 s, fire strike 120 = 42 s, stun 2 = 0.7 s, a block lasts to the next step = 0.35 s; a monster moves every stepMs / speed (speed 0.6 = 583 ms). rules.cadenceMs (90 ms) is the shortest pause between one decision of an actor and the next. Developer only.' },
   explorer: { userSetting: false, doc: 'The knight: lives and protection after a hit.' },
   skills: { userSetting: false, doc: 'Explorer and monster combat skills, plus the explorer\'s Dash.' },
   monsters: { userSetting: false, doc: 'Ghosts, trolls, tree giants and wolves: speed, packs, spawn, stats, characters.' },
@@ -22,6 +25,8 @@ export const CATEGORIES = {
 };
 
 const PAGE_ROWS = [
+  { key: 'roomCapacity', path: 'rooms.capacity', group: 'Service', label: 'Room capacity', hint: 'Players allowed in a new shared room.', doc: 'Players allowed in a new shared room', type: 'range', min: 1, max: 4, step: 1, def: 4, when: 'next', page: false },
+  { key: 'keyRetryMs', path: 'service.keyRetryMs', group: 'Service', label: 'Key retry window', hint: 'Milliseconds to replace a rejected participant key.', doc: 'Milliseconds to replace a rejected participant key before forfeit', type: 'range', min: 1000, max: 600000, step: 1000, def: 120000, when: 'next', page: false },
   { key: 'speed', path: 'monsters.global.speed', group: 'Adversaries', label: 'Speed', hint: 'Fraction of the explorer\'s speed (1 = as fast).', doc: 'Monster speed as a share of the explorer (1 = same speed)', type: 'range', min: 0.1, max: 1, step: 0.05, def: 0.6, when: 'live' },
   { key: 'chaseRange', path: 'monsters.global.chaseRange', group: 'Adversaries', label: 'Chase range', hint: 'Cells within which a seen explorer starts a hunt.', doc: 'Cells within which a seen explorer starts a hunt', type: 'range', min: 1, max: 12, step: 1, def: 7, when: 'live' },
   { key: 'sightRange', path: 'world.sightRange', group: 'Adversaries', label: 'Sight range', hint: 'How far anyone sees along a clear line through revealed cells (both sides).', doc: 'How far anyone sees along a clear line through revealed (lit) cells (explorer and monsters)', type: 'range', min: 3, max: 30, step: 1, def: 7, when: 'live' },
@@ -62,6 +67,7 @@ const PAGE_ROWS = [
   { key: 'lives', path: 'explorer.lives', group: 'Explorer', label: 'Lives', hint: 'Lives the explorer starts with.', doc: 'Lives the explorer starts with', type: 'range', min: 1, max: 9, step: 1, def: 4, when: 'next', userSetting: true },
   { key: 'regenSteps', path: 'explorer.regen.steps', group: 'Explorer', label: 'Regen every', hint: 'Steps between natural heals. 0 = no regen.', doc: 'Steps between natural heals of a hurt explorer (0 = no regen)', type: 'range', min: 0, max: 200, step: 1, def: 30, when: 'live', page: false },
   { key: 'regenAmount', path: 'explorer.regen.amount', group: 'Explorer', label: 'Regen amount', hint: 'Lives healed per regen (fractions allowed).', doc: 'Lives healed per natural heal (fractions allowed, up to max lives)', type: 'range', min: 0, max: 3, step: 0.25, def: 0.5, when: 'live', page: false },
+  { key: 'helpReachSteps', path: 'explorer.helpReachSteps', group: 'Explorer', label: 'Help reach', hint: 'Known-path steps within which a teammate hears a call for help (several explorers).', doc: 'Known-path steps for a teammate help report (must exceed monsters.pack.alertSteps)', type: 'range', min: 2, max: 200, step: 1, def: 48, when: 'live', page: false },
   { key: 'lightRadius', path: 'world.lightRadius', group: 'Explorer', label: 'Light radius', hint: 'Cells each visited cell lights up.', doc: 'Cells each visited cell lights up', type: 'range', min: 3, max: 12, step: 1, def: 7, when: 'next' },
   { key: 'explorerProgress', path: 'explorer.progress.redirect', group: 'Explorer', label: 'Retreat redirect', hint: 'The explorer tracks its progress along its known path and, when it keeps retreating over explored ground, is steered to the deepest known frontier. Off = it still tracks progress but never redirects (an A/B arm).', doc: 'true = a sustained retreat is redirected to the deepest known frontier; false = tracked only', type: 'toggle', def: true, when: 'next', page: false },
   { key: 'minSize', path: 'world.size.min', group: 'Map', label: 'Min map side', hint: 'Smallest width or height.', doc: 'Smallest map side', type: 'range', min: 25, max: 150, step: 1, def: 25, when: 'next' },
@@ -74,6 +80,8 @@ const num = (key, path, def, min, max, step, doc) => ({ key, path, group: 'World
 const PROP_KINDS = ['shelf', 'crates', 'storage_chest', 'fountain', 'forge', 'ore', 'statue', 'candle_table', 'pots', 'skull', 'tools', 'sword', 'anvil', 'goblet', 'fireplace', 'arch', 'gate', 'banner', 'candle_nook'];
 const PROP_WEIGHT_DEF = { shelf: 3, crates: 3, storage_chest: 2, fountain: 1, forge: 1, ore: 2, statue: 1, candle_table: 1, pots: 3, skull: 2, tools: 2, sword: 1, anvil: 1, goblet: 1, fireplace: 3, arch: 2, gate: 2, banner: 2, candle_nook: 2 };
 const P1_ROWS = [
+  { ...num('stepMs', 'rules.stepMs', 350, 50, 5000, 10, 'World time of one step in ms: every step-count duration is that many steps of it'), group: 'Rules' },
+  { ...num('cadenceMs', 'rules.cadenceMs', 90, 0, 2000, 10, 'Shortest pause between an actor decision being applied and its next one starting, ms'), group: 'Rules' },
   num('roomMin', 'world.rooms.min', 4, 2, 10, 1, 'Smallest room side, cells'),
   num('roomMax', 'world.rooms.max', 15, 4, 30, 1, 'Largest room side, cells'),
   num('minRooms', 'world.rooms.minCount', 4, 1, 20, 1, 'Fewest rooms a map gets (maze layout only)'),
@@ -402,10 +410,10 @@ const P6_ROWS = [
 ];
 // ---- P7: the Jev client and the browser (timings and bubble lines, served at api/ui). File-only, live. ----
 const P7_ROWS = [
-  { key: 'jevHedgeCopies', path: 'jev.hedgeCopies', group: 'Jev', label: 'jev.hedgeCopies', hint: 'Copies of a request that may be in flight (1 = no hedging)', doc: 'Copies of a request that may be in flight (1 = no hedging)', type: 'range', min: 1, max: 4, step: 1, def: 2, when: 'live', page: false },
+  { key: 'jevHedgeCopies', path: 'jev.hedgeCopies', group: 'Jev', label: 'jev.hedgeCopies', hint: 'Copies of a request that may be in flight (1 = no hedging; the hosted gateway never hedges, this is for the dev server only)', doc: 'Copies of a request in flight (1 = no hedging); dev server only, hosted always sends 1', type: 'range', min: 1, max: 4, step: 1, def: 1, when: 'live', page: false },
   { key: 'jevHedgeDelayMs', path: 'jev.hedgeDelayMs', group: 'Jev', label: 'jev.hedgeDelayMs', hint: 'Wait for an answer before a further copy goes out, ms', doc: 'Wait for an answer before a further copy goes out, ms', type: 'range', min: 100, max: 10000, step: 50, def: 800, when: 'live', page: false },
-  { key: 'jevRetries', path: 'jev.retries', group: 'Jev', label: 'jev.retries', hint: 'Retries per copy on a retryable status or a network error', doc: 'Retries per copy on a retryable status or a network error', type: 'range', min: 0, max: 8, step: 1, def: 3, when: 'live', page: false },
-  { key: 'jevTimeoutMs', path: 'jev.timeoutMs', group: 'Jev', label: 'jev.timeoutMs', hint: 'Timeout per attempt, ms', doc: 'Timeout per attempt, ms', type: 'range', min: 1000, max: 120000, step: 500, def: 20000, when: 'live', page: false },
+  { key: 'jevRetries', path: 'jev.retries', group: 'Jev', label: 'jev.retries', hint: 'Retries per call on a retryable status or a network error', doc: 'Retries per call on a retryable status or network error (inside the call deadline)', type: 'range', min: 0, max: 8, step: 1, def: 3, when: 'live', page: false },
+  { key: 'jevTimeoutMs', path: 'jev.timeoutMs', group: 'Jev', label: 'jev.timeoutMs', hint: 'Timeout per call, ms, retries and backoff included', doc: 'Timeout per call, ms, retries and backoff included (each call of a tick has its own)', type: 'range', min: 1000, max: 120000, step: 500, def: 7000, when: 'live', page: false },
   { key: 'jevRetryStatus', path: 'jev.retryStatus', group: 'Jev', label: 'jev.retryStatus', hint: 'HTTP statuses that are retried', doc: 'HTTP statuses that are retried', type: 'list', options: [408, 425, 429, 500, 502, 503, 504, 529], maxLen: 8, def: [429, 502, 503, 504, 529], when: 'live', page: false },
   { key: 'decisionProvider', path: 'decision.provider', group: 'Decision', label: 'Decision provider', doc: 'Decision provider: hosted Jev, local Laya or OpenAI Decisions; no automatic fallback', type: 'choice', options: ['jev', 'laya', 'openai'], def: 'jev', when: 'live', page: false },
   { key: 'openaiDecisionModel', path: 'decision.openai.model', group: 'Decision', label: 'OpenAI decision model', doc: 'Model sent to the OpenAI Decisions API; requires OPENAI_API_KEY', type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}$', def: 'gpt-6-luna', when: 'live', page: false },

@@ -7,6 +7,7 @@
 // Damage model (PLAN-skills.md S4): a touch is only a BUMP (knockback, event 'bump', no life lost, no grace).
 // Only attacks take lives: a hunting ghost may use its claw strike (the `skill` question, brain.js); a patrolling
 // ghost (brain off) never strikes. Grace and the one-hit-per-tick latch apply to strikes.
+import { CallAborted } from '../../call-aborted.js';
 import { DIRS, SIGHT_RANGE, floorDistances, hasLineOfSight, isFloor, rng, startSight } from '../../dungeon.js';
 import {
   KEEP_HUNTING_MIN, MORALE_ON, ageHunt, applyDecision, applyMorale, decide, hunted, newHunt, lostSight, noteHit, noteStep, queueMorale, tabuReport, searchTick, seen, setKeepHuntingMin, setMemoryOn, setMoraleOn, sweepFrom, switchOff, switchOn, switchOnAlerted,
@@ -20,6 +21,8 @@ import { buildSkillSet } from '../../skills/loadouts.js';
 import { skillConfig } from '../../skills/config.js';
 import { ROUT_REST } from './morale.js';
 import { resolveAttack } from '../../skills/resolve.js';
+import { SkillSet } from '../../skills/skill-set.js';
+import { encodeSnapshot, decodeSnapshot } from '../shared/snapshot.js';
 
 export { brainView } from './brain.js';
 
@@ -107,7 +110,9 @@ export class Adversary {
   #hp; // hit points (D1) and their maximum; a hit knocks back and stuns, at 0 the ghost is dispelled
   #maxHp;
   #speed = 1; // the kind's speed multiplier of ADVERSARY_SPEED (accessor, never an own property)
-  #stun = 0; // ticks of stun left: no step, no Jev call
+  #stun = 0; // ticks of stun left: no step, no Jev call (mirror of the deadline below, and the only record without a game)
+  #stunUntil = null; // world ms (Game.now timeline) the stun lasts until (exclusive); null = none or gameless
+  #patrolRand = null; // the character's private patrol stream (seeded lazily)
 
   constructor({ id, pos, mode = 'patrol', budget = 0, lastSeen = null, goal = null, character, kind = 'ghost', level, hp, skills }) {
     const spec = kindOf(kind); // throws on an unknown kind; the kind supplies hp and skills unless given
@@ -138,6 +143,44 @@ export class Adversary {
     if (claw && built && levelsOn()) claw.damage = Math.max(1, Math.round(claw.damage * clawMult(this.#level)));
     this.#clawDamage = claw?.damage ?? stats.clawDamage;
     this.syncSkills();
+  }
+
+  serialize() {
+    return { v: 1, id: this.id, pos: [...this.pos], mode: this.mode, budget: this.budget,
+      lastSeen: encodeSnapshot(this.lastSeen), goal: encodeSnapshot(this.goal),
+      kind: this.#kind, character: this.#character, level: this.#level, clawDamage: this.#clawDamage,
+      speed: this.#speed, hp: this.#hp, maxHp: this.#maxHp, facing: this.#facing,
+      stun: this.#stun, stunUntil: this.#stunUntil, home: [...this.#home],
+      hunt: encodeSnapshot(this.#hunt), route: encodeSnapshot(this.#route),
+      lastRequestBody: this.#lastRequestBody, skills: this.#skills.serialize(),
+      patrolRandom: this.#patrolRand?.state() ?? null };
+  }
+
+  static restore(saved) {
+    if (saved?.v !== 1 || !saved.id) throw new TypeError('invalid adversary snapshot');
+    const a = new Adversary({ id: saved.id, pos: [...saved.pos], mode: saved.mode, budget: saved.budget,
+      lastSeen: decodeSnapshot(saved.lastSeen), goal: decodeSnapshot(saved.goal), character: saved.character,
+      kind: saved.kind, level: saved.level, hp: saved.hp, skills: SkillSet.restore(saved.skills) });
+    a.#clawDamage = saved.clawDamage;
+    a.#speed = saved.speed;
+    a.#maxHp = saved.maxHp;
+    a.#facing = saved.facing;
+    a.#stun = saved.stun;
+    a.#stunUntil = saved.stunUntil;
+    a.#home = [...saved.home];
+    a.#hunt = decodeSnapshot(saved.hunt);
+    a.#route = decodeSnapshot(saved.route);
+    a.#lastRequestBody = saved.lastRequestBody;
+    if (saved.patrolRandom !== null) {
+      a.#patrolRand = rng(0);
+      a.#patrolRand.restore(saved.patrolRandom);
+    }
+    return a;
+  }
+
+  patrolRandom(seed) {
+    this.#patrolRand ??= rng(seed);
+    return this.#patrolRand;
   }
 
   get level() {
@@ -178,10 +221,22 @@ export class Adversary {
   }
 
   // One tick of stun passes; true when the ghost was stunned this tick (it skips its step and its Jev call).
-  tickStun() {
+  // With a `game` the stun is a deadline on the world clock (WP-D): stunned while game.now() is before it.
+  tickStun(game = null) {
+    if (game && this.#stunUntil !== null) {
+      if (game.now() < this.#stunUntil) { if (this.#stun > 0) this.#stun--; return true; }
+      this.#stunUntil = null;
+      this.#stun = 0;
+      return false;
+    }
     if (this.#stun <= 0) return false;
     this.#stun--;
     return true;
+  }
+
+  // Stunned right now (a read; unlike tickStun it spends nothing).
+  stunnedAt(game) {
+    return this.#stunUntil !== null && game ? game.now() < this.#stunUntil : this.#stun > 0;
   }
 
   // A hit on this ghost from `fromPos` (the attacker's cell): lose hp, and unless that was the last hp get knocked
@@ -199,6 +254,7 @@ export class Adversary {
     const to = [this.pos[0] + step[0], this.pos[1] + step[1]];
     if (game && (step[0] || step[1]) && isFloor(game.dungeon, to) && !same(to, fromPos)) this.pos = to;
     this.#stun = stun;
+    this.#stunUntil = game ? game.now() + stun * game.rules.stepMs : null;
     this.budget = 0;
     this.#route = null; // patrol routes assume contiguous cells
     return { hp: this.#hp, dispelled: false, staggered: true };
@@ -380,9 +436,27 @@ function plainKnobsOf(a) {
 // areas: an adversary standing on an unlit (fogged) cell neither sees the explorer nor is seen by it,
 // so SIGHT_RANGE may exceed LIGHT_RADIUS without the explorer seeing into the dark. Within
 // LIGHT_RADIUS of the explorer every cell is lit, so the default range of 7 is unaffected.
-export function seesExplorer(game, adversary) {
-  return euclid(game.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
-    hasLineOfSight(game.dungeon, game.pos, adversary.pos);
+// `explorer` (an id or ExplorerState) tests that one explorer; without it, whichever active explorer the monster
+// would react to (the nearest it sees), so with one explorer nothing changes.
+export function seesExplorer(game, adversary, explorer = null) {
+  if (explorer === null) return seenExplorers(game, adversary).length > 0;
+  const e = game.explorer(explorer);
+  return e.status === 'active' && euclid(e.pos, adversary.pos) <= SIGHT_RANGE && game.isKnown(adversary.pos) &&
+    hasLineOfSight(game.dungeon, e.pos, adversary.pos);
+}
+
+function seenExplorers(game, adversary) {
+  return game.activeExplorers().filter((e) => seesExplorer(game, adversary, e))
+    .sort((x, y) => euclid(x.pos, adversary.pos) - euclid(y.pos, adversary.pos) || x.id.localeCompare(y.id));
+}
+
+function chosenExplorer(game, adversary) {
+  const id = adversary.hunt.targetId;
+  if (id) {
+    const e = game.explorers.find((x) => x.id === id && x.status === 'active');
+    if (e) return e;
+  }
+  return seenExplorers(game, adversary)[0] ?? game.targetExplorer(adversary.pos);
 }
 
 // Trigger for patrol/search -> chase. The user wrote "has a direct line of sight ... and is at
@@ -390,13 +464,15 @@ export function seesExplorer(game, adversary) {
 // change `<= CHASE_RANGE` to `>= CHASE_RANGE` on the line below. Note: seesExplorer already caps
 // distance at SIGHT_RANGE (7), so the flipped trigger only fires when SIGHT_RANGE is raised too.
 export function startsChase(game, adversary) {
-  return seesExplorer(game, adversary) && euclid(game.pos, adversary.pos) <= knobsOf(adversary).chaseRange;
+  return seenExplorers(game, adversary).some((e) => euclid(e.pos, adversary.pos) <= knobsOf(adversary).chaseRange);
 }
 
-export function visibleAdversaries(game) {
+// The adversaries one explorer (default: the primary) sees right now.
+export function visibleAdversaries(game, explorer = null) {
+  const e = game.explorer(explorer);
   return (game.adversaries ?? [])
-    .filter((a) => seesExplorer(game, a))
-    .map((a) => ({ id: a.id, pos: [...a.pos], mode: a.mode, distance: Math.round(euclid(game.pos, a.pos) * 10) / 10 }));
+    .filter((a) => seesExplorer(game, a, e))
+    .map((a) => ({ id: a.id, pos: [...a.pos], mode: a.mode, distance: Math.round(euclid(e.pos, a.pos) * 10) / 10 }));
 }
 
 // Route from `from` to `to` along a shortest floor path, excluding `from`.
@@ -414,13 +490,9 @@ function routeTo(dungeon, from, to) {
 }
 
 // Per-ghost patrol streams (adversaryCharacters on): one ghost's draws never shift another's.
-const patrolRands = new WeakMap();
 const hashId = (id) => [...id].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) | 0, 7);
 function patrolRandOf(game, a) {
-  let m = patrolRands.get(game);
-  if (!m) patrolRands.set(game, (m = new Map()));
-  if (!m.has(a.id)) m.set(a.id, rng((game.dungeon.seed ^ 0x85ebca6b ^ hashId(a.id)) >>> 0));
-  return m.get(a.id);
+  return a.patrolRandom((game.dungeon.seed ^ 0x85ebca6b ^ hashId(a.id)) >>> 0);
 }
 
 // Patrol pool of a non-standard ghost: rooms within homeRadius path steps of its spawn cell (and its
@@ -458,7 +530,11 @@ function pickPatrolGoal(game, a) {
 
 function turnOn(game, a, events, tick) {
   a.mode = 'chase';
-  a.lastSeen = [...game.pos];
+  const targets = seenExplorers(game, a);
+  a.hunt.targetId = targets[0]?.id ?? null;
+  a.hunt.visibleTargets = targets.map((e) => e.id);
+  a.hunt.sightings = new Map(targets.map((e) => [e.id, { cell: [...e.pos], tick }]));
+  a.lastSeen = [...chosenExplorer(game, a).pos];
   a.goal = null;
   a.route = null;
   events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
@@ -472,6 +548,7 @@ function turnOn(game, a, events, tick) {
 function alertNearby(game, spotter, events, tick) {
   if (!knobsOf(spotter).makesCalls) return; // a loner does not call (a shaken monster calls anyway: morale)
   const near = floorDistances(game.dungeon, spotter.pos);
+  const target = chosenExplorer(game, spotter).pos;
   let answered = false;
   for (const o of game.adversaries) {
     if (o === spotter || o.hunt.on) continue;
@@ -480,15 +557,18 @@ function alertNearby(game, spotter, events, tick) {
     if (d === undefined || d > hear.alertSteps) continue;
     if (!hear.answersCalls) {
       // A loner answers only when the explorer is already close to it.
-      const toExplorer = hear.answersWithin === null ? undefined : floorDistances(game.dungeon, o.pos).get(key(game.pos));
+      const toExplorer = hear.answersWithin === null ? undefined : floorDistances(game.dungeon, o.pos).get(key(target));
       if (toExplorer === undefined || toExplorer > hear.answersWithin) continue;
     }
     o.mode = 'search';
-    o.lastSeen = [...game.pos];
+    o.hunt.targetId = spotter.hunt.targetId;
+    o.hunt.visibleTargets = [];
+    o.hunt.sightings = new Map([[spotter.hunt.targetId, { cell: [...target], tick }]]);
+    o.lastSeen = [...target];
     o.goal = null;
     o.route = null;
-    switchOnAlerted(o, tick, game.pos, spotter.hunt.heading, spotter.id);
-    viewOf(game, o).hear(viewOf(game, spotter), game.pos, tick); // the call carries the spotter's nearby known cells
+    switchOnAlerted(o, tick, target, spotter.hunt.heading, spotter.id);
+    viewOf(game, o).hear(viewOf(game, spotter), target, tick); // the call carries the spotter's nearby known cells
     sweepFrom(viewOf(game, o), o);
     events.push({ id: o.id, type: 'alerted', at: [...o.pos], by: spotter.id });
     events.push({ id: o.id, type: 'brain_on', at: [...o.pos] });
@@ -501,6 +581,9 @@ function turnOff(a, events, tick, reason) {
   // A routed monster keeps away for ROUT_REST ticks whatever its character; a calm one rests its own time.
   a.hunt.restUntil = tick + (reason.startsWith('routed') ? Math.max(ROUT_REST, knobsOf(a).restTicks) : knobsOf(a).restTicks);
   a.mode = 'patrol';
+  a.hunt.targetId = null;
+  a.hunt.visibleTargets = [];
+  a.hunt.sightings = new Map();
   a.lastSeen = null;
   a.goal = null;
   a.route = null;
@@ -511,27 +594,41 @@ function turnOff(a, events, tick, reason) {
 // Team sight: a hunting adversary tracks the explorer while it sees it itself or any other hunting
 // adversary does (they call out its position), so the pack closes in together instead of one
 // ghost losing it behind a corner.
-function tracksExplorer(game, a) {
-  return seesExplorer(game, a) || (knobsOf(a).teamSight && game.adversaries.some((o) => o !== a && o.hunt.on && seesExplorer(game, o)));
+function trackedExplorers(game, a) {
+  const seen = seenExplorers(game, a);
+  if (!knobsOf(a).teamSight) return seen;
+  const byId = new Map(seen.map((e) => [e.id, e]));
+  for (const o of game.adversaries) if (o !== a && o.hunt.on)
+    for (const e of seenExplorers(game, o)) byId.set(e.id, e);
+  return [...byId.values()].sort((x, y) => euclid(x.pos, a.pos) - euclid(y.pos, a.pos) || x.id.localeCompare(y.id));
 }
 
 // Sight while the brain is on: chase while it (or a packmate) sees the explorer, search otherwise.
 function senseHunting(game, a, events, tick, startOfTick) {
-  if (tracksExplorer(game, a)) {
+  const tracked = trackedExplorers(game, a);
+  if (tracked.length) {
     if (a.mode !== 'chase') {
       a.mode = 'chase';
       events.push({ id: a.id, type: 'spotted', at: [...a.pos] });
     }
-    a.lastSeen = [...game.pos];
-    const own = seesExplorer(game, a);
+    const h = a.hunt;
+    h.visibleTargets = tracked.map((e) => e.id);
+    h.sightings ??= new Map();
+    for (const e of tracked) h.sightings.set(e.id, { cell: [...e.pos], tick });
+    for (const [id, sighting] of h.sightings) if (tick - sighting.tick > 30) h.sightings.delete(id);
+    if (!tracked.some((e) => e.id === h.targetId)) h.targetId = tracked[0].id;
+    const where = chosenExplorer(game, a).pos;
+    a.lastSeen = [...where];
+    const own = seesExplorer(game, a, h.targetId);
     // Team sight: a packmate that sees the explorer calls out where it is, and its nearby known cells come with the call.
     if (!own && limitedActive()) {
-      const caller = [...game.adversaries].sort(byId).find((o) => o !== a && o.hunt.on && seesExplorer(game, o));
-      if (caller) viewOf(game, a).hear(viewOf(game, caller), game.pos, tick);
+      const caller = [...game.adversaries].sort(byId).find((o) => o !== a && o.hunt.on && seesExplorer(game, o, h.targetId));
+      if (caller) viewOf(game, a).hear(viewOf(game, caller), where, tick);
     }
     seen(viewOf(game, a), a, tick, { startOfTick, own });
     return true;
   }
+  a.hunt.visibleTargets = [];
   if (a.mode === 'chase') {
     a.mode = 'search';
     lostSight(viewOf(game, a), a, tick);
@@ -582,8 +679,9 @@ function supportFor(game, a) {
 // Is the explorer boxed in right next to this monster? Only ever asked while it is in sight, so it is
 // something the monster can actually see.
 function corneredNow(game, a) {
-  if (!a.hunt.inSight || euclid(a.pos, game.pos) > 2) return false;
-  const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [game.pos[0] + dx, game.pos[1] + dy])).length;
+  const at = chosenExplorer(game, a).pos;
+  if (!a.hunt.inSight || euclid(a.pos, at) > 2) return false;
+  const ways = Object.values(DIRS).filter(([dx, dy]) => isFloor(game.dungeon, [at[0] + dx, at[1] + dy])).length;
   return ways <= 2;
 }
 
@@ -641,7 +739,7 @@ function patrolStep(game, a) {
 // to the last-seen cell, else to the nearest unchecked cell around it. Returns a direction or null.
 function codeHuntDir(game, a) {
   const h = a.hunt;
-  let target = h.inSight ? game.pos : a.lastSeen;
+  let target = h.inSight ? chosenExplorer(game, a).pos : a.lastSeen;
   if (target && same(target, a.pos)) target = approachTarget(viewOf(game, a), a, h, 'sweep_last_seen')?.cell ?? null;
   if (!target) return null;
   if (limitedActive()) {
@@ -666,16 +764,16 @@ function codeHuntDir(game, a) {
 // stepped in from) when given, else the first floor neighbour in DIRS order that is not the
 // explorer's cell, preferring one that is not the cell the explorer just came from. Stays put
 // only when boxed in. No rng, so seeds stay reproducible.
-function knockBack(game, a, from = null) {
+function knockBack(game, a, from = null, ex = game.targetExplorer(a.pos)) {
   a.route = null; // patrol routes assume contiguous cells
   // The budget is kept on purpose: a bump must not cost the ghost its next act, or a ghost bumped every tick
   // (explorer pushing it down a corridor) would never strike. Only a sword hit stuns (Adversary.takeHit).
-  if (from && isFloor(game.dungeon, from) && !same(from, game.pos)) {
+  if (from && isFloor(game.dungeon, from) && !same(from, ex.pos)) {
     a.pos = [...from];
     return;
   }
-  const prev = game.trail?.length > 1 ? game.trail.at(-2) : null;
-  const options = neighbours(game.dungeon, a.pos).filter((c) => !same(c, game.pos));
+  const prev = ex.trail?.length > 1 ? ex.trail.at(-2) : null;
+  const options = neighbours(game.dungeon, a.pos).filter((c) => !same(c, ex.pos) && !game.explorerAt(c));
   const pick = options.find((c) => !prev || !same(c, prev)) ?? options[0];
   if (pick) a.pos = pick;
 }
@@ -684,9 +782,11 @@ function knockBack(game, a, from = null) {
 // knocked back (event 'bump'), with no life lost and no grace started, so no adversary ever ends a tick on a
 // living explorer. Only a claw strike (strikeWith) takes lives.
 function bumpCheck(game, a, events, from = null) {
-  if (game.lost || !same(a.pos, game.pos)) return;
+  if (game.lost) return;
+  const ex = game.explorerAt(a.pos); // any explorer: a touch only bumps
+  if (!ex) return;
   events.push({ id: a.id, type: 'bump', at: [...a.pos] });
-  knockBack(game, a, from);
+  knockBack(game, a, from, ex);
 }
 
 // The direction of the single step from `from` to `to`, or null (no step).
@@ -700,10 +800,10 @@ function strikeWith(game, a, key, latch) {
   if (!picked || !picked.skill.ready || picked.skill.kind !== 'attack') return { events: [], used: null, lost: false };
   a.facing = picked.target.dir;
   const events = resolveAttack(game, a, picked.target.cells, picked.skill.damage, {
-    canHit: () => latch.canHit(),
-    onHit: () => {
-      latch.hit = true;
-      game.graceTicks = GRACE_TICKS;
+    canHit: (e) => latch.canHit(e),
+    onHit: (e) => {
+      latch.markHit(e);
+      game.setGrace(e, GRACE_TICKS);
       noteHit(a, game.adversaryTicks);
     },
   });
@@ -717,12 +817,22 @@ function strikeWith(game, a, key, latch) {
 
 // Grace ticks left after the latest hit (0 = the explorer can be hit). Fog-safe: it is the
 // explorer's own state.
-export function graceLeft(game) {
-  return game.graceTicks;
+export function graceLeft(game, explorer = null) {
+  return game.graceLeftSteps(explorer);
 }
 
 // Lives one claw strike of this ghost takes (the rules text tells Jev).
 const clawDamage = (a) => a.skills.skills.find((k) => k.kind === 'attack')?.damage ?? 1;
+
+// The tick's hit gate: one hit per explorer per tick, none while `open(explorer)` is false (grace).
+function hitLatch(game, open) {
+  const hurt = new Set();
+  return {
+    get hit() { return hurt.size > 0; },
+    canHit(e = game.explorers[0]) { return !hurt.has(e.id) && open(e); },
+    markHit(e) { hurt.add(e.id); },
+  };
+}
 
 const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 
@@ -735,14 +845,45 @@ const byId = (p, q) => p.id.localeCompare(q.id, 'en', { numeric: true });
 // and ends the tick at once.
 // -> { events, turns: [{ id, dir, decision|null, keep_hunting, brain: 'on'|'off', apiMs, skill_decision: null|{ choice, probabilities, used: key|null }, stunned?, error? }] }
 export async function stepAdversaries(game, { decide: ask = null } = {}) {
+  const { ctx, thinkers } = beginAdversaryTick(game);
+  if (ctx.over) return { events: ctx.events, turns: ctx.turns };
+  try {
+    // Requests are built synchronously, in id order, inside decideAdversary (the option shuffle uses Math.random).
+    const results = new Map(await Promise.all(thinkers.map(async (a) => [a, await decideAdversary(game, a, ctx, { decide: ask })])));
+    for (const a of ctx.order) {
+      if (applyAdversaryResult(game, a, ctx, results.get(a)).lost) break;
+    }
+  } finally {
+    game.inTick = false; // the next time is the explorer phase of the next turn
+  }
+  return { events: ctx.events, turns: ctx.turns };
+}
+
+// An aborted decideAdversary(): the signal fired before or while its Jev call was in flight.
+export { CallAborted }; // src/call-aborted.js: one CallAborted class for the whole program
+
+const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
+// How long a monster takes per step, in ms of world time: stepMs / speed. The hosted runtime schedules a monster's
+// next movement that far after its previous one (never sooner than cadenceMs). `Run` keeps the budget path (speed per tick).
+export const moveIntervalMs = (game, a) => game.rules.stepMs / speedOf(a);
+const cfgFor = (a) => ({ speed: speedOf(a), maxSearchTicks: knobsOf(a).maxSearchTicks, graceTicks: GRACE_TICKS, hitDamage: clawDamage(a), characters: CHARACTERS_ON, limited: limitedActive() });
+
+// The synchronous front of a world tick: grace, stun, bumps, the tick counter, views, sensing, morale, budgets.
+// -> { ctx, thinkers }: `ctx` is the tick's context (events and turns so far, the grace read, the one-hit latch,
+// the id order, who is stunned, the tick number; `ctx.over` is true when the game had ended and nothing ran) and
+// `thinkers` the ghosts that act this tick with the brain on (they ask Jev, all from this same snapshot).
+export function beginAdversaryTick(game) {
   const events = [];
   const turns = [];
-  if (game.won || game.lost) return { events, turns };
-  const protectedNow = graceLeft(game) > 0;
-  if (protectedNow) game.graceTicks--;
-  const hit = { hit: false, canHit() { return !protectedNow && !this.hit; } };
+  if (game.won || game.lost) return { ctx: { over: true, events, turns, order: [] }, thinkers: [] };
+  // Grace is read once per explorer at the start of the tick, then counted down; a latch allows one hit per explorer per tick.
+  // The clock owns grace now (WP-D): a deadline, nothing to count down.
+  game.inTick = true;
+  game.tickAt = game.managed ? game.clock : (game.adversaryTicks + 1) * game.rules.stepMs;
+  const protectedNow = new Set(game.explorers.filter((e) => game.graceActive(e, game.tickAt)).map((e) => e.id));
+  const hit = hitLatch(game, (e) => !protectedNow.has(e.id));
   const order = [...game.adversaries].sort(byId);
-  const stunned = new Set(order.filter((a) => a.tickStun()));
+  const stunned = new Set(order.filter((a) => a.tickStun(game)));
   for (const a of order) bumpCheck(game, a, events);
   const tick = game.adversaryTicks + 1;
   game.adversaryTicks = tick;
@@ -751,85 +892,152 @@ export async function stepAdversaries(game, { decide: ask = null } = {}) {
   for (const a of order) viewOf(game, a).update(tick); // limited maps: stamp what each ghost sees, in id order, before anyone senses
   for (const a of order) senseStart(game, a, events, tick);
   moralePhase(game, order, stunned, events, tick);
-  const speedOf = (a) => ['wolf', 'tree_giant'].includes(a.kind) ? a.speed : ADVERSARY_SPEED * a.speed;
   for (const a of order) if (!stunned.has(a)) a.budget += speedOf(a); // a stunned ghost gains no budget
+  const thinkers = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
+  return { ctx: { over: false, events, turns, order, stunned, tick, hit, cfgOf: cfgFor }, thinkers };
+}
 
-  const cfg = { speed: ADVERSARY_SPEED, maxSearchTicks: MAX_SEARCH_TICKS, graceTicks: GRACE_TICKS };
-  const thinking = order.filter((a) => !stunned.has(a) && a.budget >= 1 && a.hunt.on);
-  const cfgOf = (a) => ({ ...cfg, speed: speedOf(a), hitDamage: clawDamage(a), maxSearchTicks: knobsOf(a).maxSearchTicks, characters: CHARACTERS_ON, limited: limitedActive() });
-  const results = new Map(await Promise.all(thinking.map(async (a) => [a, await decide(viewOf(game, a), a, tick, cfgOf(a), ask)])));
+// One ghost's Jev decision (async). The request body is built synchronously, before the first await, so ghosts
+// started in id order build theirs in id order. `decide` replaces the Jev call (null = the real one). Never throws
+// on a failed call (-> { error }); an aborted `signal` rejects with CallAborted. Does not touch the Game.
+export function decideAdversary(game, a, ctx, { decide: ask = null, signal = null } = {}) {
+  if (signal?.aborted) return Promise.reject(new CallAborted());
+  const p = decide(viewOf(game, a), a, ctx.tick, ctx.cfgOf(a), ask, signal);
+  if (!signal) return p;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new CallAborted());
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then((r) => { signal.removeEventListener('abort', onAbort); resolve(r); }, (e) => { signal.removeEventListener('abort', onAbort); reject(e); });
+  });
+}
 
-  for (const a of order) {
-    const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null, tabu: null };
-    turns.push(turn);
-    if (stunned.has(a)) {
-      turn.stunned = true;
+// The core of one acting ghost: skill (claw strike) -> step -> bump check -> keep_hunting -> sensing. Shared by the
+// tick (stepAdversaries) and the single-monster turn. `res` is the decide() result (undefined = brain off: patrol).
+// Returns true when a strike took the last life (the caller stops there).
+function actOne(game, a, ctx, res, turn) {
+  const { events, tick, hit } = ctx;
+  const from = [...a.pos];
+  if (res?.skill && res.skill !== 'none') {
+    const strike = strikeWith(game, a, res.skill, hit);
+    events.push(...strike.events);
+    if (res.skill_decision) res.skill_decision.used = strike.used;
+    if (strike.lost) {
+      turn.skill_decision = res.skill_decision;
       turn.brain = a.hunt.on ? 'on' : 'off';
       a.syncSkills();
-      continue;
+      return true;
     }
-    if (a.budget >= 1) {
-      // Resolve attacks once per tick; fast monsters spend extra budget on movement below.
-      a.budget -= 1;
-      const res = results.get(a);
-      const from = [...a.pos];
-      if (res?.skill && res.skill !== 'none') {
-        const strike = strikeWith(game, a, res.skill, hit);
-        events.push(...strike.events);
-        if (res.skill_decision) res.skill_decision.used = strike.used;
-        if (strike.lost) {
-          turn.skill_decision = res.skill_decision;
-          turn.brain = a.hunt.on ? 'on' : 'off';
-          a.syncSkills();
-          return { events, turns };
-        }
-      }
-      if (res) {
-        let dir = res.dir;
-        if (res.error) {
-          console.warn(`[adversary ${a.id}] Jev call failed, code move instead: ${res.error}`);
-          dir = codeHuntDir(game, a);
-          turn.error = res.error;
-        }
-        applyDecision(a, tick, { ...res, dir }, { fallback: Boolean(res.error) });
-        if (dir) {
-          a.pos = stepCell(a.pos, dir);
-          a.facing = dir;
-          noteStep(a, from, dir, tick);
-        }
-        Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs, skill_decision: res.skill_decision });
-      } else {
-        patrolStep(game, a); // brain off: code policy, never a strike
-        turn.dir = dirBetween(from, a.pos);
-        if (turn.dir) a.facing = turn.dir;
-      }
-      bumpCheck(game, a, events, from);
-      a.skills.turnPassed();
-      if (res && res.keep_hunting !== null && res.keep_hunting < knobsOf(a).keepHuntingMin && a.hunt.on) {
-        turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
-      }
-      senseAfterStep(game, a, events, tick);
-      turn.tabu = tabuReport(a, tick); // before the extra steps below: they only extend the same direction
-      // Continue the chosen direction without another decision or attack. Check every cell
-      // so fast movement cannot cross walls or skip bumps and sightings.
-      while (a.budget >= 1) {
-        a.budget -= 1;
-        const extraFrom = [...a.pos];
-        if (res) {
-          if (!turn.dir || !viewOf(game, a).legalMoves().includes(turn.dir)) continue;
-          a.pos = stepCell(a.pos, turn.dir);
-          noteStep(a, extraFrom, turn.dir, tick);
-        } else {
-          patrolStep(game, a);
-          const dir = dirBetween(extraFrom, a.pos);
-          if (dir) a.facing = dir;
-        }
-        bumpCheck(game, a, events, extraFrom);
-        senseAfterStep(game, a, events, tick);
-      }
-    }
-    a.syncSkills();
-    turn.brain = a.hunt.on ? 'on' : 'off';
   }
-  return { events, turns };
+  if (res) {
+    let dir = res.dir;
+    if (res.error) {
+      console.warn(`[adversary ${a.id}] Jev call failed, code move instead: ${res.error}`);
+      dir = codeHuntDir(game, a);
+      turn.error = res.error;
+    }
+    applyDecision(a, tick, { ...res, dir }, { fallback: Boolean(res.error) });
+    if (dir) {
+      a.pos = stepCell(a.pos, dir);
+      a.facing = dir;
+      noteStep(a, from, dir, tick);
+    }
+    Object.assign(turn, { dir, decision: res.decision, keep_hunting: res.keep_hunting, apiMs: res.apiMs, skill_decision: res.skill_decision });
+  } else {
+    patrolStep(game, a); // brain off: code policy, never a strike
+    turn.dir = dirBetween(from, a.pos);
+    if (turn.dir) a.facing = turn.dir;
+  }
+  bumpCheck(game, a, events, from);
+  a.skills.turnPassed();
+  if (res && res.keep_hunting !== null && res.keep_hunting < knobsOf(a).keepHuntingMin && a.hunt.on) {
+    turnOff(a, events, tick, `Jev judged the hunt not worth it (keep_hunting ${res.keep_hunting.toFixed(2)})`);
+  }
+  senseAfterStep(game, a, events, tick);
+  turn.tabu = tabuReport(a, tick); // before the extra steps of a tick: they only extend the same direction
+  return false;
+}
+
+// The synchronous back of a tick for one ghost, in id order: the turn record, then (when its budget allows) the
+// skill, the step, the bump check, and the extra steps a fast monster spends its budget on. `result` is
+// decideAdversary()'s answer (undefined for a ghost that did not think). -> { turn, lost }: `lost` means a strike
+// took the last life and the tick ends (the caller applies no further ghost).
+export function applyAdversaryResult(game, a, ctx, result) {
+  const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: 'off', apiMs: 0, skill_decision: null, tabu: null };
+  ctx.turns.push(turn);
+  if (ctx.stunned.has(a)) {
+    turn.stunned = true;
+    turn.brain = a.hunt.on ? 'on' : 'off';
+    a.syncSkills();
+    return { turn, lost: false };
+  }
+  if (a.budget >= 1) {
+    // Resolve attacks once per tick; fast monsters spend extra budget on movement below.
+    a.budget -= 1;
+    const res = result;
+    if (actOne(game, a, ctx, res, turn)) return { turn, lost: true };
+    const { events, tick } = ctx;
+    // Continue the chosen direction without another decision or attack. Check every cell
+    // so fast movement cannot cross walls or skip bumps and sightings.
+    while (a.budget >= 1) {
+      a.budget -= 1;
+      const extraFrom = [...a.pos];
+      if (res) {
+        if (!turn.dir || !viewOf(game, a).legalMoves().includes(turn.dir)) continue;
+        a.pos = stepCell(a.pos, turn.dir);
+        noteStep(a, extraFrom, turn.dir, tick);
+      } else {
+        patrolStep(game, a);
+        const dir = dirBetween(extraFrom, a.pos);
+        if (dir) a.facing = dir;
+      }
+      bumpCheck(game, a, events, extraFrom);
+      senseAfterStep(game, a, events, tick);
+    }
+  }
+  a.syncSkills();
+  turn.brain = a.hunt.on ? 'on' : 'off';
+  return { turn, lost: false };
+}
+
+// ---- One monster at a time (the hosted runtime, where every monster has its own schedule) ----
+// monsterTurnStart is the synchronous front of one monster's turn: stun, bump, ageing, view, sensing and morale for
+// this monster alone. -> null when it does not act (game over, not in the game, stunned: that costs it the stun
+// tick), else `start`, the context decideAdversary() and monsterTurnApply() take. `now` is the tick number the
+// monster's memory is stamped with (default: the game's adversary tick counter, which only stepAdversaries moves).
+// Grace is NOT counted down here (the world clock owns it); the claw reads it at apply time.
+export function monsterTurnStart(game, a, { now = null } = {}) {
+  if (game.won || game.lost || !game.adversaries.includes(a)) return null;
+  const events = [];
+  if (a.tickStun(game)) return null;
+  bumpCheck(game, a, events);
+  const tick = Number.isFinite(now) ? now : game.monsterTick();
+  ageHunt(a, tick);
+  viewOf(game, a).update(tick);
+  senseStart(game, a, events, tick);
+  moralePhase(game, [a], new Set(), events, tick);
+  const hit = hitLatch(game, (e) => !game.graceActive(e)); // grace is read when the claw lands
+  return { over: false, events, turns: [], order: [a], stunned: new Set(), tick, hit, cfgOf: cfgFor, thinks: a.hunt.on, from: [...a.pos] };
+}
+
+// The synchronous back of one monster's turn, validated against the CURRENT state: a monster that was dispelled or
+// stunned since the start does nothing; a monster that was moved (knockback) since the start skips its claw (its
+// cells are stale), and a step that is no longer legal is dropped. A claw hits whoever stands in its cells now.
+// -> { turn, events, lost, stale? } with `events` the start's plus this turn's.
+export function monsterTurnApply(game, a, start, result) {
+  const stale = [];
+  const turn = { id: a.id, dir: null, decision: null, keep_hunting: null, brain: a.hunt.on ? 'on' : 'off', apiMs: 0, skill_decision: null, tabu: null };
+  const done = (lost = false) => ({ turn, events: start.events, lost, ...(stale.length ? { stale } : {}) });
+  if (game.won || game.lost) { stale.push('game over'); return done(); }
+  if (!game.adversaries.includes(a)) { stale.push('dispelled'); return done(); }
+  if (a.stunnedAt(game)) { stale.push('stunned'); return done(); }
+  let res = result ?? undefined;
+  if (res) {
+    res = { ...res };
+    if (res.skill && res.skill !== 'none' && (a.pos[0] !== start.from[0] || a.pos[1] !== start.from[1])) { stale.push('moved: claw cells are stale'); res.skill = 'none'; res.skill_decision && (res.skill_decision.used = null); }
+    if (res.dir && !res.error && !viewOf(game, a).legalMoves().includes(res.dir)) { stale.push('step no longer legal'); res.dir = null; }
+  }
+  const ctx = { ...start, turns: [turn] };
+  const lost = actOne(game, a, ctx, res, turn);
+  if (!lost) { a.syncSkills(); turn.brain = a.hunt.on ? 'on' : 'off'; }
+  return done(lost);
 }

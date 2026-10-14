@@ -46,13 +46,14 @@ if (LIVE) {
   process.loadEnvFile(new URL('../../.env', import.meta.url));
   if (!process.env.JEV_API_KEY) throw new Error('JEV_API_KEY is missing from .env');
   console.warn('!!! LIVE RUN: REAL JEV CALLS, THIS COSTS MONEY !!!');
-  console.warn(`!!! ${names.length} arena(s) x up to ${TICKS} ticks; each tick bills 1-2 explorer requests plus 1 per hunting adversary, each hedged x2. !!!`);
+  console.warn(`!!! ${names.length} arena(s) x up to ${TICKS} ticks; each tick bills 1-2 explorer requests plus 1 per hunting adversary. !!!`);
 } else {
   globalThis.fetch = () => { throw new Error('network call in a dry run'); }; // tripwire: a missed stub must not bill
 }
 const { newTestGame } = await import('../src/turn.js');
 const { seesExplorer } = await import('../src/characters/adversary/adversary.js');
-const { askJev } = await import('../src/jev.js');
+const { Gateway } = await import('../src/gateway/gateway.js');
+const gateway = new Gateway(); // --live only: the gateway's dev askers are the only paid path
 
 const first = (q) => Object.keys(q.criteria ?? {})[0];
 const stub = async ({ questions }) => Object.fromEntries(Object.entries(questions).map(([k, q]) =>
@@ -241,12 +242,13 @@ for (const name of names) {
   const config = JSON.parse(readFileSync(new URL(`${name}.json`, ARENAS), 'utf8'));
   const sizes = { 'explorer sentiment': [], 'explorer tick': [], adversary: [] };
   const record = (kind, body) => (sizes[kind] ??= []).push(Buffer.byteLength(body ?? '', 'utf8'));
-  const respond = LIVE ? ({ state, questions, body }) => askJev(state, questions, body) : stub;
+  const liveAsk = LIVE ? gateway.devAsker() : null;
+  const liveDecide = LIVE ? gateway.devDecider() : null;
   const ask = async (req) => {
     record(req.kind === 'sentiment' ? 'explorer sentiment' : 'explorer tick', req.body);
-    return respond(req);
+    return LIVE ? liveAsk(req) : stub(req);
   };
-  const decide = async (req) => { record('adversary', req.body); return respond(req); };
+  const decide = async (req) => { record('adversary', req.body); return LIVE ? liveDecide(req) : stub(req); };
   const run = newTestGame(config, { ask, decide, memoryDir: url, dir: url });
   const { game } = run;
   const chest = game.dungeon.treasure;

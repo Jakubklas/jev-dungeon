@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Jev Dungeon: renderer demo</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  body { display: flex; flex-direction: column; height: 100dvh; margin: 0; }
+  .demo-bar { padding: 8px 12px; font: 12px/1.4 var(--font); color: var(--ink); display: flex; gap: 16px; align-items: center; }
+  .demo-bar a, .demo-bar label { color: var(--ink); }
+  .demo-board { position: relative; flex: 1; min-height: 0; margin: 0 12px 12px; overflow: hidden; background: var(--void); border: 2px solid var(--line-hi); }
+</style>
+</head>
+<body>
+<!-- Dev harness for public/render.js: a normal game view from /api/state (or a free /api/new testbed arena) plus
+     synthetic explorers and a teammate-only ghost. No step is ever taken, so no Jev call is made. -->
+<div class="demo-bar">
+  <strong>render.js demo</strong>
+  <label><input id="reveal" type="checkbox"> Reveal map</label>
+  <label><input id="walk" type="checkbox" checked> Teammate walks</label>
+  <span id="info"></span>
+</div>
+<div class="demo-board" id="board-wrap">
+  <canvas id="board"></canvas>
+  <canvas id="minimap" class="minimap" aria-label="Minimap of known cells"></canvas>
+</div>
+<script type="module">
+import { createRenderer, ready } from './render.js';
+
+const $ = (id) => document.getElementById(id);
+const renderer = createRenderer($('board'), { wrap: $('board-wrap'), minimap: $('minimap'), reveal: () => $('reveal').checked });
+$('reveal').onchange = () => renderer.invalidateMinimap();
+
+async function loadView() {
+  let data = await (await fetch('api/state')).json();
+  if (!data.game) {
+    // POST /api/new only builds a game (free). A small lit arena with ghosts in sight shows everything at once.
+    const testbed = { size: '25x17', numAdversaries: 3, props: 'few', seed: 4, treasure: 'far', adversariesInSight: true };
+    const res = await fetch('api/new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ testbed }) });
+    data = await res.json();
+  }
+  return data.game;
+}
+
+const floorAt = (g, x, y) => g.tiles[y]?.[x] === '.';
+// Nearest floor cells around a point, ordered by distance (excluding the given cells).
+function floorsNear(g, [cx, cy], skip = []) {
+  const out = [];
+  for (let y = 0; y < g.height; y++) for (let x = 0; x < g.width; x++) {
+    if (!floorAt(g, x, y) || skip.some((s) => s[0] === x && s[1] === y)) continue;
+    out.push([x, y, Math.hypot(x - cx, y - cy)]);
+  }
+  return out.sort((a, b) => a[2] - b[2]).map(([x, y]) => [x, y]);
+}
+
+const game = await loadView();
+await ready;
+const me = game.pos;
+const near = floorsNear(game, me, [me]);
+const lit = near.filter(([x, y]) => game.light[y][x] > 0);
+const dark = near.filter(([x, y]) => game.light[y][x] === 0).reverse(); // farthest unlit floor first
+const mate = lit[3] ?? lit[0];
+const path = [mate, lit[4] ?? mate, lit[7] ?? mate, lit[4] ?? mate];
+const far = dark.find(([x, y]) => Math.abs(x - me[0]) + Math.abs(y - me[1]) < 24) ?? dark[0] ?? lit[10];
+const dead = lit[12] ?? lit[0];
+
+const view = {
+  ...game,
+  // The 3 ghosts of the arena: a1 is seen by me, a2 only by a teammate (team_visible), the rest as served.
+  adversaries: (game.adversaries ?? []).map((a, i) => ({ ...a, visible: i < 2 ? true : a.visible, team_visible: i === 1 })),
+  explorers: [
+    { id: 'p1', pos: me, facing: game.facing ?? 'right', slot: 0, name: 'Jev', status: 'active', self: true, health: 4, max_health: 4, invulnerable: false },
+    { id: 'p2', pos: mate, facing: 'left', slot: 1, name: 'Mira', status: 'active', self: false, health: 3, max_health: 4, invulnerable: false },
+    { id: 'p3', pos: far, facing: 'down', slot: 2, name: 'Oskar', status: 'active', self: false, health: 4, max_health: 4, invulnerable: false },
+    { id: 'p4', pos: dead, facing: 'right', slot: 3, name: 'Ghosted', status: 'dead', self: false, health: 0, max_health: 4, invulnerable: false },
+  ],
+};
+$('info').textContent = `self p1 at ${me}; p2 (blue) lit at ${mate}; p3 (green) on a dark cell at ${far} = outline marker; p4 dead = not drawn; a2 has team_visible`;
+renderer.setView(view, { reset: true });
+
+let k = 0;
+setInterval(() => {
+  if (!$('walk').checked) return;
+  k = (k + 1) % path.length;
+  const p2 = view.explorers[1];
+  p2.facing = path[k][0] > p2.pos[0] ? 'right' : path[k][0] < p2.pos[0] ? 'left' : p2.facing;
+  p2.pos = path[k];
+  renderer.setView({ ...view, explorers: view.explorers.map((e) => ({ ...e })) });
+}, 900);
+
+(function loop(now) {
+  requestAnimationFrame(loop);
+  renderer.frame(now);
+})(performance.now());
+window.demo = { renderer, view };
+</script>
+</body>
+</html>

@@ -81,6 +81,7 @@ export function crossProblems(values) {
   if (values.roomMax !== undefined && values.minSize !== undefined && values.roomMax + 2 > values.minSize) out.push('Largest room side must fit the smallest map (room side + 2 <= Min map side)');
   if (values.torchMin > values.torchMax) out.push('Fewest torches cannot be more than the most');
   if (values.clusterSizeMin > values.clusterSizeMax) out.push('Smallest cluster cannot be larger than the largest');
+  if (values.helpReachSteps <= values.alertSteps) out.push('explorer.helpReachSteps must be greater than monsters.pack.alertSteps (a teammate hears further than a monster pack)');
   if (values.injectMaxChars > values.limExplorer_directive) out.push('The directive length setting cannot exceed the directive memory limit (limits.explorer.directive)');
   if (values.limExplorer_recentCells < values.limExplorer_recentMoves + 2) out.push('limits.explorer.recentCells must be at least recentMoves + 2');
   const tmax = (k) => (Array.isArray(values[k]) ? Math.max(...values[k]) : 0);

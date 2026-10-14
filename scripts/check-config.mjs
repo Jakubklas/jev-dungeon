@@ -42,7 +42,8 @@ const { REQUEST_BYTES } = R;
 const JV = await import('../src/jev.js');
 const TX = await import('../src/config/texts.js');
 const TH = await import('../public/thoughts.js');
-const appSrc = readFileSync(fileURLToPath(new URL('../public/app.js', import.meta.url)), 'utf8');
+// the constants are split over the page (app.js) and the extracted renderer (render.js)
+const appSrc = ['app.js', 'render.js'].map((f) => readFileSync(fileURLToPath(new URL(`../public/${f}`, import.meta.url)), 'utf8')).join('\n');
 // The browser's timing constants, read from app.js itself: the registry default must be the literal the page falls back to.
 const UI_CONST = { camMs: 'CAM_MS', logMax: 'LOG_MAX', fadeMs: 'FADE_MS', tweenMs: 'TWEEN_MS', bobMs: 'BOB_MS', animMs: 'ANIM_MS', walkMs: 'WALK_MS', strikeMs: 'STRIKE_MS', slashMs: 'SLASH_MS', fireMs: 'FIRE_MS', fireCallMs: 'FIRE_CALL_MS', revealAlpha: 'REVEAL_ALPHA', bubbleIn: 'BUBBLE_IN', bubbleOut: 'BUBBLE_OUT', blinkMs: 'BLINK_MS', coinGlowMs: 'COIN_GLOW_MS' };
 const uiLiteral = (name) => { const m = new RegExp(`\\b${name} = (\\.?[0-9][0-9._]*)`).exec(appSrc); return m ? Number(m[1].replace(/_/g, '')) : undefined; };
@@ -112,7 +113,9 @@ for (const k of R.KNOBS) {
 
 // 1b. P1: each file-only knob's default equals the literal its module holds before any config is applied
 const LIT = {
-  regenSteps: D.REGEN_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN,
+  roomCapacity: (await import('../src/service/lobby.js')).DEFAULTS.capacity,
+  keyRetryMs: (await import('../src/service/lobby.js')).DEFAULTS.keyRetryMs,
+  regenSteps: D.REGEN_STEPS, helpReachSteps: D.HELP_REACH_STEPS, regenAmount: D.REGEN_AMOUNT, heartRespawn: D.HEART_RESPAWN, stepMs: D.STEP_MS, cadenceMs: D.CADENCE_MS,
   roomMin: D.ROOM_MIN, roomMax: D.ROOM_MAX, minRooms: D.MIN_ROOMS, loopShare: D.LOOP_SHARE, loopMin: D.LOOP_MIN, treasureShare: D.TREASURE_SHARE,
   layout: D.LAYOUT,
   torchMin: CAT.TORCH_MIN, torchMax: CAT.TORCH_MAX, torchGap: CAT.TORCH_GAP, corridorTorchPerRoom: CAT.CORRIDOR_TORCH_PER_ROOM, corridorTorchGap: CAT.CORRIDOR_TORCH_GAP,
@@ -374,6 +377,8 @@ await S.applyNextGame();
 check(EM.LIMITS.events === 9 && EM.LIMITS.directive === 200 && AM.LIMITS.events === 7 && AT.attackSnapshot().limSkillFact === 100 && C.PRIORITY_MAX === 120, 'limits follow the file from the next game');
 const crossLim = L.crossProblems({ ...L.defaults(), limExplorer_directive: 100 });
 check(crossLim.some((w) => w.includes('directive')), 'a directive limit below the directive length setting is refused');
+check(L.crossProblems({ ...L.defaults() }).length === 0 && L.defaults().helpReachSteps === 48 && L.defaults().helpReachSteps > L.defaults().alertSteps, 'helpReachSteps defaults to 48, above the pack alert reach');
+check(L.crossProblems({ ...L.defaults(), helpReachSteps: 24 }).some((w) => w.includes('helpReachSteps')), 'helpReachSteps not above alertSteps is refused');
 check(L.crossProblems({ ...L.defaults(), limMonster_moves: 4 }).some((w) => w.includes('recent-moves')), 'a monster memory limit below a character trait level is refused');
 check(L.crossProblems({ ...L.defaults(), limExplorer_recentCells: 7 }).some((w) => w.includes('recentCells')), 'recentCells below recentMoves + 2 is refused');
 writeFileSync(cfg, 'explorer: { lives: 2 }\n');
@@ -451,7 +456,7 @@ writeFileSync(cfg, 'explorer: { lives: 2 }\n');
 await new Promise((r) => setTimeout(r, 20));
 await S.refresh();
 const back = JV.jevSnapshot();
-check(back.jevHedgeCopies === 2 && back.jevModel === 'jev-latest' && eq(back.jevRetryStatus, [429, 502, 503, 504, 529]) && Object.keys(S.uiView().thoughts.troll).length === 0 && S.uiView().constants.walkMs === 620, 'removing the keys restores the Jev client and the browser defaults');
+check(back.jevHedgeCopies === 1 && back.jevModel === 'jev-latest' && eq(back.jevRetryStatus, [429, 502, 503, 504, 529]) && Object.keys(S.uiView().thoughts.troll).length === 0 && S.uiView().constants.walkMs === 620, 'removing the keys restores the Jev client and the browser defaults');
 
 // Decision provider switching and removal use the same live config hooks as Jev.
 writeFileSync(cfg, 'decision: { provider: laya, laya: { endpoint: "http://localhost:8100/v1/systemone", model: local-test, maxLen: 4096, headMaxLen: 2048, timeoutMs: 180000 } }\n');

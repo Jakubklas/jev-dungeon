@@ -17,6 +17,7 @@
 //              move question per tactic (`move_if_<tactic>`, judged with that tactic's move facts).
 //              The move taken is the answer for the tactic Jev chose, so this tick's move already
 //              follows the new tactic. With a single feasible tactic code takes it (no Choice).
+import { CallAborted } from '../../call-aborted.js';
 import { EXPLORER_LIVES, SIGHT_RANGE, STAY } from '../../dungeon.js';
 import {
   APPROACHES, TACTICS, approachTarget, availableApproaches, avoidZone, describeMoveParts, exitSeen, heartTarget, isTactic, leaveFacts, nearbyPiles, situation, tacticFeasibility,
@@ -27,13 +28,15 @@ import { cornerFacts, holdGhost, knownLineOfSight, matchup, remarkLine, speedPhr
 import { buildSkillSet, skillConfig } from '../../skills/loadouts.js';
 import { pickSkill, skillQuestion } from '../../skills/question.js';
 import {
-  LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach,
+  LIMITS, addEvent, addLandmark, backAndForth, changeApproach, countEncounter, createMemory, interruptApproach, recordStep, replaceInterrupted, resumeApproach, saveMemory, setSentiment, setSkills, switchApproach, snapshotRevisitWindow, restoreRevisitWindow,
 } from './memory.js';
 import { GRACE_TICKS } from '../adversary/adversary.js';
 import {
   allowedMoods, defaultMood, panicNext, retreatTier, tierOf, tierOfMood, apply as applyConfidence, band as confidenceBand, capability, closeEncounter, combine, createConfidence, seeChase, sightWeight,
 } from './confidence.js';
-import { askJev, shuffle, jevModel } from '../../jev.js';
+import { shuffle, jevModel } from '../../jev.js';
+import { SkillSet } from '../../skills/skill-set.js';
+import { encodeSnapshot, decodeSnapshot } from '../shared/snapshot.js';
 import { add as tabuAdd, age as tabuAge, clearStrikes, createTabu, endEncounter as tabuEndEncounter, entryOf, filterOptions, isTabu, snapshot as tabuSnapshot, strike as tabuStrike } from '../shared/tabu.js';
 
 let REVIEW_EVERY = 8; // steps between approach reviews
@@ -76,8 +79,12 @@ const NEVER_TABU = ['race_to_exit']; // the win is never ruled out
 const RETREATS = ['run_away', 'hide'];
 const MEMORY_DIR = new URL('../../../', import.meta.url); // dungeon-game/ (trailing slash matters)
 
-// The real Jev call; a Run or a check passes `ask` to replace it.
-const askReal = ({ state, questions, body }) => askJev(state, questions, body);
+// An aborted decide(): thrown before any further Jev call, or when the signal fires while one is in flight.
+export { CallAborted }; // src/call-aborted.js: one CallAborted class for the whole program
+
+function sameCells(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((c, i) => c[0] === b[i][0] && c[1] === b[i][1]);
+}
 
 // Sentiment profiles. Each one changes behaviour in code, not just a label:
 //   min_gap    - the closest (in known-path steps) adversaries may come: decides which tactics are
@@ -205,7 +212,7 @@ const TACTIC_MOVE_HINT = {
 // A function, not a constant: speed, lives and grace come from the tunables in src/settings.js.
 // The objective is folded in, so nothing else repeats it.
 // combat: null (no attack skill) or { name, damage, cooldown, stun, coinChance, clawCooldown, shield } (the live skill and settings numbers; shield: the block chance, null without a block skill).
-const rules = (hasSkills = true, combat = null, directive = false) =>
+const rules = (hasSkills = true, combat = null, directive = false, teammates = false) =>
   'Goal: reach and step through the portal at the dungeon\'s end; only the portal wins. Advance: dispel enemies in your way, permanently removing obstacles and pursuers; slip past when fighting would prevent reaching it. Retreat to recover or reposition, then advance again. Score: coins held when you win. At 0 lives you lose, coins and all. ' +
   'A step is up, down, left, right or stay. Each visited cell lights its surroundings for good: lit cells are known; the rest, and the portal until lit, are not. ' +
   `Enemies chase an explorer they see, at ${speedPhrase()}. ` +
@@ -213,7 +220,8 @@ const rules = (hasSkills = true, combat = null, directive = false) =>
   '`threats.visible`: in sight now, with each health bar (`hp`); `threats.remembered`: seen earlier, frozen where last seen.' +
   (combat ? ` ${combatRule(combat)}` : '') +
   (hasSkills ? ' Besides moving you may use one skill (`self.skills`) per step.' : '') +
-  (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '');
+  (directive ? ' The player has given you an instruction in `directive`. Follow it above your own plan; it replaces your current objective for as many steps as it says.' : '') +
+  (teammates ? ' The explorers in `surroundings.teammates` are teammates on your side: they cannot hurt you, are not threats, and a cell one stands on is not a move.' : '');
 
 // What a dispel pays, for the tactic priority line: "may drop a coin" (the chance is never stated), nothing at 0.
 const engagePays = (p) => `dispelling it permanently removes an obstacle or pursuer on the way to the portal${p > 0 ? ' and may drop a coin' : ''}`;
@@ -266,6 +274,7 @@ export class ExplorerBrain {
   #world;
   #ask;
   #memoryDir;
+  #persistMemory = true;
   #memory;
   // { step, targetSteps }: when the approach was last reviewed (or started) and how far its target
   // was then, so a review can tell travelling toward a far target from wandering.
@@ -353,6 +362,9 @@ export class ExplorerBrain {
   // Engage hold (P7a): { cell, n, adj } = where the explorer waits, consecutive hold ticks there, ticks spent beside the ghost.
   #hold = { cell: null, n: 0, adj: 0 };
   #holdOn = true;
+  #signal = null; // decide()'s abort signal, read by #request
+  #ctx = null; // decide()'s private context for apply()
+  #seq = 0; // intent counter: apply() takes only the latest decide()'s intent
   #skillEvents = []; // this turn's useSkill events (struck, dispelled, strike), reset each takeTurn
   // Confidence model (PLAN-confidence C2, off by default): #cs is confidence.js's state (value, counts, the
   // encounter's flags); memory.progress.confidence mirrors { value, counts } only with the toggle on.
@@ -368,16 +380,19 @@ export class ExplorerBrain {
   #capFired = new Set();
   #visibleIds = new Set();
 
-  constructor(world, { ask = null, memoryDir = null, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
+  constructor(world, { ask = null, memoryDir = null, persistMemory = true, skills = 'explorer', hold = 'multi', confidence = false, progress = true } = {}) {
     this.#progressOn = progress !== false; // measurement arm (scripts/measure-progress.mjs): false = track progress but never redirect
     this.#wExtra = confidence && typeof confidence === 'object' ? confidence.wPerExtra : undefined; // arm object only: the measurement compares W_PER_EXTRA 0.35 and 0.5
     this.#fixedMood = confidence?.fixedMood === true;
     this.#holdOn = hold; // 'multi' (default) also holds against 2-3 enemies; true = one enemy only, false = no hold (the duel checks that prove what the hold buys, P7a)
     this.#skills = typeof skills === 'string' || Array.isArray(skills) ? buildSkillSet(skills) : skills;
     this.#world = world;
+    if (typeof world.timeNow === 'function') this.#skills.attachTime(() => world.timeNow(), world.stepMs); // cooldowns are deadlines on the explorer's world time (WP-D)
     this.#entry = [...world.pos];
-    this.#ask = ask ?? askReal;
+    if (typeof ask !== 'function') throw new Error('ask is required: build it with the gateway');
+    this.#ask = ask;
     this.#memoryDir = memoryDir ?? MEMORY_DIR;
+    this.#persistMemory = persistMemory;
     const memory = createMemory({
       approachId: 'nearest_frontier',
       approachText: APPROACHES.nearest_frontier.text,
@@ -394,6 +409,144 @@ export class ExplorerBrain {
     this.#cs = createConfidence(confidence && typeof confidence === 'object' ? confidence : {}); // an arm object = start / weights / model (checks and measurements)
     this.#syncConfidence();
     this.#csLast = this.#capState().C;
+  }
+
+  serialize() {
+    return { v: 1, id: this.#world.id, optionRandom: this.#world.optionRandomState(),
+      revisitWindow: snapshotRevisitWindow(this.#memory),
+      skills: this.#skills.serialize(), state: {
+        memory: encodeSnapshot(this.#memory),
+        review: encodeSnapshot(this.#review),
+        encounter: encodeSnapshot(this.#encounter),
+        coinKnown: encodeSnapshot(this.#coinKnown),
+        coinDue: encodeSnapshot(this.#coinDue),
+        coinStep: encodeSnapshot(this.#coinStep),
+        dirAskStep: encodeSnapshot(this.#dirAskStep),
+        leaveDue: encodeSnapshot(this.#leaveDue),
+        tacticGoal: encodeSnapshot(this.#tacticGoal),
+        approachGoal: encodeSnapshot(this.#approachGoal),
+        corner: encodeSnapshot(this.#corner),
+        route: encodeSnapshot(this.#route),
+        entry: encodeSnapshot(this.#entry),
+        entryDist: null, // derived known-map cache, rebuilt after restore
+        entryKey: '',
+        entryDistance: encodeSnapshot(this.#entryDistance),
+        furthestEntry: encodeSnapshot(this.#furthestEntry),
+        samples: encodeSnapshot(this.#samples),
+        retreatAt: encodeSnapshot(this.#retreatAt),
+        retreats: encodeSnapshot(this.#retreats),
+        forward: encodeSnapshot(this.#forward),
+        backtrack: encodeSnapshot(this.#backtrack),
+        progressOn: encodeSnapshot(this.#progressOn),
+        exclude: encodeSnapshot(this.#exclude),
+        bounceCells: encodeSnapshot(this.#bounceCells),
+        tabu: encodeSnapshot(this.#tabu),
+        track: encodeSnapshot(this.#track),
+        wins: encodeSnapshot(this.#wins),
+        winStep: encodeSnapshot(this.#winStep),
+        gapNow: encodeSnapshot(this.#gapNow),
+        tabuTick: encodeSnapshot(this.#tabuTick),
+        moodTrack: encodeSnapshot(this.#moodTrack),
+        moodTick: encodeSnapshot(this.#moodTick),
+        reviewMood: encodeSnapshot(this.#reviewMood),
+        cellRing: encodeSnapshot(this.#cellRing),
+        stayRun: encodeSnapshot(this.#stayRun),
+        moveTick: encodeSnapshot(this.#moveTick),
+        told: encodeSnapshot(this.#told),
+        seen: encodeSnapshot(this.#seen),
+        remark: encodeSnapshot(this.#remark),
+        remarkN: encodeSnapshot(this.#remarkN),
+        everSeen: encodeSnapshot(this.#everSeen),
+        remembered: encodeSnapshot(this.#remembered),
+        zone: encodeSnapshot(this.#zone),
+        lastBodies: encodeSnapshot(this.#lastBodies),
+        struck: encodeSnapshot(this.#struck),
+        hold: encodeSnapshot(this.#hold),
+        holdOn: encodeSnapshot(this.#holdOn),
+        ctx: encodeSnapshot(this.#ctx),
+        seq: encodeSnapshot(this.#seq),
+        skillEvents: encodeSnapshot(this.#skillEvents),
+        cs: encodeSnapshot(this.#cs),
+        csLast: encodeSnapshot(this.#csLast),
+        csWhy: encodeSnapshot(this.#csWhy),
+        fixedMood: encodeSnapshot(this.#fixedMood),
+        wExtra: encodeSnapshot(this.#wExtra),
+        capFired: encodeSnapshot(this.#capFired),
+        visibleIds: encodeSnapshot(this.#visibleIds),
+      } };
+  }
+
+  restore(saved) {
+    if (saved?.v !== 1 || saved.id !== this.#world.id) throw new TypeError('invalid explorer brain snapshot');
+    this.#memory = decodeSnapshot(saved.state.memory);
+    this.#review = decodeSnapshot(saved.state.review);
+    this.#encounter = decodeSnapshot(saved.state.encounter);
+    this.#coinKnown = decodeSnapshot(saved.state.coinKnown);
+    this.#coinDue = decodeSnapshot(saved.state.coinDue);
+    this.#coinStep = decodeSnapshot(saved.state.coinStep);
+    this.#dirAskStep = decodeSnapshot(saved.state.dirAskStep);
+    this.#leaveDue = decodeSnapshot(saved.state.leaveDue);
+    this.#tacticGoal = decodeSnapshot(saved.state.tacticGoal);
+    this.#approachGoal = decodeSnapshot(saved.state.approachGoal);
+    this.#corner = decodeSnapshot(saved.state.corner);
+    this.#route = decodeSnapshot(saved.state.route);
+    this.#entry = decodeSnapshot(saved.state.entry);
+    this.#entryDist = decodeSnapshot(saved.state.entryDist);
+    this.#entryKey = decodeSnapshot(saved.state.entryKey);
+    this.#entryDistance = decodeSnapshot(saved.state.entryDistance);
+    this.#furthestEntry = decodeSnapshot(saved.state.furthestEntry);
+    this.#samples = decodeSnapshot(saved.state.samples);
+    this.#retreatAt = decodeSnapshot(saved.state.retreatAt);
+    this.#retreats = decodeSnapshot(saved.state.retreats);
+    this.#forward = decodeSnapshot(saved.state.forward);
+    this.#backtrack = decodeSnapshot(saved.state.backtrack);
+    this.#progressOn = decodeSnapshot(saved.state.progressOn);
+    this.#exclude = decodeSnapshot(saved.state.exclude);
+    this.#bounceCells = decodeSnapshot(saved.state.bounceCells);
+    this.#tabu = decodeSnapshot(saved.state.tabu);
+    this.#track = decodeSnapshot(saved.state.track);
+    this.#wins = decodeSnapshot(saved.state.wins);
+    this.#winStep = decodeSnapshot(saved.state.winStep);
+    this.#gapNow = decodeSnapshot(saved.state.gapNow);
+    this.#tabuTick = decodeSnapshot(saved.state.tabuTick);
+    this.#moodTrack = decodeSnapshot(saved.state.moodTrack);
+    this.#moodTick = decodeSnapshot(saved.state.moodTick);
+    this.#reviewMood = decodeSnapshot(saved.state.reviewMood);
+    this.#cellRing = decodeSnapshot(saved.state.cellRing);
+    this.#stayRun = decodeSnapshot(saved.state.stayRun);
+    this.#moveTick = decodeSnapshot(saved.state.moveTick);
+    this.#told = decodeSnapshot(saved.state.told);
+    this.#seen = decodeSnapshot(saved.state.seen);
+    this.#remark = decodeSnapshot(saved.state.remark);
+    this.#remarkN = decodeSnapshot(saved.state.remarkN);
+    this.#everSeen = decodeSnapshot(saved.state.everSeen);
+    this.#remembered = decodeSnapshot(saved.state.remembered);
+    this.#zone = decodeSnapshot(saved.state.zone);
+    this.#lastBodies = decodeSnapshot(saved.state.lastBodies);
+    this.#struck = decodeSnapshot(saved.state.struck);
+    this.#hold = decodeSnapshot(saved.state.hold);
+    this.#holdOn = decodeSnapshot(saved.state.holdOn);
+    this.#ctx = decodeSnapshot(saved.state.ctx);
+    this.#seq = decodeSnapshot(saved.state.seq);
+    this.#skillEvents = decodeSnapshot(saved.state.skillEvents);
+    this.#cs = decodeSnapshot(saved.state.cs);
+    this.#csLast = decodeSnapshot(saved.state.csLast);
+    this.#csWhy = decodeSnapshot(saved.state.csWhy);
+    this.#fixedMood = decodeSnapshot(saved.state.fixedMood);
+    this.#wExtra = decodeSnapshot(saved.state.wExtra);
+    this.#capFired = decodeSnapshot(saved.state.capFired);
+    this.#visibleIds = decodeSnapshot(saved.state.visibleIds);
+    this.#skills = SkillSet.restore(saved.skills);
+    if (typeof this.#world.timeNow === 'function') this.#skills.attachTime(() => this.#world.timeNow(), this.#world.stepMs);
+    this.#world.restoreOptionRandom(saved.optionRandom);
+    restoreRevisitWindow(this.#memory, saved.revisitWindow);
+    this.#signal = null;
+    return this;
+  }
+
+  static restore(world, saved, { ask, memoryDir = null, persistMemory = true } = {}) {
+    const brain = new ExplorerBrain(world, { ask, memoryDir, persistMemory, skills: 'none' });
+    return brain.restore(saved);
   }
 
   // Applies one confidence event with the lives left now (own state: fog-safe) and mirrors the result into memory.
@@ -524,10 +677,12 @@ export class ExplorerBrain {
 
   // One Jev request. Keeps its exact body for lastRequest()/lastRequests().
   async #request(kind, state, questions) {
+    if (this.#signal?.aborted) throw new CallAborted();
     const body = JSON.stringify({ model: jevModel(), state, questions });
     this.#lastBodies.push(body);
     const started = performance.now();
-    const answers = await this.#ask({ kind, state, questions, body });
+    const answers = await this.#ask({ kind, state, questions, body, signal: this.#signal ?? undefined });
+    if (this.#signal?.aborted) throw new CallAborted();
     return { answers, ms: Math.round(performance.now() - started) };
   }
 
@@ -545,7 +700,7 @@ export class ExplorerBrain {
     // While a directive is live the approach is shown as parked (unless a tactic already parked it).
     const parked = live && !isTactic(a.id) ? { id: a.id, since_step: a.since_step, reason: 'player directive' } : null;
     return {
-      game: rules(this.#skills.size > 0, this.#combat(), Boolean(live)),
+      game: rules(this.#skills.size > 0, this.#combat(), Boolean(live), Boolean(sit.surroundings.teammates)),
       ...(live ? { directive: { text: live.text, steps_left: live.steps_left, from_step: live.from_step } } : {}),
       self: { ...sit.self, confidence: this.#confidenceWord(), ...(this.#skills.size ? { skills: skillStates(this.#skills.summaries()) } : {}), mind: { id: m.sentiment.id, since_step: m.sentiment.since_step, recent: mindRuns(m.sentiment_history) } },
       surroundings: this.#corner && (CORNER_MODE === 'ascii' || CORNER_MODE === 'full') && this.#corner.diagram?.length
@@ -819,7 +974,48 @@ export class ExplorerBrain {
     return target;
   }
 
+  // One turn: decide, apply, then the memory write. The legacy single-player driver (Run.playTurn) calls this;
+  // the hosted runtime calls decide() outside its mutation lock and apply() inside it.
   async takeTurn() {
+    const { intent } = await this.decide();
+    const turn = this.apply(intent);
+    await this.save();
+    return turn;
+  }
+
+  // Everything up to the world mutation: observation, triggers, Jev calls, answer parsing and the decision
+  // bookkeeping that does not depend on the move's result. It never writes to the Game (decide may await, apply
+  // may not). Returns { intent, pending }: `intent` is plain JSON (what apply needs), `pending` the private
+  // context apply picks up (also kept in a private field, so apply(intent) alone is enough). An aborted `signal`
+  // rejects with CallAborted before any further Jev call; a decide that rejects restores the few trigger fields it
+  // had already consumed, so the next decide starts clean.
+  async decide({ signal } = {}) {
+    if (signal?.aborted) throw new CallAborted();
+    const info = this.#encounter;
+    const saved = { pending: info.pending, lastDecision: info.lastDecision, leaveDue: this.#leaveDue, coinDue: this.#coinDue, coinStep: this.#coinStep, dirAskStep: this.#dirAskStep,
+      optionRandom: this.#world.optionRandomState() };
+    this.#signal = signal ?? null;
+    this.#ctx = null;
+    try {
+      const ctx = await this.#decideTurn();
+      this.#ctx = ctx;
+      return { intent: ctx.intent, pending: ctx };
+    } catch (e) {
+      info.pending = saved.pending;
+      info.lastDecision = saved.lastDecision;
+      this.#leaveDue = saved.leaveDue;
+      this.#coinDue = saved.coinDue;
+      this.#coinStep = saved.coinStep;
+      this.#dirAskStep = saved.dirAskStep;
+      this.#world.restoreOptionRandom(saved.optionRandom);
+      this.#ctx = null;
+      throw e;
+    } finally {
+      this.#signal = null;
+    }
+  }
+
+  async #decideTurn() {
     const world = this.#world;
     const memory = this.#memory;
     const info = this.#encounter;
@@ -995,7 +1191,7 @@ export class ExplorerBrain {
               'Engage while the sword is ready: hold 2 steps off the nearest enemy so it steps in and you strike first; the slower ones come later. Run away when cramped or without the sword.',
             ],
         },
-        criteria: Object.fromEntries(shuffle(tacticIds).map((id) => [id, decision.tactic.options[id]])),
+        criteria: Object.fromEntries(shuffle(tacticIds, () => this.#world.optionRandom()).map((id) => [id, decision.tactic.options[id]])),
       };
       if (!skip) {
         for (const id of tacticIds) {
@@ -1137,20 +1333,74 @@ export class ExplorerBrain {
     if (decision) decision.apiMs = apiMs;
     // (apiMs is the whole decision tick: sentiment + tick request)
 
+    // The intent: what apply() does to the world. Dash extends the move only when a legal direction was chosen.
+    const chosen = skillKey !== 'none' ? this.#skills.get(skillKey) : null;
+    const dashes = chosen?.skill.kind === 'dash' && dir !== STAY && legal.includes(dir);
+    const intent = {
+      kind: 'explorer',
+      seq: ++this.#seq,
+      step,
+      skill: skillKey === 'none' ? null : skillKey,
+      skill_cells: chosen?.target?.cells ? chosen.target.cells.map((c) => [...c]) : null, // the aim apply() swings at, even if the target moved
+      skill_id: chosen?.skill?.id ?? null, // the skill behind the key, for a swing whose option is gone by apply time
+      skill_dir: chosen?.target?.dir ?? null,
+      move: dir,
+      distance: dashes ? chosen.skill.distance : 1,
+      held,
+    };
+    return { intent, step, policy, decision, review, skillDecision, apiMs, moveDecision, pendingSwitch, pendingLeave, pendingCoins, doneNow };
+  }
+
+  // The world mutation of a turn, synchronous. Re-validates the intent against the CURRENT world: a skill that is
+  // no longer offered or whose aimed cells changed, or a move that is no longer available, becomes a no-op and the
+  // turn carries `stale: [['skill' | 'move', reason], ...]` (absent when nothing was stale). No file is written:
+  // await save() afterwards (outside any lock). Returns the turn object takeTurn returns.
+  apply(intent) {
+    const ctx = this.#ctx;
+    if (!ctx || !intent || intent.seq !== ctx.intent.seq) throw new Error('apply() needs the intent of the latest decide()');
+    this.#ctx = null;
+    const world = this.#world;
+    const memory = this.#memory;
+    const info = this.#encounter;
+    const { step, decision, review, skillDecision, apiMs, moveDecision, pendingSwitch, pendingLeave, pendingCoins, doneNow } = ctx;
+    let policy = ctx.policy;
+    const stale = [];
+    const dir = intent.move;
+    const held = intent.held;
+    const skillKey = intent.skill ?? 'none';
+    const moveOk = world.availableMoves().includes(dir);
+    if (!moveOk) stale.push(['move', world.won || world.lost ? 'game over' : 'not available now']);
+
     // The skill resolves before movement. Dash extends that move only when a legal direction was chosen.
     let distance = 1;
     if (skillKey !== 'none') {
-      const chosenSkill = this.#skills.get(skillKey)?.skill;
-      if (chosenSkill?.kind !== 'dash' || (dir !== STAY && legal.includes(dir))) {
+      const offered = skillKey in this.#skillOptions(); // fresh options also refresh the targets useSkill reads
+      const picked = this.#skills.get(skillKey);
+      const aimed = intent.skill_cells ? this.#skills.skills.find((k) => k.id === intent.skill_id && (k.kind === 'attack' || k.kind === 'area')) : null;
+      if (aimed && (!offered || !sameCells(intent.skill_cells, picked?.target?.cells))) {
+        // A stale aimed attack still swings (PLAN-multiplayer "Continuous time"): it keeps the direction and shape
+        // chosen from the old observation and hits only whoever stands in those cells now, a miss when the target
+        // moved. It never retargets. Only a skill that is not ready by now is skipped.
+        if (!aimed.ready) stale.push(['skill', 'not ready']);
+        else {
+          const target = { dir: intent.skill_dir ?? undefined, cells: intent.skill_cells.map((c) => [...c]) };
+          skillDecision.used = this.#useSkill(skillKey, step, { skill: aimed, target });
+          if (skillDecision.used) stale.push(['skill', 'swung at the old cells']);
+        }
+      }
+      else if (!offered) stale.push(['skill', 'no longer offered']);
+      else if (picked?.skill.kind !== 'dash' || (moveOk && dir !== STAY)) {
+        // Dash: the move is checked against the current legal moves above, and the world stops the dash early at a
+        // wall or a newly occupied cell (a teammate), so a blocked path shortens or becomes the plain step.
         skillDecision.used = this.#useSkill(skillKey, step);
-        if (skillDecision.used && chosenSkill?.kind === 'dash') distance = chosenSkill.distance;
+        if (skillDecision.used && picked.skill.kind === 'dash') distance = picked.skill.distance;
       }
     }
 
     const from = world.pos;
-    const result = world.move(dir, distance);
-    this.#noteMove(dir, held, from, world.steps);
-    recordStep(memory, {
+    const result = moveOk ? world.move(dir, distance) : { moved: false, revealed: 0, revisit: false, won: world.won };
+    if (moveOk) this.#noteMove(dir, held, from, world.steps);
+    if (moveOk) recordStep(memory, {
       step: world.steps,
       dir,
       pos: world.pos,
@@ -1193,9 +1443,10 @@ export class ExplorerBrain {
       this.#confide('regen');
     }
     this.#syncConfidence(); // memory.progress.confidence.now follows sightings too, not only events
-    await this.#save();
+    this.#syncSkills();
 
     return {
+      ...(stale.length ? { stale } : {}),
       step: world.steps, dir, forced: moveDecision === null, revealed: result.revealed, won: result.won,
       directive: this.directive,
       move_decision: moveDecision, held, decision, review, policy, skill_decision: skillDecision, skill_events: this.#skillEvents, apiMs,
@@ -1206,11 +1457,11 @@ export class ExplorerBrain {
 
   // Uses the picked skill through the world, notes what it did. Returns the key used, or null when the
   // world refused (not ready / unknown). Fog-safe: only ids the explorer saw can be struck.
-  #useSkill(key, step) {
+  #useSkill(key, step, forced = null) {
     const world = this.#world;
     const memory = this.#memory;
-    const picked = this.#skills.get(key);
-    const res = world.useSkill(this.#skills, key);
+    const picked = forced ?? this.#skills.get(key);
+    const res = world.useSkill(this.#skills, key, forced);
     const events = Array.isArray(res) ? res : res?.events;
     if (!events) return null;
     this.#skillEvents.push(...events); // handed to Run.playTurn through the turn shape
@@ -1237,10 +1488,26 @@ export class ExplorerBrain {
     return key;
   }
 
-  // Mirrors the live skills into memory, then saves (every save goes through here).
-  async #save() {
+  // Hands the game's clock to the skills that run on real seconds (Dash), so a pause freezes their cooldown. The hosted
+  // runtime calls it once per explorer; Run never does (Dash keeps its own wall clock there).
+  attachClock(now) {
+    for (const k of this.#skills.skills) if (typeof k.attachClock === 'function') k.attachClock(now);
+  }
+
+  // Mirrors the live skills into memory (sync: apply() does it under the lock).
+  #syncSkills() {
     setSkills(this.#memory, this.#skills.summaries());
-    await saveMemory(this.#memory, this.#memoryDir);
+  }
+
+  // Mirrors the live skills into memory, then saves (every save goes through here). Public so a runtime can write
+  // the turn's memory files after apply(), outside its mutation lock; takeTurn() calls it itself.
+  async save() {
+    this.#syncSkills();
+    if (this.#persistMemory) await saveMemory(this.#memory, this.#memoryDir);
+  }
+
+  async #save() {
+    await this.save();
   }
 
   // Records a catch (called by turn.js after the adversaries moved) and saves.
@@ -1349,7 +1616,7 @@ export class ExplorerBrain {
       if (!allowed.has(k)) allowed.set(k, Object.keys(this.#menu(tacticFeasibility(world, g, { exclude: this.#excluded(), armed: this.#armed(), stunned: this.#stunnedIds(), retreat }), world.steps + 1, false)).map((t) => t.replace(/_/g, ' ')));
       return allowed.get(k);
     };
-    const criteria = Object.fromEntries(shuffle(ids).map((id) => {
+    const criteria = Object.fromEntries(shuffle(ids, () => this.#world.optionRandom()).map((id) => {
       const s = SENTIMENTS[id];
       const here = inSight ? ` Tactics it leaves here: ${leaves(id).join(', ') || 'none, only luck'}.` : '';
       return [id, `${s.when} Effect: ${profileNote(id)}${here}`];
@@ -1409,7 +1676,7 @@ export class ExplorerBrain {
     // Option order is shuffled every tick because Jev leans toward the first option.
     // Speculative: the facts that do not depend on the tactic are sent once, in `surroundings.moves`
     // (same for every move_if_<tactic>); each option keeps only its progress toward this tactic's target.
-    const dirs = shuffle(avail);
+    const dirs = shuffle(avail, () => this.#world.optionRandom());
     // A live directive parks the approach: on an ordinary tick the moves lose their "progress toward the target" part.
     const live = this.directive;
     const parked = Boolean(live) && !speculative && !isTactic(approachId);
@@ -1517,7 +1784,7 @@ export class ExplorerBrain {
 
   // A next_approach Choice over `ids` (shuffled), each option saying what it means and where it leads from here.
   #nextApproachQuestion(ids, instructions) {
-    return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids).map((id) => [id, this.#approachOption(id)])) };
+    return { type: 'choice', instructions, criteria: Object.fromEntries(shuffle(ids, () => this.#world.optionRandom()).map((id) => [id, this.#approachOption(id)])) };
   }
 
   // Remembers which piles were seen. A pile seen for the first time within COIN_NEAR known-path steps queues a

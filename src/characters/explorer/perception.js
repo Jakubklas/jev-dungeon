@@ -475,6 +475,21 @@ function landmarkView(world, dist, landmarks) {
   }));
 }
 
+// Other explorers on the same side, wherever they are (global positions are user-approved): their own state group,
+// never `threats`. Absent with no teammates, so a lone explorer's request is unchanged. distance = known-path steps
+// (teammates themselves block the walk, so the route is measured from the teammate's cell), else rounded Euclidean.
+function teammateView(world) {
+  const mates = world.teammates?.() ?? [];
+  if (!mates.length) return {};
+  return {
+    teammates: mates.map((m) => ({
+      id: m.id,
+      direction: compass8(world.pos, m.pos),
+      distance: knownFloor(world, m.pos) ? (knownDistances(world, m.pos).get(world.pos) ?? Math.round(euclid(world.pos, m.pos))) : Math.round(euclid(world.pos, m.pos)),
+    })),
+  };
+}
+
 // The facts about the world right now, grouped the way Jev reads them (brain.js adds game, plan,
 // recent and the mind). `remembered` ({ id, cell, step, chasing }, not visible now) and
 // `landmarks` (memory.landmarks) are the brain's own records; both are optional.
@@ -513,6 +528,7 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
       landmarks: landmarkView(world, distX, landmarks),
       ...coinView(world, dist),
       ...heartView(world, dist),
+      ...teammateView(world),
     },
     threats: {
       visible: threats.map((th) => ({
@@ -524,6 +540,10 @@ export function situation(world, { remembered = [], landmarks = [] } = {}) {
         ...levelFields(world, th),
       })),
       remembered: rememberedView(world, dist, remembered),
+      ...(world.helpReports().length ? { reported: world.helpReports().map((r) => ({
+        id: r.id, by: r.by, direction: compass8(world.pos, r.cell),
+        path_steps: dist.get(r.cell) ?? null, steps_ago: world.steps - r.step,
+      })) } : {}),
       encounter: encounterFacts(world, threats)?.facts ?? null,
     },
   };

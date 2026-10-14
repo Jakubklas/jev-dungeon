@@ -164,8 +164,8 @@ async function main() {
     process.loadEnvFile(new URL('../../.env', import.meta.url));
     if (!process.env.JEV_API_KEY) { console.error('JEV_API_KEY missing from ../.env'); process.exit(2); }
     globalThis.fetch = realFetch; // lift the harness tripwire
-    const { askJev } = await import('../src/jev.js');
-    liveCfg = { maxCalls: Number(maxCalls), ask: ({ state, questions, body }) => askJev(state, questions, body) };
+    const { Gateway } = await import('../src/gateway/gateway.js');
+    liveCfg = { maxCalls: Number(maxCalls), ask: new Gateway().devAsker() };
   }
 
   const arenas = loadArenas().filter((a) => !want || want.includes(a.name));

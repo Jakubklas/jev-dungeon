@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#070913">
+<title>Jev Dungeon</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/play.css">
+</head>
+<body class="page">
+<!-- The hosted player page. One document serves `/` (entry) and `/g/<id>` (room: join form, lobby, game, end). The Jev
+     key is typed into a password field and sent only in a POST body: it is never stored, logged or put in a URL. -->
+<main id="main">
+  <p id="toast" class="toast" role="status" aria-live="polite" hidden></p>
+
+  <!-- entry -->
+  <section id="view-entry" class="card-wrap" hidden>
+    <header class="brand"><h1>Jev Dungeon</h1><p class="sub">A knight, a dark dungeon and one way out. Jev steers; you whisper.</p></header>
+    <form id="entry-form" class="card" autocomplete="off">
+      <h2>Start a game</h2>
+      <label class="field"><span>Display name</span>
+        <input id="entry-name" type="text" maxlength="20" required placeholder="1-20 characters" spellcheck="false"></label>
+      <label class="field"><span>Your Jev key</span>
+        <input id="entry-key" type="password" required autocomplete="off" placeholder="paste your key" spellcheck="false"></label>
+      <p class="hint">The key pays for your knight's decisions. It is sent once over this connection, kept in server memory only and never saved in your browser.</p>
+      <p id="entry-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="submit" class="primary" data-mode="private">Play solo</button>
+        <button type="submit" data-mode="shared">Create co-op room</button>
+      </div>
+      <p class="hint">Co-op: up to four knights share one dungeon. You get a link to send your friends. Got a link already? Just open it.</p>
+    </form>
+  </section>
+
+  <!-- non-member of a waiting room -->
+  <section id="view-join" class="card-wrap" hidden>
+    <header class="brand"><h1>Jev Dungeon</h1><p class="sub">You were invited to a co-op room.</p></header>
+    <form id="join-form" class="card" autocomplete="off">
+      <h2>Join this room</h2>
+      <ul id="join-roster" class="roster"></ul>
+      <label class="field"><span>Display name</span>
+        <input id="join-name" type="text" maxlength="20" required placeholder="1-20 characters" spellcheck="false"></label>
+      <label class="field"><span>Your Jev key</span>
+        <input id="join-key" type="password" required autocomplete="off" placeholder="paste your key" spellcheck="false"></label>
+      <p class="hint">Sent once, kept in server memory only, never saved in your browser.</p>
+      <p id="join-error" class="error" role="alert" hidden></p>
+      <div class="actions"><button type="submit" class="primary">Join</button><a class="btn" href="/">Back</a></div>
+    </form>
+  </section>
+
+  <!-- lobby -->
+  <section id="view-lobby" class="card-wrap" hidden>
+    <header class="brand"><h1>Waiting room</h1><p class="sub" id="lobby-sub"></p></header>
+    <div class="card">
+      <h2>Knights <span id="lobby-count" class="tag"></span></h2>
+      <ul id="lobby-roster" class="roster"></ul>
+      <h2>Invite</h2>
+      <div class="linkrow"><input id="lobby-link" type="text" readonly aria-label="Room link"><button id="lobby-copy" type="button">Copy</button></div>
+      <p id="lobby-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button id="lobby-start" class="primary" type="button">Start game</button>
+        <button id="lobby-leave" type="button">Leave</button>
+      </div>
+      <p id="lobby-wait" class="hint" hidden>Waiting for the leader to start the game.</p>
+    </div>
+  </section>
+
+  <!-- game over / unavailable -->
+  <section id="view-msg" class="card-wrap" hidden>
+    <div class="card"><h2 id="msg-title">Room unavailable</h2><p id="msg-text"></p><div class="actions"><a class="btn primary" href="/">New game</a></div></div>
+  </section>
+
+  <!-- game -->
+  <div id="view-game" class="layout" hidden>
+    <section class="board-col">
+      <p id="spectator" class="banner" hidden></p>
+      <p id="paused" class="banner paused" hidden></p>
+      <div class="board-wrap" id="board-wrap">
+        <canvas id="board"></canvas>
+        <canvas id="minimap" class="minimap" aria-label="Minimap of known cells"></canvas>
+      </div>
+      <form id="whisper" class="whisper" autocomplete="off">
+        <label class="whisper-label" for="whisper-text">Whisper to your knight</label>
+        <div class="whisper-row">
+          <input id="whisper-text" type="text" maxlength="140" placeholder="e.g. go for the coins" enterkeyhint="send" spellcheck="false">
+          <span id="whisper-count" class="whisper-count" aria-live="off">0/140</span>
+          <button id="whisper-send" type="submit" class="primary">Send</button>
+        </div>
+        <div id="whisper-live" class="whisper-live" hidden>
+          <span class="chip whisper-chip">Directive</span>
+          <span id="whisper-live-text" class="whisper-live-text"></span>
+          <span id="whisper-left" class="muted"></span>
+          <button id="whisper-clear" type="button" class="small-btn">Clear</button>
+        </div>
+        <p id="whisper-msg" class="whisper-msg" role="status" hidden></p>
+      </form>
+    </section>
+
+    <aside class="pane">
+      <div class="controls">
+        <span id="conn" class="chip off">connecting</span>
+        <button id="pause" type="button" hidden>Pause</button>
+        <button id="leave-game" type="button" class="small-btn" title="Leave the game: your knight forfeits">Leave</button>
+      </div>
+      <div class="hud">
+        <div class="stat" title="Lives left"><span>Lives</span><b id="hearts" class="hearts" aria-label="Lives">—</b></div>
+        <div class="stat" title="Coins collected"><span>Coins</span><b id="coins" class="coins">0</b></div>
+        <div class="stat"><span>Steps</span><b id="steps">0</b></div>
+        <div class="stat"><span>Explored</span><b id="explored">0%</b></div>
+      </div>
+      <div class="panel">
+        <h2>Your knight</h2>
+        <p class="mind-now"><span id="mood-chip" class="chip senti">—</span> <span id="approach-chip" class="muted small"></span></p>
+        <p id="thought" class="thought"></p>
+      </div>
+      <div class="panel">
+        <h2>Team <span id="team-count" class="tag"></span></h2>
+        <ul id="team" class="team"></ul>
+      </div>
+      <div class="panel">
+        <h2>Events</h2>
+        <ul id="log" class="events log"><li class="muted">Nothing yet.</li></ul>
+      </div>
+    </aside>
+  </div>
+</main>
+
+<!-- key prompt / forfeited -->
+<div class="overlay" id="key-overlay">
+  <form class="modal wide" id="key-form" autocomplete="off" role="dialog" aria-modal="true" aria-labelledby="key-title">
+    <h2 id="key-title">Your Jev key stopped working</h2>
+    <p id="key-why">Jev rejected the key (or the server restarted and forgot it). Your knight is standing still and can still be attacked. Enter a valid key to carry on.</p>
+    <p id="key-timer" class="timer" hidden></p>
+    <label class="field"><span>Jev key</span><input id="key-input" type="password" autocomplete="off" required placeholder="paste your key" spellcheck="false"></label>
+    <p id="key-error" class="error" role="alert" hidden></p>
+    <div class="actions"><button type="submit" class="primary">Resume</button></div>
+  </form>
+</div>
+<div class="overlay" id="forfeit-overlay">
+  <div class="modal wide lost" role="dialog" aria-modal="true" aria-labelledby="forfeit-title">
+    <h2 id="forfeit-title">Your knight has left the dungeon</h2>
+    <p>No valid key arrived in time, so you forfeited. You can keep watching your team from here.</p>
+    <div class="actions"><button id="forfeit-watch" type="button">Keep watching</button><a class="btn primary" href="/">New game</a></div>
+  </div>
+</div>
+
+<!-- end screen -->
+<div class="overlay" id="end-overlay">
+  <div class="modal ranking" role="dialog" aria-modal="true" aria-labelledby="end-title">
+    <h2 id="end-title">Dungeon cleared</h2>
+    <p id="end-sub" class="end-sub"></p>
+    <table id="end-table" class="rank-table">
+      <thead><tr><th>#</th><th class="l">Knight</th><th title="Coins held">Coins</th><th title="Strikes landed">Strikes</th><th title="Monsters dispelled">Dispels</th><th title="Stepped through the portal">Portal</th><th title="Alive at the end">Alive</th><th>Points</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="actions"><button id="end-close" type="button">Look at the board</button><a class="btn primary" href="/">New game</a></div>
+  </div>
+</div>
+
+<script type="module" src="/play.js"></script>
+</body>
+</html>

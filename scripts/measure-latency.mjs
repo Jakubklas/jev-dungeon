@@ -15,6 +15,8 @@ process.loadEnvFile(new URL('../../.env', import.meta.url));
 const STEPS = Number(flag('steps', 60)), GAMES = Number(flag('games', 1)), SEED = flag('seed', null), LIVES = Number(flag('lives', 3));
 
 const { newGame } = await import('../src/turn.js');
+const { Gateway } = await import('../src/gateway/gateway.js');
+const gateway = new Gateway(); // the only paid askers (dev providers); the fetch wrapper below still sees every attempt
 const settings = await import('../src/settings.js').catch(() => null);
 
 // Wrap fetch: one record per HTTP attempt to the Jev API.
@@ -38,7 +40,7 @@ const fmt = (a) => a.length ? `n=${a.length} avg ${Math.round(a.reduce((x, y) =>
 
 async function play(g) {
   const dir = pathToFileURL(mkdtempSync(join(tmpdir(), 'jev-lat-')) + '/');
-  const run = newGame(SEED ? Number(SEED) + g : undefined, { dir, memoryDir: dir });
+  const run = newGame(SEED ? Number(SEED) + g : undefined, { dir, memoryDir: dir, ask: gateway.devAsker(), decide: gateway.devDecider() });
   const ticks = [];
   for (let i = 0; i < STEPS && !run.game.won && !run.game.lost; i++) {
     const a0 = attempts.length, t0 = performance.now();

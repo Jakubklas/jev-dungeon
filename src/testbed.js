@@ -33,6 +33,7 @@ export const DEFAULTS = {
   ghostHp: null, // 1..5; null = the Skills setting
   morale: null, // 0..100 starting morale for every monster (monster morale, morale.js); null = its character's
   hearts: null, // [x, y] cells of floating hearts: display only, no gameplay yet (null = none)
+  explorers: null, // start cells [[x, y], ...] of extra explorers (teammates: ids explorer2, explorer3, ...); null = the one explorer
   coins: 0, // coins lying around: a count (spread like a dungeon's, src/coins.js) or a list of [x, y] cells
 };
 // Settings hook (src/config/runtime.js): the central config's testbed.* values replace the built-in defaults above.
@@ -44,6 +45,7 @@ export function configureTestbed(o) {
   if (o.testbedProps !== undefined) DEFAULTS.props = o.testbedProps;
 }
 export const TESTBED_MAX_COINS = 60;
+export const TESTBED_MAX_EXPLORERS = 4; // extra explorers beside the first
 export const TESTBED_MAX_GHOST_HP = 5;
 // Solid / small props per interior floor cell for the random prop presets.
 const PROP_DENSITY = { few: { solid: 1 / 30, small: 1 / 40 }, many: { solid: 1 / 12, small: 1 / 20 } };
@@ -207,6 +209,13 @@ export function normalizeConfig(raw = {}) {
       cfg.hearts = h.map((cell, i) => toCell(cell, `hearts[${i}]`));
     }
   }
+  if (given('explorers')) {
+    let list = raw.explorers;
+    if (typeof list === 'string') list = list.split(/[;|]/).filter(Boolean);
+    if (!Array.isArray(list)) bad('explorers must be a list of [x, y] start cells (or "x,y;x,y" in a URL)');
+    if (list.length > TESTBED_MAX_EXPLORERS) bad(`at most ${TESTBED_MAX_EXPLORERS} extra explorers`);
+    cfg.explorers = list.length ? list.map((c, i) => toCell(c, `explorers[${i}]`)) : null;
+  }
   if (given('ghostHp')) {
     cfg.ghostHp = toInt(raw.ghostHp, 'ghostHp');
     if (cfg.ghostHp < 1 || cfg.ghostHp > TESTBED_MAX_GHOST_HP) bad(`ghostHp must be 1..${TESTBED_MAX_GHOST_HP}`);
@@ -220,6 +229,8 @@ export function normalizeConfig(raw = {}) {
 
 // What to hand buildSkillSet / ExplorerBrain({ skills }) for a normalized config: 'explorer', 'none' or a list.
 export const explorerSkillSetOf = (cfg) => (cfg.explorerSkills === 'default' ? 'explorer' : cfg.explorerSkills);
+// Start cells of every explorer of an arena: the first (id 'explorer') at the dungeon start, extras explorer2.. (config.explorers).
+export const explorerStartsOf = (dungeon, cfg) => [{ id: 'explorer', start: dungeon.start }, ...(cfg.explorers ?? []).map((c, i) => ({ id: `explorer${i + 2}`, start: c }))];
 // The same for ghosts: 'ghost' or 'none'.
 export const ghostSkillSetOf = (cfg) => (cfg.ghostSkills === 'none' ? 'none' : 'ghost');
 
@@ -459,5 +470,12 @@ export function buildArena(rawConfig = {}) {
     if (!floorAt(c)) bad(`heart at ${c} is not an inside floor cell`);
     return [...c];
   });
+  if (cfg.explorers) {
+    cfg.explorers.forEach((c, i) => {
+      if (!floorAt(c)) bad(`explorers[${i}] ${c} is not an inside floor cell`);
+      if (same(c, start) || cfg.explorers.some((o, j) => j < i && same(o, c))) bad(`explorers[${i}] ${c} shares a start cell`);
+    });
+    if (positions.some((p) => cfg.explorers.some((c) => same(c, p)))) bad('an extra explorer starts on an adversary');
+  }
   return { dungeon, adversaries, config: cfg };
 }

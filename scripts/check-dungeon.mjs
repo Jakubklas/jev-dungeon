@@ -48,18 +48,23 @@ const ALLOWED_IMPORTS = {
   // progress.js (DUNGEON_DIRECTION_PLAN section 4): known-path progress and retreat detection. Pure, imports nothing (check-progress asserts it).
   './progress.js': null,
   '../../jev.js': null, 'node:fs/promises': null,
+  // The one CallAborted class (src/call-aborted.js: a pure error class, no game state; the gateway re-exports it) so the runtime can tell an aborted decision from a failed one by class.
+  '../../call-aborted.js': ['CallAborted'],
   // SIGHT_RANGE is a constant, not hidden state: brain.js uses it to expire a remembered sighting once
   // the explorer stands within sight range of the frozen cell with a known line of sight to it.
   '../../dungeon.js': ['DIRS', 'LIGHT_RADIUS', 'STAY', 'EXPLORER_LIVES', 'SIGHT_RANGE'],
   '../adversary/adversary.js': ['ADVERSARY_SPEED', 'GRACE_TICKS'],
   // Pure helpers shared with the adversary side (PLAN-adversary-memory.md A3); they import nothing from the game.
   '../shared/memory-kit.js': null,
+  // Pure JSON snapshot codec: does not read world state.
+  '../shared/snapshot.js': ['encodeSnapshot', 'decodeSnapshot'],
   // tabu.js (PLAN-tabu.md): the tabu lists both characters use. Pure, imports nothing (check-tabu asserts it).
   '../shared/tabu.js': null,
   // Skills (PLAN-skills.md): the brain builds its skill set and asks the `skill` question through these two
   // modules only. They hold no game state; src/skills/ is guarded below (section 0c). resolve.js is not allowed.
   // skillConfig returns the settings numbers (stun ticks, coin drop chance) for the rules sentence: no game state.
   '../../skills/loadouts.js': ['buildSkillSet', 'skillConfig'],
+  '../../skills/skill-set.js': ['SkillSet'],
   '../../skills/question.js': ['skillQuestion', 'pickSkill'],
 };
 function fogViolations(name, source, allowedImports = ALLOWED_IMPORTS) {
@@ -101,7 +106,7 @@ const ADVERSARY_ALLOWED_IMPORTS = {
   // morale.js (PLAN-monster-morale.md): the monster's morale model. Pure, imports nothing (check-morale asserts it),
   // so brain.js, memory.js and adversary.js may import it, exactly as the explorer's confidence.js is treated.
   './morale.js': null,
-  '../shared/memory-kit.js': null, '../shared/tabu.js': null, '../../jev.js': null, 'node:fs/promises': null,
+  '../shared/memory-kit.js': null, '../shared/tabu.js': null, '../shared/snapshot.js': ['encodeSnapshot', 'decodeSnapshot'], '../../jev.js': null, 'node:fs/promises': null,
   // rng is the pure seeded PRNG (character.js assignCharacters uses its own stream), not a world read.
   '../../dungeon.js': ['DIRS', 'SIGHT_RANGE', 'rng'],
   './adversary.js': ['ADVERSARY_SPEED'],
